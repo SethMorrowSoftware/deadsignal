@@ -226,12 +226,12 @@ signal integrity: 100%</textarea>
             <div class="row"><label for="v-subframes">Sub frames</label><input type="number" id="v-subframes" value="2" min="1" max="10"></div>
           </div>
         </fieldset>
-        <fieldset data-section="Motion" id="v-layers-fieldset"><legend>LAYERS <span class="tag" id="v-layers-count"></span></legend>
+        <fieldset data-section="Motion" id="v-layers-fieldset" data-doc-reset="layers.video"><legend>LAYERS <span class="tag" id="v-layers-count"></span></legend>
           <p class="hint">Stack more scenes over the one above. Layers are listed top-down the way they sit on screen. Each one can carry its <b>own text, colour and size</b> — open <b>own text / look</b> on a layer to give it a caption the clip underneath does not have — and a <b>variant</b> number re-rolls that layer's randomness, so a second Digital Rain is a different rain rather than the first one twice. Leave a field empty and the layer follows the clip below it.</p>
           <div class="btns"><button class="btn small" id="v-layers-add" title="Add a scene on top of the current one">＋ LAYER</button></div>
           <div id="v-layers-list" data-generated></div>
         </fieldset>
-        <fieldset data-section="Motion" id="v-filters-fieldset"><legend>FILTERS <span class="tag" id="v-filters-count"></span></legend>
+        <fieldset data-section="Motion" id="v-filters-fieldset" data-doc-reset="filters.video"><legend>FILTERS <span class="tag" id="v-filters-count"></span></legend>
           <p class="hint">A chain applied <b>after</b> the CRT look above, top to bottom — so the order is yours: grade it cold and <i>then</i> crush the bit depth is a different picture from the other way round. ◉ bypasses a step without losing its settings.</p>
           <div class="row">
             <select id="v-filters-pick" class="grow" aria-label="filter to add"></select>
@@ -240,7 +240,7 @@ signal integrity: 100%</textarea>
           </div>
           <div id="v-filters-list" data-generated></div>
         </fieldset>
-        <fieldset data-section="Motion" id="v-auto-fieldset"><legend>KEYFRAMES</legend>
+        <fieldset data-section="Motion" id="v-auto-fieldset" data-doc-reset="automation.video"><legend>KEYFRAMES</legend>
           <p class="hint">Make a setting change over the clip. Scrub to a time, set the control, then <b>◆ KEY</b>. Two keys make a ramp; one key holds a value.</p>
           <div class="row"><label for="v-auto-param">Parameter</label><select id="v-auto-param" class="grow"></select></div>
           <div class="btns">
@@ -262,7 +262,7 @@ signal integrity: 100%</textarea>
         <div class="screen" id="a-wavewrap" style="width:100%;position:relative"><canvas id="acanvas" class="stage" width="600" height="150" style="width:100%;touch-action:none;cursor:text"></canvas><div id="a-selection" class="wave-sel" style="display:none"></div></div>
         <p class="hint" id="a-selinfo">Drag on the wave to select a range.</p>
         <div class="row" style="width:100%"><label>Peak</label><div class="meter grow"><div id="a-peak" style="width:0%"></div></div><span id="a-peakv" class="tag">—</span></div>
-        <fieldset><legend>EDITS <span class="tag" id="a-regions-count"></span></legend>
+        <fieldset data-doc-reset="audio.regions"><legend>EDITS <span class="tag" id="a-regions-count"></span></legend>
           <p class="hint">Drag a range on the wave, then apply an edit to it. Edits are part of the project — they undo, they save, and every render replays them, so the same project always produces the same wave.</p>
           <div class="row">
             <select id="a-region-op" class="grow" aria-label="edit to apply"></select>
@@ -386,7 +386,7 @@ signal integrity: 100%</textarea>
              checkbox, so the layer summary, TIDY, collapse/reset and the
              document binding pick them up with no special handling. -->
         <div id="a-extra-layers" data-generated></div>
-        <fieldset data-section="Mix" id="a-fx-fieldset"><legend>FX CHAIN <span class="tag" id="a-fx-count"></span></legend>
+        <fieldset data-section="Mix" id="a-fx-fieldset" data-doc-reset="filters.audio"><legend>FX CHAIN <span class="tag" id="a-fx-count"></span></legend>
           <p class="hint">A chain applied <b>after</b> the master bus below, top to bottom — so the order is yours: gate it and <i>then</i> ping-pong the result is a different sound from the other way round. ◉ bypasses a step without losing its settings.</p>
           <div class="row">
             <select id="a-fx-pick" class="grow" aria-label="effect to add"></select>
@@ -495,7 +495,7 @@ C:\&gt; _</textarea>
           <div class="row"><label for="i-lspace">Letterspace</label><input type="range" id="i-lspace" min="-10" max="40" value="0" class="grow" title="letter-spacing, as a percentage of the type size"></div>
           <div class="row"><label for="i-extra">Extra</label><input type="text" id="i-extra" class="grow" placeholder="template-specific (code / badge / etc.)"></div>
         </fieldset>
-        <fieldset data-section="Marks"><legend>MARKS <span class="tag" id="i-anno-count"></span></legend>
+        <fieldset data-section="Marks" data-doc-reset="image.annotations"><legend>MARKS <span class="tag" id="i-anno-count"></span></legend>
           <div class="split3">
             <div class="row"><label for="i-anno-kind">Mark</label><select id="i-anno-kind" class="grow"></select></div>
             <div class="row"><label for="i-anno-color">Colour</label><input type="color" id="i-anno-color" value="#39ff9e"></div>

@@ -7101,6 +7101,66 @@ section('feature seams');
   check('…and the whole reset is one undo, so a misclick is recoverable',
     reset.undone.solo === 1 && reset.undone.regions === 1, JSON.stringify(reset.undone));
 
+  /* The ↺ beside each legend is a reset too, and it was a much emptier promise
+     than the tab-wide one. It restored inputs from the boot snapshot — so on
+     the six panels whose contents are NOT inputs (FILTERS, FX CHAIN, MARKS,
+     LAYERS, KEYFRAMES, audio EDITS) it toasted "Section reset" over an
+     untouched chain. And on QUICK LOOK it did the opposite: the two macro dials
+     are write-only, so putting them back fired them, and twelve hand-set CRT
+     controls in a DIFFERENT fieldset were overwritten with macro-level-0
+     values by a reset of the section above them. */
+  const section = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const shell = await import('./src/ui/shell.js');
+    const $ = (id) => document.getElementById(id);
+    const FX = ['v-scan', 'v-noise', 'v-vig', 'v-flick', 'v-chroma', 'v-track',
+                'v-glitch', 'v-bloom', 'v-hum', 'v-shake', 'v-persist', 'v-roll'];
+    const setR = (id, v) => { const e = $(id); e.value = String(v);
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true })); };
+    const readFx = () => Object.fromEntries(FX.map((id) => [id, $(id).value]));
+    const byLegend = (t) => [...document.querySelectorAll('.view fieldset')]
+      .find((f) => (f.querySelector('legend')?.textContent || '').toUpperCase().includes(t));
+
+    document.querySelector('.tab[data-view=video]').click();
+    FX.forEach((id, i) => setR(id, 11 + i));
+    const handSet = readFx();
+    shell.resetFieldset(byLegend('QUICK LOOK'));
+    const clobbered = FX.filter((id) => handSet[id] !== readFx()[id]);
+
+    S.store.apply({ op: 'set', path: 'filters.video',
+      value: [{ id: 'blur', params: { radius: 4 }, enabled: true }] });
+    const chainBefore = (S.store.get('filters.video') || []).length;
+    shell.resetFieldset(byLegend('FILTERS'));
+    const chainAfter = (S.store.get('filters.video') || []).length;
+
+    document.querySelector('.tab[data-view=image]').click();
+    S.store.apply({ op: 'set', path: 'image.annotations',
+      value: [{ kind: 'text', x: 0.4, y: 0.4, text: 'HELLO' }] });
+    const marksBefore = (S.store.get('image.annotations') || []).length;
+    shell.resetFieldset(byLegend('MARKS'));
+    const marksAfter = (S.store.get('image.annotations') || []).length;
+
+    // Every panel that owns document state must say so, or its ↺ lies.
+    const owning = ['v-filters-fieldset', 'v-layers-fieldset', 'v-auto-fieldset', 'a-fx-fieldset']
+      .filter((id) => !$(id)?.dataset.docReset);
+    // Leave the tabs as this section found them for whatever runs next.
+    S.clearAnnotations(); S.clearFilters();
+    document.querySelector('.tab[data-view=video]').click();
+    document.getElementById('v-reset').click();
+    return { clobbered, chainBefore, chainAfter, marksBefore, marksAfter, owning };
+  });
+  check('↺ on FILTERS clears the chain that section owns',
+    section.chainBefore === 1 && section.chainAfter === 0,
+    `${section.chainBefore} → ${section.chainAfter}`);
+  check('↺ on MARKS clears the marks that section owns',
+    section.marksBefore === 1 && section.marksAfter === 0,
+    `${section.marksBefore} → ${section.marksAfter}`);
+  check('↺ on QUICK LOOK does not reach into the FX section below it',
+    section.clobbered.length === 0, section.clobbered.join(', ') || 'nothing else touched');
+  check('every panel that owns document state declares which',
+    section.owning.length === 0, section.owning.join(', ') || 'all declared');
+
   /* Loading a preset applies as an ordinary transaction, so the document
      binding's undo/redo/load refresh never sees it — an open gallery went on
      marking whichever preset you had before. */

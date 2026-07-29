@@ -121,8 +121,43 @@ const VIEW_DOC_STATE = {
    on undo/redo/load. boot.js hands its own refresh in. */
 let _resetRefresh=()=>{};
 export function setResetRefresh(fn){ _resetRefresh=typeof fn==="function"?fn:()=>{}; }
+/* Sections whose contents are not controls at all.
+ *
+ * `data-doc-reset` on the fieldset names the document path that section owns.
+ * Declared in the markup rather than listed here because the panel and the
+ * thing it edits belong together, and a panel added without one is a panel
+ * whose ↺ visibly does nothing — which is exactly what FILTERS, FX CHAIN,
+ * MARKS, LAYERS, KEYFRAMES and audio EDITS were all doing: `resetFieldset`
+ * restored inputs from the boot snapshot, those sections contain no inputs
+ * worth restoring, and the toast said "Section reset" over an untouched
+ * eight-step filter chain. The whole-tab RESET was fixed for this once
+ * (VIEW_DOC_STATE); the per-section ↺ beside every legend was not. */
+const DOC_RESET_EMPTY = { 'automation.video': {}, 'automation.image': {} };
+
+/* Write-only dials: moving one writes a dozen controls in OTHER sections.
+ *
+ * That makes them the one control a section reset must NOT dispatch. Resetting
+ * QUICK LOOK — two sliders — fired both macros at level 0 and overwrote all
+ * twelve CRT/VHS controls in the fieldset below, measured, including on a tab
+ * where the author had never touched a macro at all and had set every one of
+ * those twelve by hand. Put the dial back; do not pull the trigger. */
+const isMacro = (el) => /^[a-z]-macro-/.test(el.id || '');
+
 export function resetFieldset(fs){ const view=fs.closest(".view"); if(!view)return; const snap=_viewDefaults[view.id]; if(!snap)return;
-  applySnapshotTo(fs.querySelectorAll("input,select,textarea"),snap); afterReset(view.id); toast("Section reset"); }
+  const st=getStore();
+  const paths=(fs.dataset.docReset||"").split(/\s+/).filter(Boolean);
+  const controls=[...fs.querySelectorAll("input,select,textarea")];
+  const write=()=>{
+    controls.forEach(e=>{
+      if(!e.id || !(e.id in snap)) return;
+      if(isMacro(e)){ e.value=snap[e.id]; return; }   /* dom-only: a macro writes other sections; see isMacro */
+      setVal(e.id,snap[e.id]);
+    });
+    if(st) for(const p of paths) st.apply(set(p,safeClone(DOC_RESET_EMPTY[p]??[]),{label:"reset"}));
+  };
+  if(st) st.transaction(write,"reset"); else write();
+  if(paths.length) _resetRefresh();
+  afterReset(view.id); toast("Section reset"); }
 export function resetView(viewId){ const view=$(viewId); const snap=_viewDefaults[viewId]; if(!view||!snap)return;
   const docState=VIEW_DOC_STATE[viewId]||{};
   const st=getStore();
