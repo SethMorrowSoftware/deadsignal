@@ -38,7 +38,7 @@ import { initGallery, invalidateThumbs, renderGallery, toggleGallery } from './u
 import { addLayer, clearLayers, initLayers, renderLayers } from './ui/layers.js';
 import { initCampaignFiles, renderCampaignFiles } from './ui/campaignfiles.js';
 import { initBatch, renderBatch } from './ui/batch.js';
-import { hasShareFragment, initCloud, refreshCloud, renderCloud } from './ui/cloud.js';
+import { hasShareFragment, initCloud, onShareFailed, refreshCloud, renderCloud } from './ui/cloud.js';
 import { initWelcome, loadSample, openWelcome } from './ui/welcome.js';
 import { initVariables, renderVariables } from './ui/variables.js';
 import { initPresetManager, openPresetManager } from './ui/presetman.js';
@@ -359,12 +359,27 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
      shared project — writing that over the reader's own 'current' slot is the
      exact clobbering the restore guard above exists to prevent. Viewing is
      ephemeral; the reader keeps their work by saving a file or SAVE TO SERVER. */
-  if(arrivedByShareLink){
-    log("Autosave is paused for this visit so the shared project cannot overwrite your own session. Save a project file (Ctrl+S) or SAVE TO SERVER to keep changes.","info");
-  }else{
+  /* Installing the writer is idempotent and can happen LATER, because
+     `arrivedByShareLink` is only a guess about what is about to be open. It is
+     read from the URL before initCloud() has tried the token, so a link that
+     turns out to be dead left autosave uninstalled — and because a transient
+     failure put the fragment back, a revoked token disabled autosave and session
+     restore for that URL on every load, forever, for a reader whose work was
+     never anyone else's project. A share that FAILED is an ordinary visit. */
+  const startAutosave=()=>{
+    if(studioAutosave) return;
     studioAutosave=autosave(session.store, backend, {
       onError:(e)=>log("Autosave failed: "+e.message,"warn"),
     });
+  };
+  if(arrivedByShareLink){
+    log("Autosave is paused for this visit so the shared project cannot overwrite your own session. Save a project file (Ctrl+S) or SAVE TO SERVER to keep changes.","info");
+    onShareFailed(()=>{
+      startAutosave();
+      log("The share link did not open, so this is an ordinary session: autosave is on from here. Your previous session was not loaded over the top of what is on screen — reload to bring it back.","warn");
+    });
+  }else{
+    startAutosave();
   }
   if(backend.tier<2) log("No IndexedDB here — the session will not survive a reload.","warn");
 }

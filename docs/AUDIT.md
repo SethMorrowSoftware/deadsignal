@@ -26,7 +26,7 @@ their output implied:
 
 There was also no CI, so nothing ran any of them on a push.
 
-**Total now: 2216 checks across ten gated suites, plus 93 against a live backend.**
+**Total now: 2224 checks across ten gated suites, plus 93 against a live backend.**
 
 ---
 
@@ -158,6 +158,12 @@ was lost.
 | **The per-section ↺ did nothing** | On the six panels whose contents are not controls (FILTERS, FX CHAIN, MARKS, LAYERS, KEYFRAMES, audio EDITS) it toasted "Section reset" over an untouched chain. On QUICK LOOK it did the opposite: restoring the two write-only macro dials *fired* them, overwriting twelve hand-set CRT controls in the fieldset below. |
 | **Auto-level skipped the clipping case** | The guard excluded any render peaking at or above 0.985 — the one case the control exists for. |
 | **A look did not survive a format change** | 20 of the 32 pixel parameters hit their ceiling on the default 320×240 → 1920×1080 move. The ranges were authored when the frame was 320-ish and never widened when `MAX_DIM` became 1920, so the look did not carry *and* a there-and-back switch permanently shrank the author's settings. |
+| **A frame cap changed the speed** | The animated stills cap N at 240 frames but spread them across the whole clip, then took the per-frame delay from the *requested* rate. A 60s clip at 20fps played in **12 seconds** — a fifth of its real length. The delay now comes from the duration those frames cover, which is arithmetically identical whenever the cap is not reached. |
+| **Credits Crawl opened and closed on black** | It began below the bottom edge, so `t=0` drew nothing at any speed; and the travel had no reference to the clip length, so at cps 2 a 10s clip was empty for five seconds and at cps 40 it had left by 9.9s. It now starts on screen and comes to rest on its final card. |
+| **Two templates drew a multi-line body as one line** | Boot Splash and Vapor Desktop passed the whole body to one `glowText`; canvas `fillText` does not break lines. Measured on a four-line body: 3 bands of type → 6, and 1 → 4. |
+| **A dead share link disabled autosave forever** | `arrivedByShareLink` was read from the URL before the token was tried, and a failure put the fragment *back* — so a revoked token meant "a reader is viewing someone else's project" on every subsequent load, and the reader's own work was never saved. A failed share is now an ordinary visit, and a 403/404 does not restore the fragment because there is nothing to retry. |
+| **The RECORD button lied about the format** | Hard-coded `● RECORD .webm` in the markup with nothing ever re-syncing it, so choosing MP4 left the button naming a file the export would not write. |
+| **Preflight could report storage protected on a host that serves it** | It fetched `server/data/.htaccess`, and hosts commonly deny dotfiles by name while serving everything else in the tree — so it reported "present and enforced (live-checked)" over a publicly fetchable storage tree. It now writes a canary with an ordinary filename, fetches that, and deletes it. A false OK on a check advertising itself as live-checked is worse than no check. |
 | **The reconfirm key travelled in a URL** | And it is the database password. Still accepted from the query string — the only practical way in from an address bar — but taken once into the session and 303'd away, with `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex` and `Cache-Control: no-store` on every page of the wizard. |
 
 ## Medium and below
@@ -206,8 +212,6 @@ Recorded because "we looked and it was fine" is a result.
 None of these are fixed. They are recorded with enough detail to act on.
 
 **Export**
-- The 240-frame cap silently speeds up a long GIF/APNG/WebP rather than dropping
-  frames or refusing.
 - MP4 muxing throws `RangeError` past roughly 14 minutes and falls back to WebM
   after a full encode.
 - `encodeClip` has no `try/finally` around the encode loop, so a throwing
@@ -219,11 +223,9 @@ None of these are fixed. They are recorded with enough detail to act on.
 - 2×SS is silently ignored by the still exporters.
 
 **Scenes and screens**
-- Credits Crawl draws nothing at `t=0`, and nothing at all at low speeds.
 - Emergency Alert's crawl leaves the screen empty for 3.6 s of every 15.7 s.
 - The shared layer canvas is not reset between layers, so a scene renders
   differently depending on which layer precedes it.
-- Boot Splash and Vapor Desktop draw a multi-line body as one overlapping line.
 - Error Dialog hard-codes a 140 px window height, so its title bar leaves the
   top of a short frame.
 - Ink/Ground are enabled all-or-nothing, so nine templates keep a colour control
@@ -247,17 +249,13 @@ None of these are fixed. They are recorded with enough detail to act on.
 - The generated deny file emits an unguarded `Require all denied`, which 500s on
   Apache 2.2 — unlike the `api/.htaccess` this audit added, which fences every
   directive behind `<IfModule>`.
-- Preflight can report `server/data/` protected on a host that serves it.
 - The install does not lock itself when the account step is skipped.
 
 **Client and UI**
-- A share link that fails to open permanently disables autosave for that URL.
 - Renaming or deleting the selected user preset leaves the picker blank.
 - Saving a preset over an existing name destroys it without asking.
 - The command palette's catalogue is frozen at boot, so saved presets are never
   findable.
-- The RECORD button's format label does not re-sync from the document, so it can
-  claim `.webm` while the export writes `.mp4`.
 - `#v-flash` is a permanently-live region that rewrites four times a second.
 - The editor layout overflows horizontally below ~500 px (WCAG 1.4.10).
 
