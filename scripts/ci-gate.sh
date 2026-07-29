@@ -4,6 +4,7 @@
 #
 #   bash scripts/ci-gate.sh              run every suite that can run here
 #   bash scripts/ci-gate.sh --headless   skip the four Chromium suites
+#   bash scripts/ci-gate.sh --no-skip    a skipped gate fails the run (use in CI)
 #   bash scripts/ci-gate.sh --list       print the gates and exit
 #
 # Ten suites. Four of them drive Chromium through Playwright and SKIP — loudly,
@@ -26,14 +27,21 @@ cd "$HERE" || exit 1
 
 HEADLESS_ONLY=0
 LIST_ONLY=0
+NO_SKIP=0
 for arg in "$@"; do
     case "$arg" in
         --headless) HEADLESS_ONLY=1 ;;
+        --no-skip)  NO_SKIP=1 ;;
         --list)     LIST_ONLY=1 ;;
-        -h|--help)  sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)  sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)          echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
+
+if [ "$HEADLESS_ONLY" -eq 1 ] && [ "$NO_SKIP" -eq 1 ]; then
+    echo "--headless and --no-skip contradict each other: one skips gates, the other forbids it." >&2
+    exit 2
+fi
 
 # Playwright is resolved the same way the suites resolve it: the local
 # node_modules first, then a global install. Export NODE_PATH so `import
@@ -65,8 +73,14 @@ report() {
     out="$("$runner" "$file" 2>&1)"; status=$?
 
     # A browser suite that cannot find Playwright says so and exits 0. Surface
-    # that as SKIP rather than a green PASS it did not earn.
+    # that as SKIP rather than a green PASS it did not earn — and under
+    # --no-skip, as the failure it is: a CI run that silently skipped four of
+    # ten suites would report green having tested almost nothing.
     if [ "$kind" = "browser" ] && printf '%s' "$out" | grep -qi 'playwright not installed'; then
+        if [ "$NO_SKIP" -eq 1 ]; then
+            printf '  FAIL  %-46s (playwright not installed, and --no-skip)\n' "$name"
+            FAILED=$((FAILED + 1)); FAILED_NAMES+=("$name"); return 0
+        fi
         printf '  SKIP  %-46s (playwright not installed)\n' "$name"
         SKIPPED=$((SKIPPED + 1)); return 0
     fi
@@ -82,7 +96,9 @@ report() {
 }
 
 if [ "$LIST_ONLY" -eq 1 ]; then
-    grep -oE 'report "media studio [^"]+"' "${BASH_SOURCE[0]}" | sed 's/report "/  /; s/"$//'
+    # Anchored at column 0 so this line cannot match itself.
+    grep -oE '^report "media studio[^"]*"[[:space:]]+[a-z]+[[:space:]]+[^[:space:]]+' "${BASH_SOURCE[0]}" \
+        | sed -E 's/^report "([^"]*)"[[:space:]]+[a-z]+[[:space:]]+/  \1 → /'
     exit 0
 fi
 

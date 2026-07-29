@@ -8,8 +8,8 @@
  * Not in scripts/ci-gate.sh, for the same reason test-studio-api.php is not —
  * it needs a live server + MySQL. Run it like this:
  *
- *   php -S 127.0.0.1:8090 tools/media-studio/router.php   # from the repo root
- *   node tools/media-studio/test-studio-cloud.mjs [base-url] [studio-path]
+ *   php -S 127.0.0.1:8090 router.php            # from inside this folder
+ *   node test-studio-cloud.mjs [base-url] [studio-path]
  *
  * (router.php is what gives the built-in server the rewrite that api/.htaccess
  * gives Apache. Without it every API call 404s and this suite skips.)
@@ -17,7 +17,12 @@
  * Both arguments matter for deployment testing: [base-url] may itself be a
  * subdirectory (http://host/sub), and [studio-path] locates the studio folder
  * within it — the studio is a folder people relocate, and this suite has to be
- * able to follow it there.
+ * able to follow it there. [studio-path] defaults to the base URL itself,
+ * because the folder IS the tool: served on its own it sits at the root of
+ * whatever it was served from. It used to default to '/tools/media-studio/',
+ * the one layout the studio grew up in, which meant the suite silently SKIPPED
+ * against a perfectly healthy server — reporting "no live backend" for a
+ * backend that was answering, one directory over.
  *
  * It found a real bug the standalone suites could not: the read-only banner
  * for a share-link reader was rendered after the not-signed-in early return,
@@ -30,7 +35,11 @@ catch {
   catch { console.log('CLOUD client: playwright not installed — SKIPPED'); process.exit(0); }
 }
 const BASE = (process.argv[2] || 'http://127.0.0.1:8090').replace(/\/+$/, '');
-const PAGE = BASE + (process.argv[3] || '/tools/media-studio/index.html');
+/* A path that names a directory rather than a file gets index.html appended,
+   so both `/studio/` and `/studio/index.html` work — the difference is not one
+   anybody should have to remember. */
+const REL = process.argv[3] || '/index.html';
+const PAGE = BASE + (/\.[a-z0-9]+$/i.test(REL) ? REL : REL.replace(/\/*$/, '/') + 'index.html');
 /* The API ships inside the studio folder, so it is found relative to the page —
    not at the origin root. Deriving it here rather than hardcoding is the same
    rule the client follows, and it is what lets this suite run against a studio
@@ -52,7 +61,9 @@ for (const u of HEALTHS) {
 }
 if (!live) {
   console.log('CLOUD client: no live backend at ' + HEALTHS[0] + ' — SKIPPED');
-  console.log('  start one with:  php -S 127.0.0.1:8090 tools/media-studio/router.php');
+  console.log('  looked for the studio at: ' + PAGE);
+  console.log('  start one with:  php -S 127.0.0.1:8090 router.php   # from inside this folder');
+  console.log('  or point this suite at it:  node test-studio-cloud.mjs <base-url> <studio-path>');
   process.exit(0);
 }
 
