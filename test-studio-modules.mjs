@@ -265,6 +265,39 @@ check(`all ${files.length} modules import cleanly`, namespaces.size === files.le
         `riff ${ov.getUint32(4, true)}, data ${ov.getUint32(40, true)}`);
 }
 
+/* A pixel parameter has to REACH the biggest frame the tool can make.
+   scaleFilterPx carries a look through a format change by multiplying every
+   parameter marked `px` by the size factor and clamping to the control's own
+   range. The ranges were authored when the frame ceiling was 320-ish and never
+   widened when MAX_DIM became 1920 — so on the default 320×240 → 1920×1080
+   move, 20 of the 32 pixel parameters hit their ceiling instead of scaling.
+   Two things follow, and both are silent: the look does not carry, and a
+   there-and-back format switch scales DOWN from the clamped value, so it
+   permanently shrinks settings the author chose. Widening the ranges also makes
+   those effects reachable at 1080p at all — a 5px halftone cell capped at 24
+   cannot draw a 1080p halftone. */
+{
+  const F = namespaces.get('fx/filters.js');
+  const X = namespaces.get('fx/filters-extra.js');
+  X.registerExtraFilters();
+  const MAX_DIM = namespaces.get('core/formats.js').MAX_DIM;
+  // The worst honest case: the smallest frame the size control allows, taken to
+  // the largest. 64 is #v-w's own minimum.
+  const FACTOR = MAX_DIM / 320;      // the shipped default width, not the minimum
+  const px = [];
+  for (const [id, f] of Object.entries(F.FILTERS)) {
+    for (const s of f.params || []) if (s.px) px.push({ id, ...s });
+  }
+  check('the registry marks the pixel parameters it has', px.length >= 30, `${px.length}`);
+  const short = px.filter((s) => Math.abs(Number(s.def)) * FACTOR > Number(s.max));
+  check(`every pixel parameter can scale from its default to ${MAX_DIM}px without clamping`,
+        short.length === 0,
+        short.map((s) => `${s.id}.${s.key} ${s.def}→${Math.round(s.def * FACTOR)} > max ${s.max}`).slice(0, 5).join(' | '));
+  const backwards = px.filter((s) => !(Number(s.max) > Number(s.min)));
+  check('…and every one of them has a range at all', backwards.length === 0,
+        backwards.map((s) => `${s.id}.${s.key}`).join(' '));
+}
+
 /* The boot-time orphan sweep, whose failure mode is losing a project's media.
    It deletes every stored asset the RUNTIME library does not refer to, which is
    only a safe root set when the author's own document loaded, completely. Two

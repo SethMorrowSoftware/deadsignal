@@ -229,7 +229,7 @@ filter('blur', 'Blur', 'Sharpness', [
    at preview sizes and visually the same thing. */
 filter('sharpen', 'Sharpen', 'Sharpness', [
   { key: 'amount', label: 'Amount', min: 0, max: 200, step: 1, def: 80 },
-  { key: 'radius', label: 'Radius px', min: 0.5, max: 8, step: 0.5, def: 1.5 , px: true },
+  { key: 'radius', label: 'Radius px', min: 0.5, max: 9, step: 0.5, def: 1.5 , px: true },
 ], (ctx, W, H, p) => {
   if (p.amount <= 0) return;
   const src = snapshot(ctx, W, H);
@@ -335,7 +335,7 @@ filter('interlace', 'Interlace', 'Analogue', [
 /* Multipath echo — the same picture arriving late and weak, offset sideways.
    Aerial reception, not a blur. */
 filter('ghost', 'Ghosting', 'Analogue', [
-  { key: 'offset', label: 'Offset px', min: -60, max: 60, step: 1, def: 14 , px: true },
+  { key: 'offset', label: 'Offset px', min: -60, max: 85, step: 1, def: 14 , px: true },
   { key: 'strength', label: 'Strength', min: 0, max: 100, step: 1, def: 35 },
   { key: 'count', label: 'Echoes', min: 1, max: 5, step: 1, def: 2 },
 ], (ctx, W, H, p) => {
@@ -355,8 +355,8 @@ filter('ghost', 'Ghosting', 'Analogue', [
 /* The band of noise at the bottom of a VHS frame where the head leaves the
    tape. Instantly reads as "this is a tape". */
 filter('headswitch', 'VHS Head Switch', 'Analogue', [
-  { key: 'height', label: 'Band height px', min: 2, max: 60, step: 1, def: 14 , px: true },
-  { key: 'jitter', label: 'Jitter px', min: 0, max: 40, step: 1, def: 12 , px: true },
+  { key: 'height', label: 'Band height px', min: 2, max: 85, step: 1, def: 14 , px: true },
+  { key: 'jitter', label: 'Jitter px', min: 0, max: 75, step: 1, def: 12 , px: true },
   { key: 'noise', label: 'Noise', min: 0, max: 100, step: 1, def: 60 },
 ], (ctx, W, H, p) => {
   seedStream('headswitch');
@@ -394,8 +394,8 @@ filter('headswitch', 'VHS Head Switch', 'Analogue', [
    always moving. */
 filter('scantear', 'Scan Tear', 'Analogue', [
   { key: 'slices', label: 'Slices', min: 1, max: 24, step: 1, def: 6 },
-  { key: 'shift', label: 'Max shift px', min: 1, max: 120, step: 1, def: 30 , px: true },
-  { key: 'height', label: 'Max slice height px', min: 2, max: 120, step: 1, def: 24 , px: true },
+  { key: 'shift', label: 'Max shift px', min: 1, max: 180, step: 1, def: 30 , px: true },
+  { key: 'height', label: 'Max slice height px', min: 2, max: 150, step: 1, def: 24 , px: true },
   { key: 'rate', label: 'Re-tear per second', min: 0, max: 30, step: 1, def: 6 },
 ], (ctx, W, H, p, t) => {
   // Quantising t to the tear rate holds each tear for a beat instead of
@@ -417,9 +417,9 @@ filter('scantear', 'Scan Tear', 'Analogue', [
 /* Block displacement — the compression artifact you get when a keyframe is
    missing and motion vectors are applied to the wrong picture. */
 filter('datamosh', 'Datamosh', 'Analogue', [
-  { key: 'block', label: 'Block px', min: 4, max: 64, step: 2, def: 16 , px: true },
+  { key: 'block', label: 'Block px', min: 4, max: 100, step: 2, def: 16 , px: true },
   { key: 'amount', label: 'Blocks moved %', min: 0, max: 100, step: 1, def: 18 },
-  { key: 'shift', label: 'Max shift px', min: 1, max: 80, step: 1, def: 20 , px: true },
+  { key: 'shift', label: 'Max shift px', min: 1, max: 120, step: 1, def: 20 , px: true },
   { key: 'rate', label: 'Re-roll per second', min: 0, max: 30, step: 1, def: 4 },
 ], (ctx, W, H, p, t) => {
   if (p.amount <= 0) return;
@@ -522,7 +522,7 @@ filter('filmgrain', 'Film Grain', 'Analogue', [
 /* ------------------------------------------------------------- pattern -- */
 
 filter('halftone', 'Halftone', 'Pattern', [
-  { key: 'cell', label: 'Cell px', min: 2, max: 24, step: 1, def: 5 , px: true },
+  { key: 'cell', label: 'Cell px', min: 2, max: 30, step: 1, def: 5 , px: true },
   { key: 'angle', label: 'Angle°', min: 0, max: 90, step: 1, def: 45 },
   { key: 'ink', label: 'Ink', kind: 'color', def: '#000000' },
   { key: 'paper', label: 'Paper', kind: 'color', def: '#c8d0c4' },
@@ -583,7 +583,7 @@ filter('halftone', 'Halftone', 'Pattern', [
 });
 
 filter('crosshatch', 'Crosshatch', 'Pattern', [
-  { key: 'spacing', label: 'Spacing px', min: 2, max: 24, step: 1, def: 6 , px: true },
+  { key: 'spacing', label: 'Spacing px', min: 2, max: 40, step: 1, def: 6 , px: true },
   { key: 'amount', label: 'Amount', min: 0, max: 100, step: 1, def: 70 },
   { key: 'colour', label: 'Line colour', kind: 'color', def: '#000000' },
 ], (ctx, W, H, p) => {
@@ -630,7 +630,7 @@ filter('crosshatch', 'Crosshatch', 'Pattern', [
 filter('pixelsort', 'Pixel Sort', 'Pattern', [
   { key: 'threshold', label: 'Threshold', min: 0, max: 100, step: 1, def: 45 },
   { key: 'vertical', label: 'Vertical (0/1)', min: 0, max: 1, step: 1, def: 0 },
-  { key: 'maxrun', label: 'Max run px', min: 8, max: 400, step: 4, def: 120 , px: true },
+  { key: 'maxrun', label: 'Max run px', min: 8, max: 750, step: 4, def: 120 , px: true },
 ], (ctx, W, H, p) => {
   const img = ctx.getImageData(0, 0, W, H), d = img.data;
   const th = p.threshold * 2.55;

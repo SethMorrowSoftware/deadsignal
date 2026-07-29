@@ -221,7 +221,7 @@ export function registerExtraFilters() {
     binary: ' 01',
   };
   filter('ascii', 'ASCII', 'Pattern', [
-    { key: 'cell', label: 'Cell px', min: 4, max: 32, step: 1, def: 8 , px: true },
+    { key: 'cell', label: 'Cell px', min: 4, max: 50, step: 1, def: 8 , px: true },
     {
       key: 'ramp', label: 'Glyphs', kind: 'select', def: 'classic',
       options: [
@@ -309,7 +309,7 @@ export function registerExtraFilters() {
      which is the smear people mean when they ask for it. Honest name, honest
      comment — see the file header. */
   filter('slitscan', 'Slit Scan', 'Pattern', [
-    { key: 'amount', label: 'Displacement px', min: 0, max: 300, step: 1, def: 60 , px: true },
+    { key: 'amount', label: 'Displacement px', min: 0, max: 360, step: 1, def: 60 , px: true },
     { key: 'waves', label: 'Waves', min: 1, max: 12, step: 1, def: 2 },
     { key: 'speed', label: 'Speed', min: 0, max: 300, step: 1, def: 60 },
     { key: 'axis', label: 'Axis', kind: 'select', def: 'v', options: [{ value: 'v', label: 'Vertical slits' }, { value: 'h', label: 'Horizontal slits' }] },
@@ -388,7 +388,7 @@ export function registerExtraFilters() {
   filter('ntsc', 'NTSC Composite', 'Analogue', [
     { key: 'crawl', label: 'Dot crawl', min: 0, max: 100, step: 1, def: 45 },
     { key: 'rainbow', label: 'Rainbowing', min: 0, max: 100, step: 1, def: 35 },
-    { key: 'bleed', label: 'Chroma bleed px', min: 0, max: 24, step: 1, def: 6 , px: true },
+    { key: 'bleed', label: 'Chroma bleed px', min: 0, max: 40, step: 1, def: 6 , px: true },
     { key: 'speed', label: 'Crawl speed', min: 0, max: 30, step: 1, def: 6 },
   ], (ctx, W, H, p, t) => {
     const img = ctx.getImageData(0, 0, W, H), d = img.data;
@@ -501,7 +501,7 @@ export function registerExtraFilters() {
      the "jello" every phone video of an engine has. Scan Tear displaces a few
      bands abruptly; this is the smooth continuous version. */
   filter('jello', 'Rolling Shutter', 'Analogue', [
-    { key: 'amount', label: 'Skew px', min: 0, max: 120, step: 1, def: 24 , px: true },
+    { key: 'amount', label: 'Skew px', min: 0, max: 150, step: 1, def: 24 , px: true },
     { key: 'freq', label: 'Wobble Hz', min: 0, max: 20, step: 0.5, def: 3 },
     { key: 'shear', label: 'Constant shear px', min: -80, max: 80, step: 1, def: 0 , px: true },
   ], (ctx, W, H, p, t) => {
@@ -555,7 +555,7 @@ export function registerExtraFilters() {
      thresholding to the highlights, smearing them sideways, and adding back. */
   filter('streak', 'Anamorphic Streak', 'Analogue', [
     { key: 'threshold', label: 'Highlight cutoff', min: 0, max: 255, step: 1, def: 190 },
-    { key: 'length', label: 'Length px', min: 4, max: 400, step: 2, def: 120 , px: true },
+    { key: 'length', label: 'Length px', min: 4, max: 750, step: 2, def: 120 , px: true },
     { key: 'strength', label: 'Strength', min: 0, max: 100, step: 1, def: 55 },
     { key: 'colour', label: 'Tint', kind: 'color', def: '#6fb7ff' },
   ], (ctx, W, H, p) => {
@@ -722,7 +722,7 @@ export function registerExtraFilters() {
   filter('tiltshift', 'Tilt Shift', 'Sharpness', [
     { key: 'centre', label: 'Focus centre %', min: 0, max: 100, step: 1, def: 50 },
     { key: 'band', label: 'Sharp band %', min: 2, max: 100, step: 1, def: 22 },
-    { key: 'blur', label: 'Blur px', min: 0, max: 30, step: 1, def: 8 , px: true },
+    { key: 'blur', label: 'Blur px', min: 0, max: 50, step: 1, def: 8 , px: true },
     { key: 'axis', label: 'Axis', kind: 'select', def: 'h', options: [{ value: 'h', label: 'Horizontal band' }, { value: 'v', label: 'Vertical band' }] },
   ], (ctx, W, H, p) => {
     if (p.blur <= 0) return;
@@ -754,7 +754,7 @@ export function registerExtraFilters() {
   filter('neonedge', 'Neon Edge', 'Sharpness', [
     { key: 'threshold', label: 'Edge cutoff', min: 0, max: 200, step: 1, def: 28 },
     { key: 'colour', label: 'Colour', kind: 'color', def: '#39d7ff' },
-    { key: 'glow', label: 'Glow px', min: 0, max: 40, step: 1, def: 10 , px: true },
+    { key: 'glow', label: 'Glow px', min: 0, max: 60, step: 1, def: 10 , px: true },
     { key: 'keep', label: 'Keep picture %', min: 0, max: 100, step: 1, def: 25 },
   ], (ctx, W, H, p) => {
     const img = ctx.getImageData(0, 0, W, H), d = img.data;
@@ -805,7 +805,7 @@ export function registerExtraFilters() {
     { key: 'bar', label: 'Bar', kind: 'color', def: '#0b1a2b' },
     { key: 'accent', label: 'Accent', kind: 'color', def: '#39ff9e' },
     { key: 'y', label: 'Y %', min: 0, max: 100, step: 1, def: 74 },
-    { key: 'size', label: 'Size px', min: 8, max: 64, step: 1, def: 20 , px: true },
+    { key: 'size', label: 'Size px', min: 8, max: 120, step: 1, def: 20 , px: true },
     { key: 'in', label: 'In at s', min: 0, max: 30, step: 0.1, def: 0.5 },
     { key: 'hold', label: 'Hold s', min: 0.5, max: 60, step: 0.5, def: 4 },
   ], (ctx, W, H, p, t) => {
@@ -853,7 +853,7 @@ export function registerExtraFilters() {
   filter('timecode', 'Timecode Burn', 'Frame', [
     { key: 'start', label: 'Start s', min: 0, max: 86399, step: 1, def: 13620 },
     { key: 'fps', label: 'Frames/s', min: 1, max: 60, step: 1, def: 24 },
-    { key: 'size', label: 'Size px', min: 8, max: 48, step: 1, def: 16 , px: true },
+    { key: 'size', label: 'Size px', min: 8, max: 100, step: 1, def: 16 , px: true },
     { key: 'x', label: 'X %', min: 0, max: 100, step: 1, def: 50 },
     { key: 'y', label: 'Y %', min: 0, max: 100, step: 1, def: 92 },
     { key: 'colour', label: 'Colour', kind: 'color', def: '#ffffff' },
