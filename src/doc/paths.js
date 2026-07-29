@@ -14,11 +14,19 @@ export class PathError extends Error {}
 
 /** "tabs.video.v-w" | "library.2.name" -> ["tabs","video","v-w"] */
 export function parsePath(path) {
-  if (Array.isArray(path)) return path.map(String);
-  if (typeof path !== 'string' || path === '') throw new PathError('empty path');
-  const segs = path.split('.');
+  /* An array path used to be returned unchecked — so the ban this file exists
+     to enforce could be walked straight past by passing
+     ['tabs','__proto__','polluted'] instead of the dotted form. Same segments,
+     same writes, none of the guard. Both forms are validated by one loop now,
+     because "the single choke point" has to mean every way in. */
+  const segs = Array.isArray(path)
+    ? path.map(String)
+    : (typeof path === 'string' && path !== '' ? path.split('.')
+       : (() => { throw new PathError('empty path'); })());
+  if (!segs.length) throw new PathError('empty path');
+  const shown = Array.isArray(path) ? path.join('.') : path;
   for (const s of segs) {
-    if (s === '') throw new PathError(`empty segment in "${path}"`);
+    if (s === '') throw new PathError(`empty segment in "${shown}"`);
     if (BANNED.has(s)) throw new PathError(`unsafe path segment "${s}"`);
   }
   return segs;
@@ -26,11 +34,19 @@ export function parsePath(path) {
 
 const isIndex = (s) => /^\d+$/.test(s);
 
+/* Own properties only, on both reads. `node[s]` and `s in node` both walk the
+   prototype chain, so `getPath(doc, 'tabs.video.toString')` returned a function
+   and `hasPath` agreed it was there — a document key that does not exist,
+   reported as present, with a value the store would then hand to a control. A
+   project document is plain JSON; nothing in it is ever inherited. */
+const own = (node, s) => node !== null && typeof node === 'object'
+  && Object.prototype.hasOwnProperty.call(node, s);
+
 export function getPath(root, path) {
   const segs = parsePath(path);
   let node = root;
   for (const s of segs) {
-    if (node == null) return undefined;
+    if (!own(node, s)) return undefined;
     node = node[s];
   }
   return node;
@@ -40,8 +56,7 @@ export function hasPath(root, path) {
   const segs = parsePath(path);
   let node = root;
   for (let i = 0; i < segs.length; i++) {
-    if (node == null || typeof node !== 'object') return false;
-    if (!(segs[i] in node)) return false;
+    if (!own(node, segs[i])) return false;
     node = node[segs[i]];
   }
   return true;

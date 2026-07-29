@@ -5,13 +5,13 @@
  * serialisation, the ZIP round-trip, and the forward-only migration chain from
  * the legacy v0 project format that is already on people's disks.
  */
-import { getPath, setPath, deletePath, parsePath, pathsOverlap, safeClone, PathError }
+import { getPath, hasPath, setPath, deletePath, parsePath, pathsOverlap, safeClone, PathError }
   from './src/doc/paths.js';
 import { Store, set, patch, insert, remove } from './src/doc/store.js';
 import { createDocument, normalize, isDocument, SCHEMA_VERSION } from './src/doc/schema.js';
 import { migrate, versionOf } from './src/doc/migrations.js';
 import { toJSON, fromJSON, canonicalJSON, toRfp, fromRfp } from './src/doc/serialize.js';
-import { addKey, evalTrack, hasKeys, normalizeTrack, normalizeTracks, removeKey }
+import { EASE_NAMES, addKey, evalTrack, hasKeys, makeKey, normalizeTrack, normalizeTracks, removeKey }
   from './src/doc/automation.js';
 import { hasOverrides, hasVisibleLayers, makeLayer, normalizeLayers,
          DEFAULT_SCENE, MAX_LAYERS, MAX_LAYER_SEED, MAX_LAYER_TEXT }
@@ -23,7 +23,7 @@ import { fileOf, installedFiles, mergeEntries, normalizeExisting, parseIndex, pa
 import { FORMATS, MAX_DIM, fitRatio, formatFor } from './src/core/formats.js';
 import { MAX_CLIP, MAX_CLIPS, MAX_SPEED, MAX_START, MIN_CLIP, MIN_SPEED, TRACKS, TRANSITIONS,
          clipLength, clipSpeed, isFirstOnTrack, isOverlay, isTrimmed, makeClip, normalizeClips,
-         overlaps, scheduleOf, sourceTimeOf, speedSummary }
+         overlaps, scheduleOf, sourceTimeOf, speedSummary, spineSpans }
   from './src/doc/timeline.js';
 import { REC_DURATION, SOURCE_TAB, SOURCE_VIEW, fieldsFor, isLookKey, patchFor, patchForTrack,
          patchFromRecipe, recipeShortfall, trimSummary, valueFor }
@@ -118,6 +118,38 @@ section('paths');
   check('Object.prototype is untouched', ({}).polluted === undefined);
   check('rejects an empty path', threw(() => parsePath(''), /empty path/));
   check('rejects an empty segment', threw(() => parsePath('a..b'), /empty segment/));
+
+  /* …in BOTH path forms. parsePath returned an array path unchecked, so the one
+     guard this module exists to be could be walked straight past by passing the
+     segments as a list instead of as a string. Same segments, same writes, none
+     of the ban. */
+  for (const bad of ['__proto__', 'constructor', 'prototype']) {
+    check(`rejects a "${bad}" segment given as an ARRAY path too`,
+          threw(() => setPath({}, ['a', bad, 'b'], 1), /unsafe path segment/));
+  }
+  check('Object.prototype is still untouched after the array attempts',
+        ({}).polluted === undefined && ({}).b === undefined);
+  check('rejects an empty array path', threw(() => parsePath([]), /empty path/));
+  check('rejects an empty segment in an array path',
+        threw(() => parsePath(['a', '', 'b']), /empty segment/));
+  check('…while an ordinary array path still works',
+        JSON.stringify(parsePath(['tabs', 'video', 'v-w'])) === '["tabs","video","v-w"]');
+
+  /* A document is plain JSON: nothing in it is ever inherited. Both readers
+     walked the prototype chain, so a key that does not exist was reported as
+     present with a function for a value. */
+  {
+    const doc = { tabs: { video: { 'v-w': 320 } }, library: [{ name: 'a' }] };
+    for (const inherited of ['toString', 'valueOf', 'hasOwnProperty']) {
+      check(`getPath does not find the inherited "${inherited}"`,
+            getPath(doc, `tabs.video.${inherited}`) === undefined);
+      check(`hasPath does not claim the inherited "${inherited}" is there`,
+            hasPath(doc, `tabs.video.${inherited}`) === false);
+    }
+    check('…while a real key is still found', getPath(doc, 'tabs.video.v-w') === 320
+          && hasPath(doc, 'tabs.video.v-w'));
+    check('…and an array index is still found', getPath(doc, 'library.0.name') === 'a');
+  }
 
   check('safeClone strips banned keys at depth',
         safeClone(JSON.parse('{"a":{"__proto__":{"x":1},"b":2}}')).a.__proto__.x === undefined);
@@ -441,6 +473,22 @@ section('keyframe tracks');
   const held = addKey(addKey([], 0, 0, 'hold'), 10, 100);
   check('a hold key steps rather than ramps',
         evalTrack(held, 9.9) === 0 && evalTrack(held, 10) === 100);
+
+  /* An easing NAME is checked against the names this module defines, not
+     against truthiness of EASES[name]. Every member of Object.prototype is
+     truthy, so `e: "toString"` was accepted as a valid ease and written into
+     the document — and evaluating it then called Object.prototype.toString as
+     the curve, which returns a string, which makes the interpolation NaN. A NaN
+     leaves here as a render parameter, and it survives a save and a reload. */
+  for (const inherited of ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+    check(`an inherited name is not an easing: "${inherited}"`,
+          makeKey(1, 5, inherited).e === 'linear', makeKey(1, 5, inherited).e);
+    const t = normalizeTrack([{ t: 0, v: 0, e: inherited }, { t: 10, v: 100, e: inherited }]);
+    check(`…and a track carrying it still evaluates to a number`,
+          Number.isFinite(evalTrack(t, 5)), String(evalTrack(t, 5)));
+  }
+  check('…while every declared ease is still accepted',
+        EASE_NAMES.every((e) => makeKey(1, 5, e).e === e), EASE_NAMES.join(' '));
 
   const eased = addKey(addKey([], 0, 0, 'ease'), 10, 100);
   check('ease is symmetric about the midpoint', evalTrack(eased, 5) === 50, String(evalTrack(eased, 5)));
@@ -1019,6 +1067,55 @@ section('the shape of a clip');
                           { in: 0, out: 2, transition: 'crossfade', xdur: 1 }]);
     return s.starts[1] === 2 && s.duration === 4;
   })(), JSON.stringify(scheduleOf([{ in: 0, out: 3, transition: 'cut' }, { in: 0, out: 2, transition: 'crossfade', xdur: 1 }])));
+  /* THE SEQUENCE HAS NO HOLES IN IT.
+     A clip's length is (out − in) / speed, which at any speed but 1 is a
+     repeating fraction, while the schedule publishes starts rounded to 1/100s.
+     Accumulating the raw value and publishing the rounded one let the two drift
+     apart at every join — and the compositor fills black and then draws
+     whatever covers T, so an instant covered by nothing is not a seam, it is a
+     BLACK FRAME in the preview and in the export. Measured before the fix: 9.8ms
+     of uncovered time at the worst join, which at 30fps is roughly one join in
+     three landing a sampled frame inside one.
+     Swept rather than spot-checked, because the cases that broke were the ones
+     nobody would think to write down. */
+  {
+    let seed = 20260729;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const r2 = (n) => Math.round(n * 100) / 100;
+    let uncovered = 0, worstGap = 0, sampled = 0, worstCase = '';
+    for (let trial = 0; trial < 600; trial++) {
+      const clips = [];
+      for (let i = 0, n = 2 + Math.floor(rnd() * 8); i < n; i++) {
+        const src = r2(0.5 + rnd() * 12);
+        const inn = r2(rnd() * src * 0.4);
+        clips.push(makeClip({ kind: 'scene', src, in: inn,
+          out: r2(inn + 0.1 + rnd() * (src - inn)),
+          // Speed is what turns a length into a repeating fraction.
+          speed: r2(0.25 + rnd() * 3.75),
+          transition: rnd() < 0.4 ? 'crossfade' : 'cut', xdur: r2(rnd() * 2) }));
+      }
+      const norm = normalizeClips(clips);
+      const { starts, duration } = scheduleOf(norm);
+      const spans = spineSpans(norm, starts);
+      for (let p = 0; p + 1 < spans.length; p++) {
+        const gap = spans[p + 1].s - spans[p].e;
+        if (gap > worstGap) { worstGap = gap; worstCase = `trial ${trial} join ${p}: ${gap}s`; }
+      }
+      for (const fps of [24, 30, 60]) {
+        for (let f = 0, n = Math.round(duration * fps); f < n; f++) {
+          const T = f / fps;
+          if (T >= duration) continue;
+          sampled++;
+          if (!spans.some((sp) => T >= sp.s - 1e-6 && T < sp.e + 1e-6)) uncovered++;
+        }
+      }
+    }
+    check('every instant of a sequence is covered by a clip — no black frames at a join',
+          uncovered === 0, `${uncovered} uncovered of ${sampled} sampled frames`);
+    check('…and no join leaves a gap between one clip’s end and the next one’s start',
+          worstGap <= 1e-6, worstCase || 'no gap at any join');
+  }
+
   /* An overlap longer than either clip would run the sequence backwards. */
   check('a crossfade longer than its clips is bounded by them', (() => {
     const s = scheduleOf([{ in: 0, out: 1, transition: 'cut' },

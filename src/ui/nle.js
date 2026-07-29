@@ -35,7 +35,7 @@ import { $, toast } from '../core/dom.js';
 import { download } from '../core/blobs.js';
 import { BIN_DRAG_TYPE, chooseFiles, useAsset } from './importui.js';
 import { getStore } from '../doc/session.js';
-import { clipLength, isOverlay } from '../doc/timeline.js';
+import { MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
 import { library, onLibraryChange } from '../library/library.js';
 import { activateTab } from './shell.js';
 import { selectedClip, selectedRef, focusClipAfterRender, renderTrack, setTrackZoom, trackScale, zoomToFit } from './track.js';
@@ -123,15 +123,32 @@ export function splitAtPlayhead() {
   const hit = clipAt(tlScrubT);
   if (!hit) { toast('Put the playhead over a clip to split it'); return false; }
   const c = timeline[hit.i];
-  const cut = (c.in ?? 0) + hit.local;
-  // Both halves have to survive normalizeClips' minimum length, or the split
-  // silently produces one clip and a discarded sliver.
-  if (cut - (c.in ?? 0) < 0.1 || (c.out ?? c.src) - cut < 0.1) {
+  /* SOURCE time, through the one function that knows how to get there.
+     `hit.local` is where the razor fell along the SEQUENCE; `in` and `out` are
+     positions in the source file. Those are the same number only at speed 1
+     playing forwards. `in + local` cut a 2× clip a quarter of the way in when
+     the razor was at its midpoint, and on a reversed clip it measured from the
+     wrong end entirely — so the two halves came out in the wrong order.
+     sourceTimeOf() is where the renderer, the keyframe panel and the mixer all
+     agree about this; the razor now agrees with them too. */
+  const cut = sourceTimeOf(c, hit.local);
+  /* Both halves have to survive normalizeClips' minimum length, or the split
+     silently produces one clip and a discarded sliver. Measured on the RENDERED
+     length, which is what MIN_CLIP bounds — the source-side check this replaced
+     rejected legitimate splits on a fast clip and allowed impossible ones on a
+     slow one. */
+  const len = clipLength(c);
+  if (hit.local < MIN_CLIP || len - hit.local < MIN_CLIP) {
     toast('Too close to the edge to split');
     return false;
   }
-  const left = { ...c, out: cut };
-  const right = { ...c, in: cut, transition: 'cut' };
+  /* Reversed, the first half of what you SAW is the top of the source window,
+     so it is the half whose `in` moves — the opposite of the forward case.
+     Assigning `out` to the left half regardless played the second half of the
+     material first. */
+  const left = c.reverse ? { ...c, in: cut } : { ...c, out: cut };
+  const right = c.reverse ? { ...c, out: cut, transition: 'cut' }
+                          : { ...c, in: cut, transition: 'cut' };
   if (isOverlay(c)) {
     /* An overlay is positioned, so the right half has to be TOLD where it
        starts — otherwise both halves sit at the same time and play on top of
