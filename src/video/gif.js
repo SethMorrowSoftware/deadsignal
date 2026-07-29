@@ -43,8 +43,34 @@ export function encodeGif(frames,W,H,delayCs){ const b=[]; gifHeader(b,W,H);
    canvas first. Capping the long edge keeps the format honest about what it is
    for; the .webm export is what carries full-resolution work. */
 export const GIF_MAX_DIM = 640;
+/* The frame cap, and the one thing it must not silently change: the SPEED.
+ *
+ * N is capped at 240, but collectFrames spreads those N frames across the whole
+ * clip — so the content is right. The per-frame delay was then computed from the
+ * REQUESTED rate (100/fps), which is only the right answer when the cap did not
+ * bite. A 30s clip asked for at 12fps wants 360 frames, got 240, and played them
+ * at 12fps: twenty seconds of GIF for a thirty-second clip, running 1.5x fast,
+ * with nothing said about it.
+ *
+ * "Capped at 240 frames" has to mean FEWER FRAMES, not a faster clip. Deriving
+ * the delay from the duration those frames actually cover is exactly the same
+ * number whenever the cap is not reached (100*d/(d*fps) === 100/fps), so an
+ * uncapped export is byte-identical to before.
+ */
+export const ANIM_MAX_FRAMES = 240;
+export function animFrameCount(duration, fps){
+  return clamp(Math.round(duration * fps), 2, ANIM_MAX_FRAMES);
+}
+/** Per-frame delay in the unit given, for N frames spanning `duration`. */
+export function animDelay(duration, frames, perSecond){
+  const d = Math.max(0.001, Number(duration) || 0);
+  const n = Math.max(1, Number(frames) || 1);
+  return Math.max(1, Math.round((perSecond * d) / n));
+}
+/** True when the cap changed the frame count — worth telling the author. */
+export const animCapped = (duration, fps) => Math.round(duration * fps) > ANIM_MAX_FRAMES;
 export async function exportGif(){ if(!claimExport("GIF export"))return;
-  const cfg=readVideoCfg(); const gfps=clamp(num("v-giffps",cfg.fps>15?12:cfg.fps),2,20); const N=clamp(Math.round(cfg.duration*gfps),2,240);
+  const cfg=readVideoCfg(); const gfps=clamp(num("v-giffps",cfg.fps>15?12:cfg.fps),2,20); const N=animFrameCount(cfg.duration,gfps);
   const {w:gw,h:gh}=fitWithin(cfg.W,cfg.H,GIF_MAX_DIM);
   const wrap=$("v-progress-wrap"), bar=$("v-progress"), status=$("v-status"), stop=$("v-stop");
   const setP=(p,label)=>{ if(bar)bar.style.width=(p*100)+"%"; if(status)status.textContent=label+" "+Math.round(p*100)+"%"; };
@@ -53,6 +79,10 @@ export async function exportGif(){ if(!claimExport("GIF export"))return;
   if(wrap)wrap.style.display="block"; if(stop)stop.disabled=false;
   log("Encoding "+N+"-frame GIF at "+gw+"×"+gh
       +(gw!==cfg.W?" (scaled from "+cfg.W+"×"+cfg.H+" — GIF is capped at "+GIF_MAX_DIM+"px)":"")
+      +(animCapped(cfg.duration,gfps)
+        ? " — capped at "+ANIM_MAX_FRAMES+" frames, so it plays at "
+          +(N/cfg.duration).toFixed(1)+"fps rather than "+gfps+" (same length, fewer frames)"
+        : "")
       +(cfg.scene==="videoin"?" (seeking clip)":"")+"...","info");
   try{
     const frames=await collectFrames(cfg,N,{maxDim:GIF_MAX_DIM, cancelled:stillExportCancelled,
@@ -62,7 +92,8 @@ export async function exportGif(){ if(!claimExport("GIF export"))return;
        whole-clip synchronous encode froze the tab for its full duration — no
        progress, no STOP — and one plain number array held every output byte
        as a boxed double, hundreds of MB of transient memory on a long clip. */
-    const delay=Math.round(100/gfps); const chunks=[];
+    // Centiseconds across the length these N frames actually cover.
+    const delay=animDelay(cfg.duration,N,100); const chunks=[];
     { const b=[]; gifHeader(b,gw,gh); chunks.push(new Uint8Array(b)); }
     for(let i=0;i<frames.length;i++){
       if(stillExportCancelled()){ bail(); return; }
@@ -98,14 +129,19 @@ async function exportAnimated(kind){
   try{
   const cfg=readVideoCfg();
   const fps=clamp(num("v-giffps",cfg.fps>15?12:cfg.fps),2,20);
-  const N=clamp(Math.round(cfg.duration*fps),2,240);
+  const N=animFrameCount(cfg.duration,fps);
   const {w:aw,h:ah}=fitWithin(cfg.W,cfg.H,GIF_MAX_DIM);
   log("Encoding "+N+"-frame "+label+" at "+aw+"×"+ah
       +(aw!==cfg.W?" (scaled from "+cfg.W+"×"+cfg.H+")":"")
+      +(animCapped(cfg.duration,fps)
+        ? " — capped at "+ANIM_MAX_FRAMES+" frames, so it plays at "
+          +(N/cfg.duration).toFixed(1)+"fps rather than "+fps+" (same length, fewer frames)"
+        : "")
       +(cfg.scene==="videoin"?" (seeking clip)":"")+"…","info");
   const frames=await collectFrames(cfg,N,{maxDim:GIF_MAX_DIM, cancelled:stillExportCancelled});
   if(stillExportCancelled()||frames.length<N){ log(label+" export cancelled — discarded.","warn"); toast("Export cancelled","warn"); return; }
-  const delayMs=Math.round(1000/fps);
+  // Milliseconds across the length these N frames actually cover — see animDelay.
+  const delayMs=animDelay(cfg.duration,N,1000);
   let blob;
   try{
     blob = kind==="apng" ? await encodeAPNG(frames,{ delayMs })
