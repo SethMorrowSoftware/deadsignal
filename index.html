@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DEAD SIGNAL STUDIO</title>
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/layout.css">
+<link rel="stylesheet" href="styles/controls.css">
+<link rel="stylesheet" href="styles/panels.css">
+<link rel="stylesheet" href="styles/workspace.css">
+<link rel="stylesheet" href="styles/editor.css">
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="top" role="banner">
+  <h1>▓ DEAD SIGNAL STUDIO</h1>
+  <span class="sub">analogue-horror · cyberpunk · vaporwave asset forge</span>
+  <span class="spacer"></span>
+  <span class="ctl">aesthetic <select id="aesthetic" title="reskin + preset pack">
+    <option value="analogue-horror">Analogue Horror</option>
+    <option value="cyberpunk">Cyberpunk</option>
+    <option value="vaporwave">Vaporwave</option>
+    <option value="erebus">EREBUS</option>
+  </select><button class="btn small" id="pack-apply" title="Load this aesthetic's whole pack: palette plus a matching starting preset on all three tabs (one undo)">◆ PACK</button></span>
+  <!-- Bounded to the range the seed actually has. currentSeed() coerces with
+       >>>0, so the effective domain is a 32-bit unsigned integer: a typed -1
+       became 4294967295 and a typed 1e12 became something else again, with the
+       box still showing what was typed. Declaring it here makes the control
+       agree with the code rather than the code quietly overruling the box. -->
+  <span class="ctl">seed <input type="number" id="seed" value="1947" min="0" max="4294967295" step="1" style="width:80px" title="deterministic seed for all randomness">
+    <button class="btn small" id="seed-roll" title="new random seed">⟳</button></span>
+  <span class="ctl">CRT <input type="range" id="crt-intensity" min="0" max="100" value="50" style="width:70px" title="tool chrome CRT intensity (does not affect output)"></span>
+  <span class="ctl"><label for="contrast">contrast</label>
+    <select id="contrast" title="High contrast turns off the CRT overlay and phosphor glow in the tool's own interface. Rendered media is unaffected.">
+      <option value="normal">Normal</option><option value="high">High</option>
+    </select></span>
+  <span class="ctl"><label for="complexity">detail</label>
+    <select id="complexity" title="How many controls to show. A view filter only — hidden settings still apply.">
+      <option value="1">Simple</option><option value="2" selected>Studio</option><option value="3">Deep</option>
+    </select></span>
+  <span class="ctl">
+    <button class="btn small" id="editor-toggle" aria-pressed="false" title="Switch between the editor and the classic tabbed layout">▦ EDITOR</button>
+    <button class="btn small" id="workspace-toggle" aria-pressed="false" title="Switch between the tabbed layout and the three-pane workspace (Ctrl+\)" aria-keyshortcuts="Control+\">▤ TABS</button>
+    <button class="btn small" id="palette-open" title="Search everything (Ctrl+K)" aria-keyshortcuts="Control+K">⌕ SEARCH</button>
+    <button class="btn small" id="explain-toggle" aria-pressed="false" title="Explain mode: click any control to learn what it does (?)" aria-keyshortcuts="?">? EXPLAIN</button>
+  </span>
+  <span class="ctl">
+    <button class="btn small" id="proj-save" title="download project recipe (.json)">SAVE PROJ</button>
+    <button class="btn small" id="proj-load" title="load project recipe">LOAD</button>
+    <input type="file" id="proj-file" aria-label="Load project file" accept=".json,application/json" style="display:none">
+  </span>
+</header>
+
+<div class="tabs" id="tabs" role="tablist" aria-label="Studio sections">
+  <div class="tab active" data-view="video" role="tab" id="tab-video" aria-controls="view-video" aria-selected="true" tabindex="0">VIDEO</div>
+  <div class="tab" data-view="audio" role="tab" id="tab-audio" aria-controls="view-audio" aria-selected="false" tabindex="-1">AUDIO</div>
+  <div class="tab" data-view="image" role="tab" id="tab-image" aria-controls="view-image" aria-selected="false" tabindex="-1">SCREEN</div>
+  <div class="tab" data-view="timeline" role="tab" id="tab-timeline" aria-controls="view-timeline" aria-selected="false" tabindex="-1">TIMELINE</div>
+  <div class="tab" data-view="library" role="tab" id="tab-library" aria-controls="view-library" aria-selected="false" tabindex="-1">LIBRARY</div>
+  <div class="tab" data-view="bundle" role="tab" id="tab-bundle" aria-controls="view-bundle" aria-selected="false" tabindex="-1">BUNDLE</div>
+  <div class="tab" data-view="cloud" role="tab" id="tab-cloud" aria-controls="view-cloud" aria-selected="false" tabindex="-1">CLOUD</div>
+  <div class="tab" data-view="help" role="tab" id="tab-help" aria-controls="view-help" aria-selected="false" tabindex="-1">HELP</div>
+</div>
+
+<div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-h" tabindex="-1">
+  <div class="welcome-card">
+    <h2 id="welcome-h">▓ WELCOME</h2>
+    <p>This is an offline forge for analogue-horror, cyberpunk and vaporwave media. Everything renders in your browser and downloads to your machine — nothing is uploaded.</p>
+    <ol class="welcome-steps">
+      <li><b>Make a look.</b> Pick a Scene on VIDEO, or a template on SCREEN, and dial in the decay. Every control explains itself — press <b>?</b> then click one.</li>
+      <li><b>Export it.</b> <b>● RECORD</b> writes a <code>.webm</code> or <code>.mp4</code> — the <b>File</b> picker chooses — faster than real time. Audio renders to <code>.wav</code>, screens to <code>.png</code>.</li>
+      <li><b>Ship it.</b> The <b>BUNDLE</b> tab turns your library into campaign-ready files and a drop-in <code>.zip</code>.</li>
+    </ol>
+    <p class="hint">Lost? <b>Ctrl+K</b> searches every setting, scene and action by name.</p>
+    <div class="btns">
+      <button class="btn" id="welcome-sample">◆ START FROM A SAMPLE</button>
+      <button class="btn small" id="welcome-close">Start empty</button>
+    </div>
+    <p class="hint">The sample is a finished 10-second clip — a keyframed decay, a stacked digital-rain layer and a stereo bed — set up so you can change one thing and see what it does.</p>
+  </div>
+</div>
+
+<main id="main-content">
+  <!-- ===================== VIDEO ===================== -->
+  <section class="view active" id="view-video" role="tabpanel" aria-labelledby="tab-video" tabindex="0">
+    <p class="tabhelp">Pick a <b>Scene</b>, dial in the CRT/VHS look and text, scrub the preview, then <b>Record</b> — the <b>File</b> picker chooses <code>.webm</code> or <code>.mp4</code>. Bring your own art with <b>⇪ IMG</b> or footage with <b>⇪ VID</b> (drop files on the preview). Also exports <code>.gif</code> and a frame-strip. Tip: click a section title to fold it.</p>
+    <div class="grid">
+      <div class="panel stagewrap">
+        <h2>PREVIEW · TERMINAL / CRT VIDEO → .webm / .mp4 <span id="v-est" class="tag"></span><span id="v-flash" class="tag flashmeter" aria-live="polite">flash 0/s</span></h2>
+        <div class="screen"><canvas id="vcanvas" class="stage" width="320" height="240"></canvas></div>
+        <div class="scrub"><button class="btn small" id="v-playpause" title="play/pause preview">▮▮</button>
+          <input type="range" id="v-scrub" min="0" max="1000" value="0" title="scrub preview time">
+          <span id="v-time" class="tag">0.0s</span></div>
+        <div class="btns">
+          <button class="btn" id="v-record">● RECORD .webm</button>
+          <button class="btn small" id="v-stop" disabled>■ STOP</button>
+          <button class="btn small amber" id="v-gif">⤓ .gif</button>
+          <button class="btn small amber" id="v-apng" title="lossless, 24-bit, real alpha — the archival one">⤓ .apng</button>
+          <button class="btn small amber" id="v-awebp" title="24-bit with real alpha, a fraction of the size — the one to upload">⤓ .webp</button>
+          <button class="btn small" id="v-strip">⤓ frames</button>
+          <button class="btn small amber" id="v-grab">⌗ STILL</button>
+          <button class="btn small" id="v-loadimg" title="import an image to Ken Burns">⇪ IMG</button>
+          <button class="btn small" id="v-loadvid" title="import a video clip to filter (CRT/VHS + stego)">⇪ VID</button>
+          <button class="btn small" id="v-savepreset">✚</button>
+          <input type="file" id="v-imgfile" aria-label="Import image file" accept="image/*" style="display:none">
+          <input type="file" id="v-vidfile" aria-label="Import video file" accept="video/*" style="display:none">
+        </div>
+        <div class="meter" id="v-progress-wrap" style="display:none;width:100%"><div id="v-progress" style="width:0%"></div></div>
+        <div class="hint" id="v-status" role="status" aria-live="polite">Idle. Adjust, preview, then record.</div>
+        <div id="v-banners" style="width:100%"></div>
+      </div>
+      <div class="panel" style="max-height:82vh;overflow:auto">
+        <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="v-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
+        <fieldset data-section="Look" class="macros"><legend>QUICK LOOK</legend><div class="row"><label for="v-macro-grime">Grime</label><input type="range" id="v-macro-grime" min="0" max="100" value="0" class="grow"></div><div class="row"><label for="v-macro-decay">Decay</label><input type="range" id="v-macro-decay" min="0" max="100" value="0" class="grow"></div><p class="hint">One dial each. They write the individual settings below, so everything stays adjustable.</p></fieldset>
+        <div class="row"><label for="v-preset">Preset</label><select id="v-preset" class="grow"></select><button class="btn small" id="v-gallery-btn" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="v-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
+        <div class="gallery" id="v-gallery" data-generated style="display:none"></div>
+        <div class="row"><label for="v-scene">Scene</label><select id="v-scene" class="grow"></select></div>
+          <div class="row"><label for="v-srckey">Footage</label><select id="v-srckey" class="grow" title="Which imported clip the Video In scene plays — captured with the clip, so a sequence can cut between different files"></select></div>
+        <fieldset data-section="Look"><legend>OUTPUT <span class="lk"><input type="checkbox" id="lock-v-out" title="keep this section when a preset is loaded or Randomize runs"> <label for="lock-v-out">lock</label></span><span class="rst" data-reset="out">↺</span></legend>
+          <div class="split3">
+            <div class="row"><label for="v-w">W</label><input type="number" id="v-w" value="320" min="64" max="1920" step="2"></div>
+            <div class="row"><label for="v-h">H</label><input type="number" id="v-h" value="240" min="48" max="1920" step="2"></div>
+            <div class="row"><label for="v-fps">FPS</label><input type="number" id="v-fps" value="12" min="4" max="30"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-dur">Seconds</label><input type="number" id="v-dur" value="10" min="1" max="60"></div>
+            <div class="row"><label for="v-aspect">Aspect</label><select id="v-aspect" class="grow"></select></div>
+          </div>
+          <div class="row"><label for="v-audio">Sound</label><select id="v-audio" class="grow" title="Audio track muxed into the exported clip"></select></div>
+          <div class="row"><label for="v-container">File</label><select id="v-container" class="grow"></select></div>
+          <div class="row"><label for="v-format">Format</label><select id="v-format" class="grow" title="Sets the frame to a delivery size"></select></div>
+          <div class="split3">
+            <div class="row"><label for="v-codec">Codec</label><select id="v-codec" class="grow"></select></div>
+            <div class="row"><label for="v-bitrate">Mbps</label><input type="number" id="v-bitrate" value="0" min="0" max="40" step="0.5" title="0=auto"></div>
+            <div class="row"><label for="v-ss">2×SS</label><input type="checkbox" id="v-ss"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-bg">Back</label><input type="color" id="v-bg" value="#020806"></div>
+            <div class="row"><label for="v-fg">Phosphor</label><input type="color" id="v-fg" value="#39ff9e"></div>
+          </div>
+          <div class="row"><label for="v-palette">Palette</label><select id="v-palette" class="grow"></select></div>
+          <div class="split3">
+            <div class="row"><label for="v-fade">Fade s</label><input type="number" id="v-fade" value="0" min="0" max="6" step="0.1"></div>
+            <div class="row"><label for="v-giffps">Anim fps</label><input type="number" id="v-giffps" value="12" min="2" max="20" title="frame rate for the .gif / .apng / .webp exports"></div>
+            <div class="row"><label for="v-frames">Frames</label><input type="number" id="v-frames" value="12" min="2" max="64" title="frames in the strip export"></div>
+          </div>
+          <div class="row"><label for="v-audioreact">Audio-react</label><input type="checkbox" id="v-audioreact" title="scope traces the last rendered audio clip"></div>
+        </fieldset>
+        <fieldset data-section="Text"><legend>TEXT <span class="lk"><input type="checkbox" id="lock-v-text" title="keep this section when a preset is loaded or Randomize runs"> <label for="lock-v-text">lock</label></span></legend>
+          <textarea id="v-text" aria-label="On-screen text" placeholder="On-screen text...">EREBUS ARCHIVE NODE
+LISTENING...
+signal integrity: 100%</textarea>
+          <div class="split2">
+            <div class="row"><label for="v-textmode">Mode</label><select id="v-textmode" class="grow"><option value="static">static</option><option value="typed">typewriter</option><option value="decode">decode-in</option><option value="scroll">scroll up</option></select></div>
+            <div class="row"><label for="v-font">Font px</label><input type="number" id="v-font" value="16" min="6" max="72"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-fontfam">Typeface</label><select id="v-fontfam" class="grow"></select></div>
+            <div class="row"><label for="v-wrap">Wrap</label><input type="checkbox" id="v-wrap" title="break long lines to fit the frame"></div>
+          </div>
+          <div class="split3">
+            <div class="row"><label for="v-cps">Speed</label><input type="number" id="v-cps" value="14" min="1" max="120" title="cps / scroll speed"></div>
+            <div class="row"><label for="v-align">Align</label><select id="v-align" class="grow"><option value="left">left</option><option value="center">center</option><option value="right">right</option></select></div>
+            <div class="row"><label for="v-cursor">Cursor</label><input type="checkbox" id="v-cursor" checked></div>
+            <div class="row"><label for="v-lspace">Letterspace</label><input type="range" id="v-lspace" min="-10" max="40" value="0" class="grow" title="letter-spacing, as a percentage of the type size"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-corrupt">Corrupt %</label><input type="range" id="v-corrupt" min="0" max="100" value="0" class="grow" title="glyph corruption on glitch"></div>
+            <div class="row"><label for="v-fullwidth">ａｅｓｔｈ</label><input type="checkbox" id="v-fullwidth" title="fullwidth vaporwave text"></div>
+          </div>
+        </fieldset>
+        <fieldset data-section="Text"><legend>TEXT VARIABLES</legend>
+          <p class="hint">One fact about your campaign, named once. Write <span class="k">{{subject}}</span> in any text box on any tab and it fills in from here — so a preset becomes a form you fill in rather than one finished artifact.</p>
+          <div data-vars-mount="video" data-generated></div>
+        </fieldset>
+        <fieldset data-section="Text"><legend>HUD</legend>
+          <div class="row"><label for="v-hud">Status bar</label><input type="text" id="v-hud" class="grow" placeholder="CAM 47 // LAB-3   REC ●"></div>
+          <div class="split2">
+            <div class="row"><label for="v-tc">Timecode</label><input type="checkbox" id="v-tc" checked></div>
+            <div class="row"><label for="v-tcstart">TC start</label><input type="text" id="v-tcstart" value="03:47:00"></div>
+          </div>
+          <div class="row"><label for="v-morse">Morse word</label><input type="text" id="v-morse" class="grow" placeholder="EREBUS"></div>
+          <div class="row"><label for="v-blink">Blink code</label><input type="text" id="v-blink" class="grow" placeholder="flash whole screen (word=morse, number=N flashes)"></div>
+        </fieldset>
+        <fieldset data-section="FX"><legend>CRT / VHS FX</legend>
+          <div class="split2">
+            <div class="row"><label for="v-scan">Scanlines</label><input type="range" id="v-scan" min="0" max="100" value="38" class="grow"></div>
+            <div class="row"><label for="v-noise">Static</label><input type="range" id="v-noise" min="0" max="100" value="16" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-vig">Vignette</label><input type="range" id="v-vig" min="0" max="100" value="55" class="grow"></div>
+            <div class="row"><label for="v-flick">Flicker</label><input type="range" id="v-flick" min="0" max="100" value="10" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-glitch">Glitch</label><input type="range" id="v-glitch" min="0" max="100" value="12" class="grow"></div>
+            <div class="row"><label for="v-chroma">Chroma</label><input type="range" id="v-chroma" min="0" max="100" value="14" class="grow" title="chromatic aberration"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-bloom">Bloom</label><input type="range" id="v-bloom" min="0" max="100" value="18" class="grow"></div>
+            <div class="row"><label for="v-persist">Persist</label><input type="range" id="v-persist" min="0" max="100" value="0" class="grow" title="phosphor persistence / ghosting"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-mask">Mask</label><input type="range" id="v-mask" min="0" max="100" value="0" class="grow" title="shadow-mask / aperture grille"></div>
+            <div class="row"><label for="v-hum">Hum bar</label><input type="range" id="v-hum" min="0" max="100" value="0" class="grow" title="rolling brightness bar"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-track">Tracking</label><input type="range" id="v-track" min="0" max="100" value="0" class="grow" title="VHS tracking tear"></div>
+            <div class="row"><label for="v-shake">Shake</label><input type="range" id="v-shake" min="0" max="100" value="0" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="v-roll">Roll</label><input type="range" id="v-roll" min="0" max="100" value="0" class="grow" title="vertical hold / rolling picture"></div>
+            <div class="row"><label for="v-dither">Dither</label><input type="checkbox" id="v-dither" title="ordered dither to palette"></div>
+          </div>
+        </fieldset>
+        <fieldset data-section="FX"><legend>REVEAL / SUBLIMINAL</legend>
+          <div class="split2">
+            <div class="row"><label for="v-reveal">Reveal</label><input type="text" id="v-reveal" class="grow" placeholder="OBSERVE"></div>
+            <div class="row"><label for="v-revhold">Hold s</label><input type="number" id="v-revhold" value="1.2" min="0" max="10" step="0.1"></div>
+          </div>
+          <div class="row"><label for="v-sub">Subliminal</label><input type="text" id="v-sub" class="grow" placeholder="text flashed for 1-2 frames"></div>
+          <div class="split2">
+            <div class="row"><label for="v-subat">Sub at s</label><input type="number" id="v-subat" value="-1" min="-1" max="60" step="0.1" title="-1 = seeded random"></div>
+            <div class="row"><label for="v-subframes">Sub frames</label><input type="number" id="v-subframes" value="2" min="1" max="10"></div>
+          </div>
+        </fieldset>
+        <fieldset data-section="Motion" id="v-layers-fieldset"><legend>LAYERS <span class="tag" id="v-layers-count"></span></legend>
+          <p class="hint">Stack more scenes over the one above. Layers are listed top-down the way they sit on screen. Each one can carry its <b>own text, colour and size</b> — open <b>own text / look</b> on a layer to give it a caption the clip underneath does not have — and a <b>variant</b> number re-rolls that layer's randomness, so a second Digital Rain is a different rain rather than the first one twice. Leave a field empty and the layer follows the clip below it.</p>
+          <div class="btns"><button class="btn small" id="v-layers-add" title="Add a scene on top of the current one">＋ LAYER</button></div>
+          <div id="v-layers-list" data-generated></div>
+        </fieldset>
+        <fieldset data-section="Motion" id="v-filters-fieldset"><legend>FILTERS <span class="tag" id="v-filters-count"></span></legend>
+          <p class="hint">A chain applied <b>after</b> the CRT look above, top to bottom — so the order is yours: grade it cold and <i>then</i> crush the bit depth is a different picture from the other way round. ◉ bypasses a step without losing its settings.</p>
+          <div class="row">
+            <select id="v-filters-pick" class="grow" aria-label="filter to add"></select>
+            <button class="btn small amber" id="v-filters-add" title="Add this filter to the end of the chain">＋ FILTER</button>
+            <button class="btn small" id="v-filters-clear" title="Remove every filter">✕ clear</button>
+          </div>
+          <div id="v-filters-list" data-generated></div>
+        </fieldset>
+        <fieldset data-section="Motion" id="v-auto-fieldset"><legend>KEYFRAMES</legend>
+          <p class="hint">Make a setting change over the clip. Scrub to a time, set the control, then <b>◆ KEY</b>. Two keys make a ramp; one key holds a value.</p>
+          <div class="row"><label for="v-auto-param">Parameter</label><select id="v-auto-param" class="grow"></select></div>
+          <div class="btns">
+            <button class="btn small" id="v-auto-key" title="Add a key at the current preview time using this control's value">◆ KEY</button>
+            <button class="btn small" id="v-auto-clear" title="Remove every key on this parameter">⌫ CLEAR</button>
+          </div>
+          <div id="v-auto-list" data-generated></div>
+        </fieldset>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== AUDIO ===================== -->
+  <section class="view" id="view-audio" role="tabpanel" aria-labelledby="tab-audio" tabindex="0">
+    <p class="tabhelp">Toggle sound <b>layers</b> (drone, noise, pulses, Morse, DTMF…) into a <b>master FX bus</b>, <b>Render</b>, watch the peak meter, optionally <b>Normalize</b>, then download <code>.wav</code>. Render length auto-extends to fit all content.</p>
+    <div class="grid">
+      <div class="panel stagewrap">
+        <h2>PREVIEW · SYNTH AUDIO → .wav <span id="a-stale" class="badge2">—</span></h2>
+        <div class="screen" id="a-wavewrap" style="width:100%;position:relative"><canvas id="acanvas" class="stage" width="600" height="150" style="width:100%;touch-action:none;cursor:text"></canvas><div id="a-selection" class="wave-sel" style="display:none"></div></div>
+        <p class="hint" id="a-selinfo">Drag on the wave to select a range.</p>
+        <div class="row" style="width:100%"><label>Peak</label><div class="meter grow"><div id="a-peak" style="width:0%"></div></div><span id="a-peakv" class="tag">—</span></div>
+        <fieldset><legend>EDITS <span class="tag" id="a-regions-count"></span></legend>
+          <p class="hint">Drag a range on the wave, then apply an edit to it. Edits are part of the project — they undo, they save, and every render replays them, so the same project always produces the same wave.</p>
+          <div class="row">
+            <select id="a-region-op" class="grow" aria-label="edit to apply"></select>
+            <span class="row" style="display:none"><label for="a-region-amount">Amount</label><input type="number" id="a-region-amount" value="100" min="0" max="400" step="5"></span>
+            <button class="btn small amber" id="a-region-add" disabled>＋ APPLY</button>
+            <button class="btn small" id="a-regions-clear" title="Remove every edit">✕ clear</button>
+          </div>
+          <div id="a-regions-list" data-generated></div>
+        </fieldset>
+        <div class="btns">
+          <button class="btn" id="a-render">◆ RENDER</button>
+          <button class="btn small" id="a-play" disabled>▶ PLAY</button>
+          <button class="btn small" id="a-dl" disabled>⤓ .wav</button>
+          <button class="btn small amber" id="a-norm" disabled>NORMALIZE</button>
+          <button class="btn small" id="a-savepreset">✚ PRESET</button>
+        </div>
+        <div class="hint" id="a-status" role="status" aria-live="polite">Idle. Configure layers + FX, then render.</div>
+        <div id="a-banners" style="width:100%"></div>
+      </div>
+      <div class="panel" style="max-height:82vh;overflow:auto">
+        <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="a-tidy" title="fold away layers that are turned off">⊟ TIDY</button><button class="btn small" id="a-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
+        <div class="hint" id="a-active" style="margin-bottom:6px">no layers enabled</div>
+        <div class="solo-banner" id="a-solo-banner" role="status" aria-live="polite" style="display:none"></div>
+        <fieldset data-section="Quick" class="macros"><legend>QUICK SOUND</legend><div class="row"><label for="a-macro-warmth">Warmth</label><input type="range" id="a-macro-warmth" min="0" max="100" value="0" class="grow"></div><div class="row"><label for="a-macro-degrade">Degrade</label><input type="range" id="a-macro-degrade" min="0" max="100" value="0" class="grow"></div><p class="hint">One dial each. They write the individual settings below, so everything stays adjustable.</p></fieldset>
+        <div class="row"><label for="a-preset">Preset</label><select id="a-preset" class="grow"></select><button class="btn small" id="a-gallery-btn" title="Browse every preset by what it turns on" aria-expanded="false">⊞</button><button class="btn small" id="a-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
+        <div class="gallery" id="a-gallery" data-generated style="display:none"></div>
+        <div class="split3">
+          <div class="row"><label for="a-dur">Seconds</label><input type="number" id="a-dur" value="8" min="1" max="60"></div>
+          <div class="row"><label for="a-sr">Rate</label><select id="a-sr" class="grow"><option value="22050">22050</option><option value="44100">44100</option><option value="48000">48000</option></select></div>
+          <div class="row"><label for="a-bits">Bits</label><select id="a-bits" class="grow"><option value="16">16</option><option value="8">8</option><option value="24">24</option></select></div>
+        </div>
+        <div class="split3">
+          <div class="row"><label for="a-fade">Fade s</label><input type="number" id="a-fade" value="0.4" min="0" max="5" step="0.1"></div>
+          <div class="row"><label for="a-loop">Loop xf</label><input type="checkbox" id="a-loop" title="seamless loop crossfade"></div>
+          <div class="row"><label for="a-autonorm">Auto-level</label><input type="checkbox" id="a-autonorm" title="normalize to a safe level automatically on render"></div>
+        </div>
+        <div class="split2">
+          <div class="row"><label for="a-channels">Channels</label><select id="a-channels" class="grow"><option value="2">Stereo</option><option value="1">Mono</option></select></div>
+          <div class="row"><span class="hint">Pan each layer below; width lives in the FX bus.</span></div>
+        </div>
+        <fieldset data-section="Core"><legend>DRONE</legend>
+          <div class="row"><input type="checkbox" id="a-drone" checked> <label for="a-drone">enable</label></div>
+          <div class="split2">
+            <div class="row"><label for="a-drone-f">Freq</label><input type="number" id="a-drone-f" value="70" min="20" max="2000"></div>
+            <div class="row"><label for="a-drone-w">Wave</label><select id="a-drone-w" class="grow"><option>sine</option><option>square</option><option>sawtooth</option><option>triangle</option></select></div>
+          </div>
+          <div class="split3">
+            <div class="row"><label for="a-drone-g">Level</label><input type="range" id="a-drone-g" min="0" max="100" value="35" class="grow"></div>
+            <div class="row"><label for="a-drone-voices">Voices</label><input type="number" id="a-drone-voices" value="1" min="1" max="9"></div>
+            <div class="row"><label for="a-drone-det">Detune</label><input type="range" id="a-drone-det" min="0" max="60" value="0" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="a-drone-spread">Spread</label><input type="range" id="a-drone-spread" min="0" max="100" value="0" class="grow"></div>
+            <div class="row"><label for="a-drone-pan">Pan</label><input type="range" id="a-drone-pan" min="-100" max="100" value="0" class="grow"></div>
+          </div>
+        </fieldset>
+        <fieldset data-section="Core"><legend>NOISE</legend>
+          <div class="row"><input type="checkbox" id="a-noise"> <label for="a-noise">enable</label></div>
+          <div class="split2">
+            <div class="row"><label for="a-noise-g">Level</label><input type="range" id="a-noise-g" min="0" max="100" value="18" class="grow"></div>
+            <div class="row"><label for="a-noise-lp">LP cut</label><input type="number" id="a-noise-lp" value="1200" min="100" max="12000"></div>
+          </div>
+          <div class="row"><label for="a-noise-pan">Pan</label><input type="range" id="a-noise-pan" min="-100" max="100" value="0" class="grow"></div>
+        </fieldset>
+        <fieldset data-section="Core"><legend>PULSE TRAIN</legend>
+          <div class="row"><input type="checkbox" id="a-pulse"> <label for="a-pulse">enable (count-the-pulses)</label></div>
+          <div class="split3">
+            <div class="row"><label for="a-pulse-n">Count</label><input type="number" id="a-pulse-n" value="47" min="1" max="200"></div>
+            <div class="row"><label for="a-pulse-f">Freq</label><input type="number" id="a-pulse-f" value="440" min="40" max="4000"></div>
+            <div class="row"><label for="a-pulse-rate">Per s</label><input type="range" id="a-pulse-rate" min="1" max="12" value="4" class="grow"></div>
+          </div>
+          <div class="row"><label for="a-pulse-pan">Pan</label><input type="range" id="a-pulse-pan" min="-100" max="100" value="0" class="grow"></div>
+        </fieldset>
+        <fieldset data-section="Core"><legend>MORSE</legend>
+          <div class="row"><input type="checkbox" id="a-morse"> <label for="a-morse">enable</label></div>
+          <div class="split3">
+            <div class="row"><label for="a-morse-w">Word</label><input type="text" id="a-morse-w" value="EREBUS"></div>
+            <div class="row"><label for="a-morse-f">Freq</label><input type="number" id="a-morse-f" value="620" min="200" max="2000"></div>
+            <div class="row"><label for="a-morse-u">Unit</label><input type="number" id="a-morse-u" value="0.09" min="0.03" max="0.4" step="0.01"></div>
+          </div>
+          <div class="row"><label for="a-morse-pan">Pan</label><input type="range" id="a-morse-pan" min="-100" max="100" value="0" class="grow"></div>
+        </fieldset>
+        <fieldset data-section="Core"><legend>IMPORTED SAMPLE</legend>
+          <div class="row"><input type="checkbox" id="a-sample"> <label for="a-sample">enable</label>
+            <button class="btn small" id="a-loadaudio" title="import a .wav/.mp3/.ogg/.flac to run through the FX bus">⇪ AUDIO</button>
+            <span class="tag" id="a-sample-name">none loaded</span>
+            <input type="file" id="a-samplefile" aria-label="Import audio file" accept="audio/*" style="display:none"></div>
+          <div class="split3">
+            <div class="row"><label for="a-sample-g">Level</label><input type="range" id="a-sample-g" min="0" max="100" value="70" class="grow"></div>
+            <div class="row"><label for="a-sample-pan">Pan</label><input type="range" id="a-sample-pan" min="-100" max="100" value="0" class="grow"></div>
+            <div class="row"><label for="a-sample-loop">Loop</label><input type="checkbox" id="a-sample-loop" title="repeat to fill the render instead of playing once"></div>
+          </div>
+          <p class="hint">Your own recording, through the whole FX bus &mdash; wow, bitcrush, telephone, reverb. Everything below still layers on top of it.</p>
+        </fieldset>
+        <fieldset data-section="Core"><legend>EXTRA LAYERS</legend>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="a-sub"> <label for="a-sub">sub-bass</label></div>
+            <div class="row"><label for="a-sub-f">Hz</label><input type="number" id="a-sub-f" value="30" min="15" max="60"></div>
+          </div>
+          <div class="row"><label for="a-sub-pan">Pan</label><input type="range" id="a-sub-pan" min="-100" max="100" value="0" class="grow"></div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="a-heart"> <label for="a-heart">heartbeat</label></div>
+            <div class="row"><label for="a-heart-bpm">BPM</label><input type="number" id="a-heart-bpm" value="60" min="30" max="180"></div>
+          </div>
+          <div class="row"><label for="a-heart-pan">Pan</label><input type="range" id="a-heart-pan" min="-100" max="100" value="0" class="grow"></div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="a-geiger"> <label for="a-geiger">geiger</label></div>
+            <div class="row"><label for="a-geiger-rate">clk/s</label><input type="number" id="a-geiger-rate" value="6" min="1" max="60"></div>
+          </div>
+          <div class="row"><label for="a-geiger-pan">Pan</label><input type="range" id="a-geiger-pan" min="-100" max="100" value="0" class="grow"></div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="a-dtmf"> <label for="a-dtmf">DTMF dial</label></div>
+            <div class="row"><label for="a-dtmf-d">digits</label><input type="text" id="a-dtmf-d" value="5550347"></div>
+          </div>
+          <div class="row"><label for="a-dtmf-pan">Pan</label><input type="range" id="a-dtmf-pan" min="-100" max="100" value="0" class="grow"></div>
+          <div class="row"><input type="checkbox" id="a-dial"> <label for="a-dial">dial-up sequence (~6s)</label></div>
+          <div class="row"><label for="a-dial-pan">Pan</label><input type="range" id="a-dial-pan" min="-100" max="100" value="0" class="grow"></div>
+        </fieldset>
+        <!-- Registry layers (src/audio/layers.js) generate their own fieldsets
+             here at boot. They are ordinary fieldsets with an ordinary
+             checkbox, so the layer summary, TIDY, collapse/reset and the
+             document binding pick them up with no special handling. -->
+        <div id="a-extra-layers" data-generated></div>
+        <fieldset data-section="Mix" id="a-fx-fieldset"><legend>FX CHAIN <span class="tag" id="a-fx-count"></span></legend>
+          <p class="hint">A chain applied <b>after</b> the master bus below, top to bottom — so the order is yours: gate it and <i>then</i> ping-pong the result is a different sound from the other way round. ◉ bypasses a step without losing its settings.</p>
+          <div class="row">
+            <select id="a-fx-pick" class="grow" aria-label="effect to add"></select>
+            <button class="btn small amber" id="a-fx-add" title="Add this effect to the end of the chain">＋ FX</button>
+            <button class="btn small" id="a-fx-clear" title="Remove every effect">✕ clear</button>
+          </div>
+          <div id="a-fx-list" data-generated></div>
+        </fieldset>
+        <fieldset data-section="Mix"><legend>MASTER FX BUS</legend>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-width"> <label for="fx-width">stereo width</label></div>
+            <div class="row"><label for="fx-width-a">Width</label><input type="range" id="fx-width-a" min="0" max="200" value="100" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-ring"> <label for="fx-ring">ring mod</label></div>
+            <div class="row"><label for="fx-ring-f">Hz</label><input type="number" id="fx-ring-f" value="30" min="1" max="800"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-trem"> <label for="fx-trem">tremolo</label></div>
+            <div class="row"><label for="fx-trem-f">Hz</label><input type="number" id="fx-trem-f" value="5" min="0.1" max="20" step="0.1"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-wow"> <label for="fx-wow">wow/flutter</label></div>
+            <div class="row"><label for="fx-wow-d">depth</label><input type="range" id="fx-wow-d" min="0" max="100" value="40" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-dist"> <label for="fx-dist">distortion</label></div>
+            <div class="row"><label for="fx-dist-d">drive</label><input type="range" id="fx-dist-d" min="0" max="100" value="40" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-delay"> <label for="fx-delay">delay</label></div>
+            <div class="row"><label for="fx-delay-t">time s</label><input type="number" id="fx-delay-t" value="0.25" min="0.02" max="1.5" step="0.01"></div>
+          </div>
+          <div class="row"><label for="fx-delay-fb">feedback</label><input type="range" id="fx-delay-fb" min="0" max="90" value="40" class="grow"></div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-reverb"> <label for="fx-reverb">reverb</label></div>
+            <div class="row"><label for="fx-reverb-d">decay s</label><input type="number" id="fx-reverb-d" value="2.2" min="0.2" max="8" step="0.1"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-phone"> <label for="fx-phone">telephone band</label></div>
+            <div class="row"><input type="checkbox" id="fx-limit" checked> <label for="fx-limit">limiter</label></div>
+          </div>
+          <div class="split2">
+            <div class="row"><input type="checkbox" id="fx-crush"> <label for="fx-crush">bitcrush</label></div>
+            <div class="row"><label for="fx-crush-b">bits</label><input type="number" id="fx-crush-b" value="8" min="1" max="16"></div>
+          </div>
+        </fieldset>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SCREEN ===================== -->
+  <section class="view" id="view-image" role="tabpanel" aria-labelledby="tab-image" tabindex="0">
+    <p class="tabhelp">Choose a Win95 / CRT / paper <b>template</b>, apply CRT or image FX, optionally hide a <b>stego</b> token in the pixels, then export <code>.png</code> (1–4× supersample) or a degraded <code>.jpg</code>. Import your own art with <b>⇪ IMG</b>.</p>
+    <div class="grid">
+      <div class="panel stagewrap">
+        <h2>PREVIEW · STATIC SCREEN → .png <span id="i-est" class="tag"></span></h2>
+        <div class="screen"><canvas id="icanvas" class="stage" width="480" height="360"></canvas></div>
+        <div class="btns">
+          <button class="btn" id="i-render">◆ RENDER</button>
+          <button class="btn" id="i-dl">⤓ .png</button>
+          <button class="btn small" id="i-jpg">⤓ .jpg</button>
+          <button class="btn small" id="i-loadimg" title="import an image to retro-ify">⇪ IMG</button>
+          <button class="btn small amber" id="i-decode">DECODE STEGO</button>
+          <button class="btn small" id="i-savepreset">✚ PRESET</button>
+          <input type="file" id="i-imgfile" aria-label="Import image file" accept="image/*" style="display:none">
+        </div>
+        <div class="hint" id="i-status" role="status" aria-live="polite">Idle.</div>
+        <div id="i-banners" style="width:100%"></div>
+      </div>
+      <div class="panel" style="max-height:82vh;overflow:auto">
+        <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="i-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
+        <div class="row"><label for="i-preset">Preset</label><select id="i-preset" class="grow"></select><button class="btn small" id="i-gallery-btn" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="i-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
+        <div class="gallery" id="i-gallery" data-generated style="display:none"></div>
+        <div class="row"><label for="i-tpl">Template</label><select id="i-tpl" class="grow"></select></div>
+        <fieldset data-section="Look"><legend>OUTPUT <span class="lk"><input type="checkbox" id="lock-i-out" title="keep this section when a preset is loaded or Randomize runs"> <label for="lock-i-out">lock</label></span></legend>
+          <div class="split3">
+            <div class="row"><label for="i-w">W</label><input type="number" id="i-w" value="480" min="120" max="1920" step="2"></div>
+            <div class="row"><label for="i-h">H</label><input type="number" id="i-h" value="360" min="90" max="1920" step="2"></div>
+            <div class="row"><label for="i-scale">Scale</label><select id="i-scale" class="grow"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="i-format">Format</label><select id="i-format" class="grow" title="Sets the frame to a delivery size"></select></div>
+            <div class="row"><label for="i-aspect">Aspect</label><select id="i-aspect" class="grow"></select></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="i-bg">Back</label><input type="color" id="i-bg" value="#020806"></div>
+            <div class="row"><label for="i-fg">Ink</label><input type="color" id="i-fg" value="#39ff9e"></div>
+          </div>
+          <div class="row"><label for="i-palette">Palette</label><select id="i-palette" class="grow"></select></div>
+          <p class="hint" id="i-palette-note" aria-live="polite"></p>
+          <div class="row"><label for="i-trans">Transparent</label><input type="checkbox" id="i-trans" title="skip background (overlays)"></div>
+        </fieldset>
+        <fieldset data-section="Look"><legend>CONTENT <span class="lk"><input type="checkbox" id="lock-i-text" title="keep this section when a preset is loaded or Randomize runs"> <label for="lock-i-text">lock</label></span></legend>
+          <div class="row"><label for="i-title">Title / code</label><input type="text" id="i-title" class="grow" value="ARCHIVE_NODE"></div>
+          <textarea id="i-body" aria-label="Screen body text">C:\&gt; type CONSCIOUSNESS_MAP.txt
+03:47:03  map: 100%
+03:47:03  OBSERVE
+03:47:47  hello.
+C:\&gt; _</textarea>
+          <div class="split3">
+            <div class="row"><label for="i-font">Font px</label><input type="number" id="i-font" value="15" min="6" max="48"></div>
+            <div class="row"><label for="i-fontfam">Typeface</label><select id="i-fontfam" class="grow"></select></div>
+            <div class="row"><label for="i-wrap">Wrap</label><input type="checkbox" id="i-wrap" title="break long lines to fit — on every template with a prose body (tables and hex dumps are left alone)"></div>
+          </div>
+          <div class="row"><label for="i-lspace">Letterspace</label><input type="range" id="i-lspace" min="-10" max="40" value="0" class="grow" title="letter-spacing, as a percentage of the type size"></div>
+          <div class="row"><label for="i-extra">Extra</label><input type="text" id="i-extra" class="grow" placeholder="template-specific (code / badge / etc.)"></div>
+        </fieldset>
+        <fieldset data-section="Marks"><legend>MARKS <span class="tag" id="i-anno-count"></span></legend>
+          <div class="split3">
+            <div class="row"><label for="i-anno-kind">Mark</label><select id="i-anno-kind" class="grow"></select></div>
+            <div class="row"><label for="i-anno-color">Colour</label><input type="color" id="i-anno-color" value="#39ff9e"></div>
+            <div class="row"><button class="btn small" id="i-anno-add">✚ ADD</button><button class="btn small" id="i-anno-clear" title="remove every mark">CLEAR</button></div>
+          </div>
+          <div class="row"><label for="i-anno-text">Text</label><input type="text" id="i-anno-text" class="grow" value="NOTE" maxlength="200"></div>
+          <p class="hint">Templates bake their own layout; marks are the layer that does not. Drag one on the preview to move it, drag its corner grip to size it. Positions are fractions of the canvas, so they survive a size or aspect change.</p>
+          <div id="i-anno-list" data-generated></div>
+        </fieldset>
+        <fieldset data-section="Marks"><legend>TEXT VARIABLES</legend>
+          <p class="hint">Shared with every other tab — the same <span class="k">{{name}}</span> works in a scene, a screen and a preset.</p>
+          <div data-vars-mount="image" data-generated></div>
+        </fieldset>
+        <fieldset data-section="FX"><legend>CRT / PAPER FX</legend>
+          <div class="split2">
+            <div class="row"><label for="i-scan">Scanlines</label><input type="range" id="i-scan" min="0" max="100" value="30" class="grow"></div>
+            <div class="row"><label for="i-noise">Static</label><input type="range" id="i-noise" min="0" max="100" value="8" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="i-vig">Vignette</label><input type="range" id="i-vig" min="0" max="100" value="45" class="grow"></div>
+            <div class="row"><label for="i-chroma">Chroma</label><input type="range" id="i-chroma" min="0" max="100" value="0" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="i-bloom">Bloom</label><input type="range" id="i-bloom" min="0" max="100" value="0" class="grow"></div>
+            <div class="row"><label for="i-dead">Dead px</label><input type="range" id="i-dead" min="0" max="100" value="0" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="i-copy">Photocopy</label><input type="range" id="i-copy" min="0" max="100" value="0" class="grow" title="paper aging"></div>
+            <div class="row"><label for="i-skew">Skew</label><input type="range" id="i-skew" min="0" max="100" value="0" class="grow"></div>
+          </div>
+        </fieldset>
+        <fieldset data-section="FX"><legend>IMAGE FX (great on imported art)</legend>
+          <div class="split2">
+            <div class="row"><label for="i-duotone">Duotone</label><input type="checkbox" id="i-duotone" title="map luminance to Back→Ink gradient"></div>
+            <div class="row"><label for="i-posterize">Posterize</label><input type="range" id="i-posterize" min="0" max="100" value="0" class="grow"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="i-halftone">Halftone</label><input type="range" id="i-halftone" min="0" max="100" value="0" class="grow" title="dot screen"></div>
+            <div class="row"><label for="i-pixsort">Pixel-sort</label><input type="range" id="i-pixsort" min="0" max="100" value="0" class="grow" title="glitch-art sort"></div>
+          </div>
+        </fieldset>
+        <fieldset data-section="FX"><legend>HIDDEN CHANNEL</legend>
+          <div class="row"><label for="i-stego">Stego LSB</label><input type="text" id="i-stego" class="grow" placeholder="secret embedded in PNG pixels"></div>
+          <div class="row"><label for="i-invert">Invert text</label><input type="text" id="i-invert" class="grow" placeholder="near-invisible; reveal by inverting"></div>
+        </fieldset>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TIMELINE ===================== -->
+  <section class="view" id="view-timeline" role="tabpanel" aria-labelledby="tab-timeline" tabindex="0">
+    <p class="tabhelp">Chain several VIDEO scenes into one clip. Set up a look on the <b>VIDEO</b> tab, click <b>＋ Add current scene</b>, repeat, then <b>Record sequence</b> — the clips play back-to-back with your chosen transition and land in the LIBRARY as one <code>.webm</code> or <code>.mp4</code>.</p>
+    <div class="grid">
+      <div class="panel stagewrap">
+        <h2>SEQUENCE PREVIEW → .webm / .mp4 <span id="tl-info" class="tag"></span></h2>
+        <div class="screen"><canvas id="tlcanvas" class="stage" width="360" height="270"></canvas></div>
+        <div class="scrub"><button class="btn small" id="tl-playpause" title="play/pause preview">▮▮</button>
+          <input type="range" id="tl-scrub" min="0" max="1000" value="0" title="scrub the sequence">
+          <span id="tl-time" class="tag">0.0s</span>
+          <button class="btn small" id="tl-sound" aria-pressed="true" title="Preview sound">🔈 SOUND</button>
+          <span id="tl-peak" class="tag" title="Loudest sample in the sequence mix. The mix is not limited, so past 0 dB the encoder clamps." aria-live="polite"></span></div>
+        <div class="btns">
+          <button class="btn" id="tl-record">● RECORD sequence</button>
+          <button class="btn small" id="tl-stop" disabled>■ STOP</button>
+          <button class="btn small amber" id="tl-add" title="Append the VIDEO tab's current look">＋ SCENE</button>
+          <button class="btn small amber" id="tl-still" title="Append the SCREEN tab's current render, held">＋ STILL</button>
+          <button class="btn small amber" id="tl-title" title="Words over the picture: a title on V2 at the playhead, edited in the CLIP panel">＋ TITLE</button>
+          <button class="btn small amber" id="tl-shape" title="A box, arrow, bracket or crosshair over the picture: a shape on V2 at the playhead">＋ SHAPE</button>
+          <input type="number" id="tl-stilldur" value="3" min="0.1" max="60" step="0.5" style="width:4.5em" aria-label="Still hold seconds" title="how long a still is held">
+          <button class="btn small" id="tl-clear">✕ clear all</button>
+        </div>
+        <div id="tl-track" class="tl-track"></div>
+        <div class="meter" id="tl-progress-wrap" style="display:none;width:100%"><div id="tl-progress" style="width:0%"></div></div>
+        <div class="hint" id="tl-status">Build a look on the VIDEO tab, then add it as a clip.</div>
+      </div>
+      <div class="panel" style="max-height:82vh;overflow:auto">
+        <h2>SEQUENCE <span class="hdr-actions"><button class="btn small" id="tl-reset" title="reset sequence settings to defaults">⟲ RESET</button></span></h2>
+        <fieldset><legend>OUTPUT</legend>
+          <div class="split3">
+            <div class="row"><label for="tl-w">W</label><input type="number" id="tl-w" value="360" min="64" max="1920" step="2"></div>
+            <div class="row"><label for="tl-h">H</label><input type="number" id="tl-h" value="270" min="48" max="1920" step="2"></div>
+            <div class="row"><label for="tl-fps">FPS</label><input type="number" id="tl-fps" value="12" min="4" max="30"></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="tl-container">File</label><select id="tl-container" class="grow"></select></div>
+          <div class="row"><label for="tl-format">Format</label><select id="tl-format" class="grow" title="Sets the frame to a delivery size"></select></div>
+            <div class="row"><label for="tl-aspect">Aspect</label><select id="tl-aspect" class="grow"></select></div>
+          </div>
+          <div class="split2">
+            <div class="row"><label for="tl-xtype">Transition</label><select id="tl-xtype" class="grow"><option value="cut">cut</option><option value="crossfade" selected>crossfade</option><option value="dip">dip to black</option></select></div>
+            <div class="row"><label for="tl-xdur">Trans s</label><input type="number" id="tl-xdur" value="0.6" min="0" max="4" step="0.1" title="transition length (crossfade/dip)"></div>
+          </div>
+          <div class="row"><label for="tl-audio">Sound</label><select id="tl-audio" class="grow" title="Audio track muxed into the exported sequence"></select></div>
+          <div class="row"><label for="tl-asrc">Lane</label><select id="tl-asrc" class="grow" title="Which sound ＋ SOUND puts on the audio lane"></select>
+            <button class="btn small amber" id="tl-addaudio" title="Put that sound on the audio lane, starting at the playhead">＋ SOUND</button></div>
+          <p class="hint" style="margin:4px 0 0">Transition and length above are the <b>default a new clip takes</b> — each clip carries its own, editable in the table below. Each clip keeps its own scene, text and FX; only W/H/FPS are unified here. <code>Video In</code> clips play your imported footage live.</p>
+        </fieldset>
+        <fieldset><legend>CLIPS <span id="tl-count" class="tag"></span></legend>
+          <div style="overflow:auto"><table class="lib" id="tl-table"><thead><tr>
+            <th scope="col">#</th><th scope="col">clip</th><th scope="col">in via</th><th scope="col">from</th><th scope="col">to</th><th scope="col">plays</th><th scope="col">sound</th><th scope="col"><span class="sr-only">reorder and remove</span></th>
+          </tr></thead><tbody id="tl-body"></tbody></table></div>
+        </fieldset>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== LIBRARY ===================== -->
+  <section class="view" id="view-library" role="tabpanel" aria-labelledby="tab-library" tabindex="0">
+    <div class="panel">
+      <h2>SESSION LIBRARY <span><button class="btn small" id="lib-clear">CLEAR ALL</button></span></h2>
+      <p class="hint">Every generated asset is collected here. Set name / kind / gated / release beat per row; the BUNDLE tab turns the whole table into a drop-in campaign package. Rows and their media are saved automatically and come back after a reload; a row whose bytes could not be restored is marked <b>no bytes</b> — re-render it.</p>
+      <div style="overflow:auto"><table class="lib" id="lib-table"><thead><tr>
+        <th>#</th><th>name</th><th>kind</th><th>gated</th><th>release beat</th><th>size</th><th>actions</th>
+      </tr></thead><tbody id="lib-body"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <h2>BATCH EXPORT</h2>
+      <p class="hint">Export a whole set in one go — every preset as a file, or every clip in the sequence as its own file. Renders from recipes, so <b>your own settings are not touched</b>.</p>
+      <fieldset><legend>BATCH</legend>
+        <div class="row"><label for="bx-source">Export</label><select id="bx-source" class="grow"></select></div>
+        <p class="hint" id="bx-hint"></p>
+        <div class="split2">
+          <div class="row"><label for="bx-seconds">Sec each</label><input type="number" id="bx-seconds" value="3" min="0" max="60"></div>
+          <div class="row"><label for="bx-container">File</label><select id="bx-container" class="grow"></select></div>
+        </div>
+        <div class="row">
+          <button class="btn amber" id="bx-run">▶ EXPORT BATCH</button>
+          <button class="btn" id="bx-stop" disabled>■ STOP</button>
+        </div>
+        <div id="bx-progress-wrap" style="display:none"><div class="progress"><div id="bx-progress"></div></div></div>
+        <p class="hint" id="bx-status"></p>
+      </fieldset>
+    </div>
+  </section>
+
+  <!-- ===================== BUNDLE ===================== -->
+  <section class="view" id="view-bundle" role="tabpanel" aria-labelledby="tab-bundle" tabindex="0">
+    <div class="grid">
+      <div class="panel">
+        <h2>CAMPAIGN TARGET</h2>
+        <p class="hint">Which campaign this bundle is for. The release beats below are the identifiers your <span class="k">call releaseMedia</span> lines get grouped under, so they must match that campaign's script.</p>
+        <div class="row"><label for="b-profile">Profile</label>
+          <select id="b-profile" class="grow">
+            <option value="erebus">EREBUS (this repo)</option>
+            <option value="blank">Another campaign</option>
+          </select></div>
+        <div class="row"><label for="b-cname">Campaign name</label><input type="text" id="b-cname" class="grow" placeholder="EREBUS"></div>
+        <div class="row"><label for="b-cid">Bundle id</label><input type="text" id="b-cid" class="grow" placeholder="erebus"></div>
+        <div class="row col"><label for="b-beats">Release beats</label>
+          <textarea id="b-beats" rows="4" class="grow" placeholder="one per line — leave empty to use the profile's beats"></textarea></div>
+      </div>
+      <div class="panel">
+        <h2>CAMPAIGN FILES</h2>
+        <p class="hint">Import what the campaign already has. The bundle then contains the <b>complete merged</b> files, so installing it is a straight overwrite instead of hand-editing JSON. Optional &mdash; without it the bundle describes only this library.</p>
+        <div class="btns">
+          <button class="btn small" id="cf-manifest-btn">⇪ media-manifest.json</button>
+          <button class="btn small" id="cf-vindex-btn">⇪ videos/index.json</button>
+          <button class="btn small" id="cf-mindex-btn">⇪ music/index.json</button>
+          <button class="btn small" id="cf-autoexec-btn" title="Only the filenames it already releases are read; the script itself is not stored">⇪ autoexec.retro</button>
+          <button class="btn small" id="cf-clear">⌫ CLEAR</button>
+          <input type="file" id="cf-manifest" aria-label="Import media-manifest.json" accept=".json,application/json" style="display:none">
+          <input type="file" id="cf-vindex" aria-label="Import videos index.json" accept=".json,application/json" style="display:none">
+          <input type="file" id="cf-mindex" aria-label="Import music index.json" accept=".json,application/json" style="display:none">
+          <input type="file" id="cf-autoexec" aria-label="Import autoexec.retro" accept=".retro,text/plain" style="display:none">
+        </div>
+        <div id="cf-summary"></div>
+      </div>
+      <div class="panel">
+        <h2>TURNKEY CAMPAIGN BUNDLE</h2>
+        <p class="hint">Generates campaign-ready wiring for every library asset: the merged <span class="k">media-manifest.json</span>, both <span class="k">index.json</span> files, and beat-grouped <span class="k">call releaseMedia</span> lines. Or export a single drop-in <span class="k">.zip</span> mirroring the repo layout.</p>
+        <div class="btns">
+          <button class="btn" id="b-gen">◆ GENERATE WIRING</button>
+          <button class="btn amber" id="b-zip">⤓ CAMPAIGN BUNDLE .zip</button>
+          <button class="btn small" id="b-validate">✔ VALIDATE</button>
+        </div>
+        <div id="b-report"></div>
+        <div id="b-out"></div>
+      </div>
+      <div class="panel">
+        <h2>BEAT COVERAGE</h2>
+        <p class="hint">Which library assets are assigned to each known release beat.</p>
+        <div id="b-coverage"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== CLOUD ===================== -->
+  <section class="view" id="view-cloud" role="tabpanel" aria-labelledby="tab-cloud" tabindex="0">
+    <p class="tabhelp">Optional. The studio works with no backend at all &mdash; this tab only appears to do anything when one is installed. It syncs projects between machines, stores assets on the server, and shares a project with someone else.</p>
+    <div class="grid">
+      <div class="panel">
+        <h2>SERVER</h2>
+        <div id="cloud-status"></div>
+        <div class="row"><label for="cloud-apibase">API</label><input type="text" id="cloud-apibase" class="grow" placeholder="detected automatically — or type an address"></div>
+        <!-- A real form so Enter in either field submits (routed to the same
+             cloud-signin click cloud.js wires; the inline script below stops
+             the navigation). The inputs carry no name= — nothing serializes. -->
+        <form id="cloud-auth">
+          <div class="split2">
+            <div class="row"><label for="cloud-user">Display name</label><input type="text" id="cloud-user" class="grow" autocomplete="username"></div>
+            <div class="row"><label for="cloud-pass">Password</label><input type="password" id="cloud-pass" class="grow" autocomplete="current-password"></div>
+          </div>
+          <div class="btns"><button class="btn" id="cloud-signin" type="submit">SIGN IN</button></div>
+          <p class="hint">The studio has no register form of its own — accounts come from the IlluminatOS! install it is deployed with. Register there (or ask an admin to create one), then sign in here with the same display name and password.</p>
+        </form>
+        <div class="btns">
+          <button class="btn small" id="cloud-refresh">⟳ REFRESH</button>
+          <button class="btn small" id="cloud-signout" style="display:none">SIGN OUT</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>THIS PROJECT</h2>
+        <div class="row"><label for="cloud-name">Name</label><input type="text" id="cloud-name" class="grow" placeholder="Untitled"></div>
+        <div class="btns">
+          <button class="btn" id="cloud-save">⇧ SAVE TO SERVER</button>
+          <button class="btn small" id="cloud-new" title="Detach from the open server project so the next save creates a new one">＋ AS NEW</button>
+          <button class="btn small amber" id="cloud-upload">⇧ UPLOAD LIBRARY</button>
+        </div>
+        <div class="hint" id="cloud-upload-status" role="status" aria-live="polite"></div>
+        <p class="hint">Assets are deduplicated by content, so uploading the library again sends only what changed. Saving keeps a snapshot of what it replaced, recoverable from the version history.</p>
+      </div>
+      <div class="panel" style="grid-column:1/-1">
+        <h2>PROJECTS ON THE SERVER</h2>
+        <div id="cloud-projects"></div>
+      </div>
+      <div class="panel" id="cloud-detail-panel" style="grid-column:1/-1;display:none">
+        <h2>SELECTED PROJECT <span class="tag" id="cloud-detail-name"></span></h2>
+        <div class="grid2">
+          <div>
+            <h3>Version history</h3>
+            <p class="hint">Every save snapshots what it replaced. Named snapshots are kept forever; autosaves keep the most recent 50.</p>
+            <div class="row"><label for="cloud-snap-label">Label</label><input type="text" id="cloud-snap-label" class="grow" placeholder="what this version is"><button class="btn small" id="cloud-snapshot">◆ SNAPSHOT</button></div>
+            <div id="cloud-versions"></div>
+          </div>
+          <div>
+            <h3>Sharing</h3>
+            <p class="hint">Grant a named person access, or mint a link. A link is read-only, works for someone with no account, and is shown once &mdash; revoke it here if it gets out.</p>
+            <div class="split2">
+              <div class="row"><label for="cloud-share-user">User</label><input type="text" id="cloud-share-user" class="grow" placeholder="display name — empty for a link"></div>
+              <div class="row"><label for="cloud-share-role">Access</label><select id="cloud-share-role" class="grow"><option>viewer</option><option>commenter</option><option>editor</option></select></div>
+            </div>
+            <div class="row"><label for="cloud-share-days">Link expires</label><input type="number" id="cloud-share-days" min="1" max="365" placeholder="never"><span class="hint">days</span>
+              <button class="btn small" id="cloud-share-add">＋ SHARE</button></div>
+            <div id="cloud-share-token"></div>
+            <div id="cloud-shares"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" style="grid-column:1/-1">
+        <h2>ASSETS ON THE SERVER <span class="tag" id="cloud-assets-count"></span></h2>
+        <p class="hint">Pull media back down on another machine &mdash; opening a project brings the recipe, this brings the files it refers to.</p>
+        <div id="cloud-assets"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== HELP ===================== -->
+  <section class="view" id="view-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0">
+    <div class="panel">
+      <h2>HOW TO USE <span class="hdr-actions"><button class="btn small" id="help-welcome">▓ Show the welcome card</button></span></h2>
+      <p>Offline, no dependencies, no network. Serve <span class="k">tools/media-studio/</span> from any static server &mdash; <span class="k">python -m http.server</span> in that folder is enough &mdash; and open it. A browser will not load ES modules straight off the filesystem, which is why it is served rather than double-clicked; nothing is uploaded and everything renders locally and downloads to your machine.</p>
+      <ol>
+        <li><b>VIDEO</b> — pick a Scene, tune the CRT/VHS stack + text, preview (scrub to any frame), then <b>Record .webm</b>. Export runs offline and faster than real time &mdash; a 10s clip takes about a second &mdash; and does not need the tab focused. Also exports animated <b>.gif</b> and a frame-strip. <b>Bring your own art</b>: <b>⇪ IMG</b> (Ken Burns) or <b>⇪ VID</b> — import a video clip (or drop one on the preview) and run it through the whole CRT/VHS + reveal/subliminal stack, then re-export. Plays natively in the campaign.<br><b>Keyframes</b>: scrub to a time, set a control, press <b>◆ KEY</b> — two keys make a ramp, so a look can build or decay across the clip. <b>Layers</b>: stack up to six more scenes over the base, each with its own blend and opacity.</li>
+        <li><b>AUDIO</b> — enable layers + a master FX bus (reverb / delay / distortion / wow-flutter / bitcrush / telephone), <b>Render</b>, check the peak meter, optionally <b>Normalize</b>, download <b>.wav</b> (8/16/24-bit). Renders in <b>stereo</b>: every layer has its own pan, drone voices spread across the field, and a mid/side <b>width</b> control sits last on the bus. <b>⇪ AUDIO</b> imports your own recording and runs it through the same FX bus.</li>
+        <li><b>SCREEN</b> — choose a Win95/CRT/paper template, apply CRT or paper-aging FX, embed a stego/hidden-channel token, export <b>.png</b> (1–4× supersample) or degraded <b>.jpg</b>. Import your own art with <b>⇪ IMG</b>.</li>
+        <li><b>TIMELINE</b> — cut several scenes into one clip: set up a look on VIDEO and press <b>＋ SCENE</b>, or a screen on SCREEN and press <b>＋ STILL</b>; then edit on the <b>track</b> — drag a block to reorder it, drag its edge to trim it, click to select. Each clip enters on its own transition (cut / crossfade / dip-to-black). <b>Record sequence</b> &rarr; one <b>.webm</b> in the library, exported offline like a single clip.</li>
+        <li><b>LIBRARY</b> — name each asset, set gated + release beat.</li>
+        <li><b>BUNDLE</b> &mdash; pick the <b>campaign target</b> (which campaign, which release beats), generate the manifest/index/release wiring, validate it against that campaign's contract, or download a drop-in <b>.zip</b>.<br><b>Import your campaign's current files</b> (<span class="k">media-manifest.json</span>, both <span class="k">index.json</span>, <span class="k">autoexec.retro</span>) and the bundle contains the <b>complete merged</b> result — installing becomes an overwrite instead of hand-editing JSON, and release lines you already have are left out of the snippet.</li>
+      </ol>
+      <p><b>Sound on a clip:</b> the <b>Sound</b> picker on VIDEO muxes an audio track into the exported <code>.webm</code> — the last <b>AUDIO</b> render, or any <code>.wav</code> in the library. A bed shorter than the clip loops to fill it, a longer one is trimmed, and the console says which happened. It travels in the recipe, so it is captured into a timeline clip and restored with the project. Leave it <b>— silent —</b> and export behaves exactly as it always did.</p>
+      <p><b>Three animated stills:</b> <code>.gif</code>, <code>.apng</code> and <code>.webp</code> sit together on VIDEO and share one frame rate. <b>GIF</b> is 256 colours and one bit of transparency — it survives because it plays absolutely everywhere. <b>APNG</b> is lossless, 24-bit, with real alpha: the archival one. <b>WebP</b> is 24-bit with real alpha at a fraction of the size of either — the one to upload. All three are capped at 640px, because these are for a message or a post and a lossless 1080×1920 animation is a download nobody wants.</p>
+      <p><b>The waveform is an editor:</b> drag a range on the wave and apply an edit — <b>silence</b>, <b>fade in/out</b>, <b>gain</b>, <b>reverse</b>, or <b>crop to</b> the selection. Edits are part of the project rather than a destructive button: they undo, they save, and <em>every render replays them</em>, so the same project always produces the same wave. They apply in order, each addressing the buffer as it then is — which matters only for crop, the one that changes the length.</p>
+      <p><b>RESET, LOAD and BATCH:</b> <b>RESET</b> means the whole tab — the filter chain, layers, keyframes, audio FX, region edits, solo and screen marks go with the sliders, in one undo. <b>LOAD</b> backfills: a project older than a control resets that control to its default rather than leaving it at whatever you last set, so the look a file gives you never depends on what was on screen before you opened it. <b>BATCH</b> renders from recipes and never from the controls, for both document chains — a screen batch no more picks up your marks than a video batch picks up your filter chain.</p>
+      <p><b>Type:</b> text can be <b>left</b>, <b>centred</b> or <b>right</b> aligned — the caret follows the type, so right-aligned text still ends in a cursor. <b>Letterspace</b> is letter-spacing as a percentage of the type size, so the same setting looks right on a small caption and a large title; negative values tighten. It is set once per frame beside the typeface, so every string a scene or template draws takes it. Zero touches nothing at all, so an older project is unchanged.</p>
+      <p><b>Aesthetic packs:</b> the <b>aesthetic</b> switch reskins the tool and sets a palette; <b>◆ PACK</b> beside it goes the rest of the way — it loads that world's starting preset on VIDEO, AUDIO and SCREEN as well, in one undo. Each aesthetic also names the scenes and screens that belong to it, so those two pickers <em>group</em> them at the top under the aesthetic's name with everything else underneath. Grouped, never filtered: a horror screen in a cyberpunk project is a legitimate choice and every one of the 48 scenes and 46 screens is still one scroll away.</p>
+      <p><b>Preset gallery:</b> <b>⊞</b> beside any preset picker opens a grid of every preset in the list. On VIDEO and SCREEN each card is a <em>real render</em> at your current seed — the same path the export uses — showing what you get when you click it (the tab defaults with the preset over the top, exactly as loading applies it). AUDIO gets a contents list instead of a picture, because forty waveforms at that size are forty grey bricks; the card names the layers and effects the preset switches on. It starts closed, renders a few cards per frame, and redraws when you roll a new seed.</p>
+      <p><b>Marks (SCREEN):</b> every template bakes its own layout, which is what makes them one-click and also why a caption could not be moved. Marks are the layer that is not baked — <b>text</b>, <b>box</b>, <b>redaction</b>, <b>ellipse</b>, <b>line</b> and <b>arrow</b>, placed over any of the 46. Add one and drag it on the preview; drag its corner grip to size it. Positions are fractions of the canvas, so a resize or an aspect change keeps them where you put them, and marks draw <em>under</em> the CRT pass — they are on the screen, not on the glass. No pointer needed: click a mark's name in the list and the arrow keys nudge it, Shift+arrow moves further, Alt+arrow resizes.</p>
+      <p><b>Solo:</b> every layer has an <b>S</b> button beside its enable box — press it to hear only that layer, or a few to hear only those. The arrangement is never touched: the enable boxes keep what you set them to and clearing solo brings the whole mix back exactly. It undoes like everything else. <em>It does apply to export</em>, because here the render is the export — which is why an amber banner appears while anything is soloed and every soloed render prints a warning naming what was audible.</p>
+      <p><b>Batch export:</b> on the LIBRARY tab. Export <b>every VIDEO preset</b> as a short clip, <b>every SCREEN preset</b> as a .png, or <b>every TIMELINE clip</b> on its own — trimmed exactly as you cut it. Each source shows how many files that is before you commit. <b>Your own settings are not touched</b>: a batch renders from recipes rather than from the controls, so exporting forty-five presets leaves your work, your undo history and your document exactly as they were. <b>Sec each</b> caps how long video items run, because a batch is a contact sheet — set it to 0 for full length. STOP keeps everything already exported.</p>
+      <p><b>MP4:</b> the <b>File</b> picker on VIDEO and TIMELINE chooses the container. <b>WebM</b> plays in any browser; <b>MP4 (H.264)</b> is the one to hand to anything that is not a browser — a phone, an editor, an upload. H.264 is a licensed codec and some browser builds ship without it: those get a WebM and a line in the console saying why, rather than a failure or a file that claims to be an MP4 and is not.</p>
+      <p><b>The audio FX chain:</b> the master bus is fixed — one control each, always in the same order. <b>FX CHAIN</b> is the part you order yourself, and it is the same panel as the video filter chain: pick one, <b>＋ FX</b>, ↑ ↓ to reorder, ◉ to bypass, ✕ to remove. <b>3-Band EQ</b>, <b>Chorus / Flanger</b>, <b>Auto-Pan</b>, <b>Ping-Pong Delay</b>, <b>Pump / Gate</b>, <b>Stutter</b>, <b>Reverse Sections</b> and <b>Pitch Shift</b>. An empty chain changes nothing, so anything you made before it sounds the same.</p>
+      <p><b>Sound layers:</b> <b>26</b>, each with its own <b>pan</b> and all through the same master FX bus. Beside the originals (drone, noise, pulse train, Morse, sub-bass, heartbeat, geiger, DTMF, dial-up) are <b>Vinyl Crackle</b>, <b>Room Tone</b>, <b>Rain</b>, <b>Wind</b>, <b>Mains Hum</b>, <b>Clock Tick</b>, <b>Water Drip</b>, <b>Siren</b>, <b>Radio Tuning</b>, <b>Fax / Handshake</b>, <b>Answering Machine</b>, <b>Tape Stop</b>, <b>Tape Rewind</b>, <b>Breathing</b>, <b>Bell</b> and <b>Reversed Whisper</b>. A layer that places a sound at a time you chose — the beep, the tape stop — extends the render to fit. <b>⊟ TIDY</b> folds away everything switched off.</p>
+      <p><b>Scenes:</b> <b>48</b> of them, from Terminal and Snow through the instrument panels (Radar, <b>Sonar</b>, <b>Satellite Tracking</b>, <b>Dashcam</b>, <b>Vitals Monitor</b>, CCTV Multiplex) and the device screens (<b>VHS On-Screen Display</b>, <b>Teletext Page</b>, <b>Split-Flap Board</b>, <b>Keypad / Access</b>, <b>Elevator Indicator</b>, <b>IRC Log</b>, <b>Kernel Panic</b>, <b>Station Sign-Off</b>) to the screensavers (<b>Bouncing Logo</b>, <b>Pipes</b>, <b>Mystify</b>, Starfield, Tunnel, <b>Sine Scroller</b>). Every one is animated, draws something at <em>every</em> time you can scrub to, and takes the text and background colour you set — the abstract screensavers excepted, which have nothing to caption.</p>
+      <p><b>Screens:</b> <b>46</b> templates. Beside the Windows chrome (BSOD, dialogs, Explorer, Task Manager, Registry) is a shelf of <b>paper</b> — <b>Newspaper Clipping</b>, <b>Police Report</b>, <b>Evidence Tag</b>, <b>Journal Page</b>, <b>Prescription</b>, <b>Boarding Pass</b>, <b>Bank Statement</b>, <b>Certificate</b>, <b>Calendar Page</b>, <b>Autopsy Form</b>, <b>Blueprint</b>, <b>Punch Card</b>, <b>Map with Pins</b>, <b>Floppy Label</b>, <b>CD Label</b> — the props a player actually picks up. Paper templates fill with their own stock and ignore the background colour, because a newspaper on a green CRT background is not a newspaper; their type scales with the sheet, so a clipping at 1080×1920 is a readable page rather than a stamp of text in the corner.</p>
+      <p><b>The filter chain:</b> the CRT/VHS stack is fixed — one control each, always in the same order. <b>FILTERS</b> is the part you order yourself: pick one, <b>＋ FILTER</b>, and it runs after the built-in stack. ↑ ↓ reorder, ◉ bypasses without losing the settings, ✕ removes; up to eight steps, and an empty chain changes nothing. <b>45 filters</b> across Colour, Sharpness, Analogue, Pattern and Frame — including <b>Levels</b>, <b>Gradient Map</b>, <b>Retro Palette</b> (Game Boy, CGA, EGA, Teletext, C64), <b>NTSC Composite</b>, <b>Error Diffusion</b>, <b>ASCII</b>, <b>Kaleidoscope</b>, <b>Risograph</b>, <b>Tilt Shift</b>, <b>Neon Edge</b>, <b>Lower Third</b> and <b>Timecode Burn</b>. Order is where most of a look lives: grading before a crush is a different picture from crushing before a grade.</p>
+      <p><b>Editing a sequence:</b> a clip is a <b>window onto its source</b>, not the whole of it — trimming changes <em>which part</em> plays, never how fast. Drag a block on the track to reorder it or drag its edge to trim it; select one and use <b>←/→</b> to trim (Shift for 1s) or <b>Alt+←/→</b> to reorder. A whole drag is one <b>undo</b>. The table under the track writes the same clips, for when you would rather type <span class="k">4.25</span> than aim at a handle. <b>＋ STILL</b> holds the current SCREEN render, which is how a title card or a document gets into a sequence. <b>Sound</b> on TIMELINE comes in two: the picker above the table covers the whole sequence, and the <b>sound</b> column gives each clip its own, laid over the top at the time that clip starts. Each clip's bed loops or trims to fit <em>that clip</em>, and moves with the picture when you trim or reorder.</p>
+      <p><b>Delivering somewhere:</b> <b>Format</b> (on VIDEO, SCREEN and TIMELINE) sets the frame to a real delivery size — <b>Shorts / TikTok / Reels</b> is 1080×1920, and there are square, feed-portrait and YouTube sizes beside it. <b>Aspect</b> is the other half: it keeps the size you chose and reshapes the frame, now including 9:16 and 4:5. Editing W or H by hand puts Format back to custom. Both axes go to 1920; the size readout beside the preview estimates the export from what a frame actually costs, and <code>.gif</code> is capped at 640px because the format cannot carry more.</p>
+      <p><b>Text variables:</b> a campaign fact, named once. Add <span class="k">subject = M. WEBB</span> under <b>TEXT VARIABLES</b> (on VIDEO or SCREEN — it is one shared list) and write <span class="k">{{subject}}</span> in any text box on any tab. Built-in names you can redefine: <span class="k">{{time}} {{case}} {{badge}}</span>. Always available: <span class="k">{{date}} {{seed}} {{random:###}} {{pick:a|b|c}}</span>. A name you have not defined is left on screen exactly as typed, so a typo is visible rather than silently blank.</p>
+      <p><b>Presets that keep your words:</b> tick <b>lock</b> on a section and neither <b>Randomize</b> nor loading a preset will touch it. Lock <b>TEXT</b> and you can try every look in the list while your script stays put; lock <b>OUTPUT</b> to keep the delivery size you settled on. The <b>⚙</b> beside each preset picker renames, duplicates, deletes, exports and imports your own saved presets.</p>
+      <p><b>Layers</b> stack up to six more scenes over the base. Each one can carry its <b>own text, colour and size</b> — open <b>own text / look</b> on a layer — and a <b>variant</b> number re-rolls that layer's randomness, so a second Digital Rain is a different rain rather than the first one twice. Leave a field empty and the layer follows the clip below it.</p>
+      <p><b>Typeface</b> picks the family everything is drawn in — Monospace for a terminal, Heavy for a poster, Handwritten for a note left on a door. <b>Wrap</b> breaks a line too long for the frame instead of letting it run off the edge; it is off by default so older clips render exactly as they did, and your own line breaks are always kept.</p>
+      <p class="hint">Every settings section folds away — click a section <b>title</b> to collapse it and keep the panel tidy.</p>
+      <p><b>Finding things:</b> <b>Ctrl+K</b> searches every setting, scene, template, preset and action by name and jumps straight to it. <b>?</b> arms Explain mode — click or focus any control to read what it does, its range and its unit. The <b>detail</b> selector (Simple / Studio / Deep) hides advanced controls without changing their values.</p>
+      <p><b>Accessibility:</b> the <b>contrast</b> selector turns off the CRT overlay and phosphor glow in the interface — your rendered media is byte-identical either way. The <b>flash</b> readout beside the preview measures full-screen luminance changes the way WCAG 2.3.1 defines them and turns red above three per second; it warns rather than blocks, since the strobing is usually deliberate here.</p>
+      <p><b>Determinism:</b> the <span class="k">seed</span> drives all randomness — same seed + params reproduces the same look (PNG/WAV are byte-stable; WebM frame-patterns reproduce but bytes may vary). <b>Presets</b>: the ✚ buttons save the current tab to your browser (localStorage); <b>SAVE PROJ</b> downloads the whole session's recipes as JSON.</p>
+      <p class="hint">Format note: browser capture is <b>.webm</b> and audio is <b>.wav</b> — both play natively in the campaign, no conversion. For exact <b>.mp4/.mp3</b> parity use <span class="k">scripts/gen-campaign-media.py</span>.</p>
+    </div>
+  </section>
+
+  <div class="panel" style="margin-top:16px"><h2>CONSOLE</h2><div class="console" id="console" role="log" aria-live="polite" aria-label="Activity log"></div></div>
+  <div class="foot">EREBUS MEDIA STUDIO — the archive makes its own ghosts now.</div>
+</main>
+<div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+
+<script type="module" src="src/boot.js"></script>
+<script type="module">
+/* Page chrome no module owns. The RECORD button names whichever container the
+   File picker will write (capture.js reads v-container at record time — a
+   build without H.264 falls back to WebM and says so in the console). And the
+   CLOUD sign-in form must not navigate: the real handler is the click
+   cloud.js wires on #cloud-signin, which Enter reaches via the form's default
+   submit button. */
+const rec = document.getElementById('v-record');
+const box = document.getElementById('v-container');
+const syncRecordLabel = () => { if (rec && box) rec.textContent = '● RECORD .' + (box.value || 'webm'); };
+box?.addEventListener('change', syncRecordLabel);
+syncRecordLabel();
+document.getElementById('cloud-auth')?.addEventListener('submit', (e) => e.preventDefault());
+</script>
+</body>
+</html>

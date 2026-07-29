@@ -1,0 +1,625 @@
+/* Dead Signal Studio — styles/editor.css
+   =========================================================================
+   The editor: a professional NLE layout, and the neutral skin that goes with
+   it.
+
+   Two independent things live here, and they are independent on purpose:
+
+     [data-skin="studio"]   a neutral dark palette — the thing that makes this
+                            read as a tool rather than as a prop. Pure token
+                            override, exactly like data-contrast="high", so no
+                            component needs to know it exists.
+
+     body.nle               the layout: menu bar, toolbar, bin, monitor,
+                            inspector, timeline, status bar.
+
+   You can have either without the other. The CRT skin in a modern layout is a
+   supported (and rather good-looking) combination, and that matters: the
+   phosphor look is the identity of the *media this tool makes*, and it should
+   be a choice for the chrome rather than a tax on it.
+
+   Like workspace.css, the layout is a RE-LAYOUT of the existing DOM. Panels
+   keep their ids and their markup, so the document binding, the command
+   palette, Explain mode and the complexity filter all work untouched, and
+   turning the mode off restores the tabbed layout exactly.
+   ========================================================================= */
+
+/* ---------------------------------------------------------------- skin -- */
+
+:root[data-skin="studio"]{
+  --bg:#14161a;
+  --panel:#1b1e24;
+  --panel2:#22262e;
+  --edge:#2b3038;
+  --edge2:#3a414c;
+
+  /* The accent is what every existing component calls --phos. Renaming it
+     across 94 modules to say "accent" would be churn; giving it a sane value
+     is the whole change. */
+  --phos:#5aa9ff;
+  --phos-dim:#2f6ea8;
+  --amber:#ffb454;
+  --cyan:#63c8ff;
+  --red:#ff6b6b;
+  --hot:#ff4d6d;
+
+  --text:#e7eaf0;
+  --muted:#98a2b3;
+  --crt:0;
+
+  /* Interface type is a UI stack; the monospace token stays for numbers,
+     timecode and anything that has to line up in a column. */
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --radius:6px;
+}
+
+:root[data-skin="studio"] body{
+  background:var(--bg);
+  font-family:var(--ui);
+  font-size:13px;
+  -webkit-font-smoothing:antialiased;
+}
+/* The scanline overlay is the one piece of chrome that cannot survive a
+   neutral skin: it is a texture over every pixel of the interface. */
+:root[data-skin="studio"] body::after{ display:none; }
+:root[data-skin="studio"] *{ text-shadow:none !important; }
+
+:root[data-skin="studio"] .panel,
+:root[data-skin="studio"] fieldset{
+  background:var(--panel);
+  border:1px solid var(--edge);
+  border-radius:var(--radius);
+}
+:root[data-skin="studio"] .panel > h2{
+  font-size:12px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); font-weight:600;
+}
+:root[data-skin="studio"] .btn{
+  border-radius:5px; font-family:var(--ui); font-weight:500; letter-spacing:.02em;
+}
+:root[data-skin="studio"] input,
+:root[data-skin="studio"] select,
+:root[data-skin="studio"] textarea{
+  border-radius:5px; font-family:var(--ui);
+}
+/* Numbers stay monospace: a column of times that jitters as digits change is
+   harder to read than one that does not. */
+:root[data-skin="studio"] input[type="number"],
+:root[data-skin="studio"] .tag,
+:root[data-skin="studio"] .tc{ font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+/* ------------------------------------------------------------- layout -- */
+
+body.nle{ height:100vh; overflow:hidden; }
+
+/* The original chrome is replaced, not deleted: the toggle has to be able to
+   put it back, and every control inside it is still bound to the document. */
+body.nle > header.top{ display:none; }
+
+/* The view switcher IS the page's tablist, restyled — not a second control
+   beside it. It sits directly under the toolbar, which is where an editor puts
+   its workspace tabs, and keeps every bit of its semantics: one tablist, one
+   selected tab, roving tabindex, the same keyboard model. */
+body.nle > .tabs{
+  display:flex; gap:0; padding:0 8px; margin:0;
+  background:var(--panel); border-bottom:1px solid var(--edge);
+}
+body.nle > .tabs .tab{
+  border:0; border-bottom:2px solid transparent; border-radius:0;
+  background:transparent; color:var(--muted);
+  font-size:12px; letter-spacing:.08em; padding:7px 14px;
+}
+body.nle > .tabs .tab:hover{ color:var(--text); background:var(--panel2); }
+body.nle > .tabs .tab.active{ color:var(--phos); border-bottom-color:var(--phos); background:transparent; }
+
+body.nle main{
+  max-width:none; margin:0; padding:0;
+  display:grid;
+  /* The transport gets a row of its own rather than being laid over the
+     monitor: overlapping them hid the stage panel's own buttons, which is
+     where RECORD lives. */
+  /* The right-hand column carries two things, in this order: the properties of
+     the clip that is selected, then the controls of the tab that is open. The
+     selected clip goes on top because it is the thing being worked on — under a
+     column of controls that describe the NEXT clip, it reads as a footnote to
+     them. Its row is `auto`, so it collapses to nothing when the pane is hidden
+     and the layout is exactly what it was before this existed. */
+  grid-template-areas:
+    "bin monitor   clip"
+    "bin monitor   inspector"
+    "bin transport inspector"
+    "timeline timeline timeline";
+  grid-template-columns:var(--bin-w,260px) minmax(0,1fr) var(--insp-w,360px);
+  grid-template-rows:auto minmax(0,1fr) auto minmax(120px,var(--tl-h,26vh));
+  gap:1px;
+  background:var(--edge);
+  height:calc(100vh - var(--chrome-h,84px) - 26px);
+}
+
+/* The sign-off is page furniture and has no place in an editor. The activity
+   log is the opposite — it is where the tool explains what it just did — so it
+   is docked into the media column (see setEditorMode) rather than hidden. */
+body.nle .foot{ display:none; }
+body.nle .nle-console{ margin:8px; border-radius:var(--radius); }
+body.nle .nle-console .console{ max-height:26vh; overflow:auto; }
+
+/* Same trick as the three-pane workspace: dissolve the wrappers so the panels
+   themselves become grid items. */
+body.nle .view.active{ display:contents; }
+body.nle .view.active > .grid{ display:contents; }
+
+body.nle .view.active .panel.stagewrap{
+  grid-area:monitor; margin:0; border-radius:0; border:0;
+  background:var(--bg);
+  /* Picture first and as large as the space allows; everything the stage panel
+     carries under it (scrub, RECORD, export buttons) keeps its own row. */
+  display:grid; grid-template-rows:minmax(0,1fr) auto;
+  align-content:stretch; justify-items:center;
+  overflow:auto; padding:10px 12px; min-height:0;
+}
+/* The frame wraps the picture and centres it, and is exactly as tall as the
+   monitor ROW.
+   `height:100%` is what makes that true, and it is load-bearing rather than
+   decorative. Without it the frame sizes to its content while the row it sits
+   in is `minmax(0,1fr)` — minimum zero — so on a short window the frame is
+   taller than its own row and SPILLS OVER THE TRANSPORT UNDERNEATH IT. The
+   symptom is not a visual one you would notice: the picture looks right, and
+   the top half of ▶ / ▮▮ and of the scrubber simply stops responding to the
+   pointer, because the frame is lying on top of them.
+   It also gives the canvas below a definite containing block to bound itself
+   against, which is what `max-height:100%` needs and never had. */
+/* `grid-template-rows:minmax(0,1fr)` is the other half, and it is the half that
+   is easy to leave out. Without it the frame's single row is IMPLICIT and
+   therefore content-sized, so the canvas's `max-height:100%` resolves against a
+   row whose height is the canvas — circular, and the browser quietly treats it
+   as `none`. One explicit row that fills the definite frame is what turns that
+   percentage into a real number. */
+body.nle .view.active .panel.stagewrap .screen{
+  min-height:0; height:100%; display:grid; grid-template-rows:minmax(0,1fr);
+  place-items:center; width:100%;
+}
+body.nle .view.active .grid > .panel:not(.stagewrap){
+  grid-area:inspector; margin:0; border-radius:0; border:0;
+  border-left:1px solid var(--edge);
+  background:var(--panel);
+  overflow:auto; max-height:none; padding:10px 12px;
+}
+/* Views with no stage (library, bundle, cloud, help) take the middle column,
+   full height. They used to take the right-hand column too, which stopped being
+   free the moment the clip inspector moved into it — the panel would have been
+   laid straight over it. Named-area lines rather than a second area name, so
+   this stays true if the rows are ever reordered.
+
+   THE WRAPPER STAYS A BOX HERE, and that is the load-bearing part rather than a
+   stylistic choice. Dissolving it with `display:contents` — which is right for
+   a view with a stage, so the picture and the settings can be placed in two
+   different areas — makes every panel a grid item of the EDITOR grid, and the
+   placement below then hands each of them the same named area. Two grid items
+   in one area are drawn one exactly on top of another, not one after the other.
+   Nothing about that looks broken: the top panel renders perfectly and the ones
+   underneath are simply not there. LIBRARY had the whole session library lying
+   under BATCH EXPORT, and BUNDLE and CLOUD had three of four panels each
+   invisible and unclickable — every control in them present, labelled, wired to
+   a live handler, and impossible to reach with a mouse.
+
+   Selected on "has no stage" rather than on a list of tab names so a new
+   stage-less tab is laid out correctly the day it is added. */
+body.nle .view.active:not(:has(.panel.stagewrap)){
+  display:block;
+  grid-row:monitor-start / transport-end;
+  grid-column:monitor-start / monitor-end;
+  overflow:auto; min-height:0; padding:12px 14px;
+}
+/* Inside it, the ordinary page layout: `.grid` does its normal main+sidebar
+   job, and the panels flow. */
+body.nle .view.active:not(:has(.panel.stagewrap)) > .grid{ display:grid; }
+body.nle .view.active:not(:has(.panel.stagewrap)) .panel{
+  grid-row:auto; grid-column:auto; grid-area:auto;
+  margin:0 0 12px; overflow:visible; max-height:none;
+}
+/* A single-panel view still fills the column rather than floating in the middle
+   of it, which is what the old rule did well and is worth keeping. */
+body.nle .view.active:not(:has(.panel.stagewrap)):not(:has(.panel ~ .panel)){
+  padding:0;
+}
+body.nle .view.active:not(:has(.panel.stagewrap)):not(:has(.panel ~ .panel)) > .panel{
+  margin:0; border-radius:0; border:0; padding:12px 14px; min-height:100%;
+}
+/* …and on those views the clip inspector takes the whole right column rather
+   than sitting in a short band with an empty strip beneath it. Progressive: a
+   browser without :has() simply leaves the pane its normal height, which is the
+   layout working, not breaking. */
+body.nle main:has(> .view.active:not(:has(.panel.stagewrap))) .nle-inspector{
+  grid-row:clip-start / transport-end;
+  max-height:none;
+}
+/* The per-tab help paragraph is the kind of thing a tool says once, in a
+   tooltip — not a banner above the work on every visit. */
+body.nle .view.active > .tabhelp{ display:none; }
+
+/* ---------------------------------------------------------- menu + bar -- */
+
+.nle-chrome{ display:none; }
+body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px solid var(--edge); }
+
+.nle-menubar{
+  display:flex; align-items:center; gap:2px;
+  padding:4px 8px; border-bottom:1px solid var(--edge);
+}
+.nle-brand{
+  font-weight:700; letter-spacing:.14em; font-size:12px; color:var(--phos);
+  padding:0 12px 0 4px; text-transform:uppercase; white-space:nowrap;
+}
+.nle-menu{ position:relative; }
+.nle-menu > button{
+  background:transparent; border:1px solid transparent; color:var(--text);
+  font:inherit; font-size:12.5px; padding:4px 10px; border-radius:4px; cursor:pointer;
+}
+.nle-menu > button:hover,
+.nle-menu[open] > button{ background:var(--panel2); border-color:var(--edge2); }
+.nle-menu-pop{
+  position:absolute; top:calc(100% + 4px); left:0; z-index:60;
+  min-width:230px; padding:5px;
+  background:var(--panel2); border:1px solid var(--edge2); border-radius:var(--radius);
+  box-shadow:0 12px 32px rgba(0,0,0,.55);
+}
+.nle-menu-pop button{
+  display:flex; justify-content:space-between; gap:20px; width:100%;
+  background:transparent; border:0; color:var(--text); font:inherit; font-size:12.5px;
+  padding:6px 9px; border-radius:4px; text-align:left; cursor:pointer;
+}
+.nle-menu-pop button:hover:not(:disabled){ background:var(--phos); color:#06121f; }
+.nle-menu-pop button:disabled{ color:var(--muted); cursor:default; }
+.nle-menu-pop kbd{
+  font-family:var(--mono); font-size:12px; color:var(--muted); background:transparent;
+}
+.nle-menu-pop button:hover:not(:disabled) kbd{ color:#06121f; }
+.nle-menu-sep{ height:1px; margin:5px 4px; background:var(--edge2); }
+
+.nle-toolbar{
+  display:flex; align-items:center; gap:8px; padding:5px 8px; flex-wrap:wrap;
+}
+.nle-tools{ display:flex; gap:2px; }
+.nle-tool{
+  width:30px; height:28px; display:grid; place-items:center;
+  background:transparent; border:1px solid transparent; border-radius:5px;
+  color:var(--text); font-size:14px; cursor:pointer;
+}
+.nle-tool:hover{ background:var(--panel2); border-color:var(--edge2); }
+.nle-tool[aria-pressed="true"]{ background:var(--phos); border-color:var(--phos); color:#06121f; }
+.nle-sep{ width:1px; align-self:stretch; margin:2px 4px; background:var(--edge2); }
+.nle-spacer{ flex:1 1 auto; }
+
+/* The header's settings, rehoused in the toolbar. Compact, because a toolbar is
+   not a settings page — but present, because hiding a control is not the same
+   as replacing it. */
+.nle-settings{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.nle-settings .ctl{
+  display:flex; align-items:center; gap:5px;
+  font-size:12px; color:var(--muted); white-space:nowrap;
+}
+.nle-settings .ctl select,
+.nle-settings .ctl input[type="number"]{ padding:3px 6px; font-size:12px; }
+.nle-settings .ctl input[type="range"]{ width:64px; }
+.nle-settings .ctl .btn{ padding:3px 8px; font-size:12px; }
+
+/* Workspace presets read as segmented control, because that is what they are. */
+.nle-workspaces{ display:flex; border:1px solid var(--edge2); border-radius:5px; overflow:hidden; }
+.nle-ws{
+  background:transparent; border:0; border-right:1px solid var(--edge2);
+  color:var(--muted); font:inherit; font-size:12px; letter-spacing:.06em;
+  text-transform:uppercase; padding:5px 12px; cursor:pointer;
+}
+.nle-ws:last-child{ border-right:0; }
+.nle-ws[aria-selected="true"]{ background:var(--panel2); color:var(--phos); }
+
+/* -------------------------------------------------------------- panes -- */
+
+/* Off unless the editor layout is on — the same base-hidden rule the chrome and
+   the status bar use, and for the same reason. These panes are built once and
+   kept (the toggle has to be able to bring them back), but with `body.nle`
+   removed there is no grid for `grid-area:bin` to resolve against, so they
+   stopped being columns and became three blocks stacked under the tabbed page:
+   a media bin, a transport bar and an empty sequence pane below the sign-off.
+   The classic layout is meant to be exactly what it was. */
+.nle-pane,.nle-transport,.nle-timeline{ display:none; }
+body.nle .nle-pane{
+  background:var(--panel); overflow:auto; min-height:0;
+  display:flex; flex-direction:column;
+}
+.nle-pane-head{
+  display:flex; align-items:center; gap:8px;
+  padding:6px 10px; border-bottom:1px solid var(--edge);
+  font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted);
+  position:sticky; top:0; background:var(--panel); z-index:2;
+}
+.nle-pane-head .nle-count{ margin-left:auto; font-family:var(--mono); }
+.nle-bin{ grid-area:bin; border-right:1px solid var(--edge); }
+.nle-bin-body{ padding:8px; }
+
+/* Media bin items: a thumbnail grid, which is how every editor shows a bin. */
+.nle-bin-list{ display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; }
+/* A row, with the asset's own download beside it. The wrapper is a div because
+   a button cannot contain a button, and the download has to be a real control
+   of its own — not a click target hidden inside the card. */
+.nle-bin-item{
+  position:relative;
+  background:var(--panel2); border:1px solid var(--edge2); border-radius:5px;
+  overflow:hidden; color:var(--text);
+}
+.nle-bin-item:hover{ border-color:var(--phos); }
+.nle-bin-open{
+  display:flex; flex-direction:column; width:100%;
+  background:none; border:0; padding:0; cursor:pointer; text-align:left;
+  color:inherit; font:inherit;
+}
+/* Always visible, never hover-only: not being able to find the download is the
+   problem this exists to solve, and a control that appears on hover cannot be
+   found by someone who does not know it is there. */
+.nle-bin-dl{
+  position:absolute; top:4px; right:4px;
+  width:24px; height:24px; padding:0; line-height:1;
+  background:rgba(4,8,12,.82); border:1px solid var(--edge2); border-radius:4px;
+  color:var(--phos); font-size:14px; cursor:pointer;
+}
+.nle-bin-dl:hover{ border-color:var(--phos); background:var(--phos); color:#06121f; }
+.nle-bin-dl:disabled{ opacity:.4; cursor:default; color:var(--muted); }
+.nle-export{ font-weight:600; letter-spacing:.04em; margin:2px 4px 2px 0; }
+/* The empty clip pane is a sentence, not a panel — it should not hold a third
+   of the column open waiting for a selection. */
+.nle-inspector .insp-body .nle-empty{ padding:8px 2px; }
+.nle-bin-item[aria-selected="true"]{ border-color:var(--phos); box-shadow:inset 0 0 0 1px var(--phos); }
+.nle-bin-thumb{
+  aspect-ratio:16/10; width:100%; background:#000 center/cover no-repeat;
+  display:grid; place-items:center; color:var(--muted); font-size:18px;
+}
+.nle-bin-name{
+  font-size:12px; padding:4px 6px; line-height:1.3;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.nle-bin-kind{ font-size:12px; color:var(--muted); padding:0 6px 5px; text-transform:uppercase; letter-spacing:.08em; }
+.nle-empty{ color:var(--muted); font-size:12px; padding:10px; }
+
+/* ---------------------------------------------------- clip inspector -- */
+
+/* Bounded so a clip with a long piece of copy in it cannot squeeze the picture
+   out of the window: past this the pane scrolls and the monitor keeps its
+   space. */
+/* No `display` of its own: it is a .nle-pane, and the pane rule is what turns
+   these on under body.nle and off outside it. Setting it here would win on
+   source order and leak the pane into the classic layout. */
+.nle-inspector{
+  grid-area:clip; border-left:1px solid var(--edge);
+  max-height:46vh;
+}
+.nle-inspector .insp-body{ overflow:auto; padding:8px 10px; }
+.insp-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.insp-kind{
+  font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+  padding:1px 6px; border-radius:3px; border:1px solid var(--edge2); color:var(--muted);
+}
+.insp-kind.video{ color:var(--phos); border-color:var(--phos); }
+.insp-kind.still{ color:var(--amber); border-color:var(--amber); }
+.insp-len{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--muted); }
+
+.insp-group{ border-top:1px solid var(--edge); padding:6px 0; }
+.insp-group:first-of-type{ border-top:0; padding-top:0; }
+.insp-group-title{
+  font-size:12px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); margin:2px 0 6px;
+}
+/* Label, control, unit — one row each, so the column of controls lines up and
+   the eye can run down it. */
+.insp-row{
+  display:grid; grid-template-columns:5.5em minmax(0,1fr) auto;
+  align-items:center; gap:6px; margin-bottom:5px;
+}
+.insp-row.wide{ grid-template-columns:minmax(0,1fr); }
+.insp-row > label{ font-size:12px; color:var(--muted); }
+.insp-row.wide > label{ margin-bottom:2px; }
+.insp-row input,.insp-row select,.insp-row textarea{ width:100%; min-width:0; }
+.insp-row input[type="color"]{ width:44px; height:24px; padding:1px; }
+.insp-row textarea{ resize:vertical; min-height:52px; font-size:12px; }
+.insp-unit{ font-size:12px; color:var(--muted); }
+
+.insp-note{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:4px; }
+.insp-warn{ font-size:12px; color:var(--amber); margin:4px 0 0; line-height:1.35; }
+.insp-actions{
+  display:flex; flex-wrap:wrap; gap:6px;
+  border-top:1px solid var(--edge); padding-top:8px; margin-top:4px;
+}
+
+/* ------------------------------------------------------------ monitor -- */
+
+body.nle .view.active .panel.stagewrap > h2{ display:none; }
+body.nle .view.active .panel.stagewrap .screen{ box-shadow:none; }
+/* A program monitor shows the picture as large as the window allows. The canvas
+   keeps its own pixel buffer — this is display scaling only — and nearest
+   neighbour is the right filter for material that is meant to look like a
+   240-line signal. */
+/* Bounded in viewport units, not percentages.
+   `max-height:100%` looks like the obvious way to fit the picture to its frame
+   and silently does nothing: the frame's own height comes from a grid row, and
+   a percentage max-height against a containing block the browser does not treat
+   as definite resolves to `none`. A 1080×1920 clip then took its natural
+   aspect at full width — 1084px tall inside a 206px frame — and pushed RECORD
+   off the panel. The bound below is the monitor row's real budget: the window,
+   less the timeline, less the chrome above and the transport below.
+   Width follows from the canvas's own aspect ratio, so the element keeps the
+   picture's shape and nothing is distorted. */
+/* Two bounds, and both are needed. The viewport calc is the monitor row's
+   BUDGET — what the window can afford once the timeline and the chrome have
+   been paid for — and it is what stops a 1080×1920 clip taking its natural
+   aspect at full width. `max-height:100%` is the row's ACTUAL height, which the
+   calc can only estimate: it resolves now that .screen has a definite height
+   (see above), and it is what guarantees the picture never reaches the
+   transport whatever the window turns out to be. */
+body.nle .view.active .panel.stagewrap canvas.stage{
+  width:auto; height:auto;
+  max-width:100%; max-height:min(100%, calc(96vh - var(--tl-h,26vh) - 210px));
+  background:#000; image-rendering:pixelated;
+}
+
+/* The transport lives under the monitor and is the same in every workspace. */
+.nle-transport{
+  grid-area:transport;
+  align-items:center; gap:6px; justify-content:center;
+  padding:6px 10px; background:var(--panel); border-top:1px solid var(--edge);
+  position:relative; z-index:3;
+}
+.nle-transport .tc{
+  font-size:13px; padding:3px 8px; background:#000; border:1px solid var(--edge2);
+  border-radius:4px; color:var(--phos); min-width:9ch; text-align:center;
+}
+.nle-transport .tc.dim{ color:var(--muted); }
+.nle-tbtn{
+  min-width:32px; height:28px; padding:0 8px;
+  background:var(--panel2); border:1px solid var(--edge2); border-radius:5px;
+  color:var(--text); font-size:13px; cursor:pointer;
+}
+.nle-tbtn:hover{ border-color:var(--phos); color:var(--phos); }
+.nle-tbtn.primary{ background:var(--phos); border-color:var(--phos); color:#06121f; font-weight:600; }
+.nle-tbtn:disabled{ opacity:.45; cursor:default; }
+
+/* ----------------------------------------------------------- timeline -- */
+
+.nle-timeline{
+  grid-area:timeline; background:var(--panel);
+  border-top:1px solid var(--edge);
+  flex-direction:column; min-height:0;
+}
+body.nle .nle-transport,body.nle .nle-timeline{ display:flex; }
+.nle-tl-head{
+  display:flex; align-items:center; gap:8px; padding:5px 10px;
+  border-bottom:1px solid var(--edge); font-size:12px; color:var(--muted);
+}
+/* Vertical only. Two nested scrollers over the SAME axis is the classic editor
+   bug where the ruler and the clips disagree about where they are — the lane
+   has its own horizontal scroller now (#tl-scroll). */
+.nle-tl-body{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding:8px 10px; min-height:0; }
+.nle-zoom{ display:flex; align-items:center; gap:4px; margin-left:auto; }
+.nle-zoom input{ width:120px; }
+
+/* Track headers down the left of the lane, as in every editor. */
+.nle-tracks{ display:grid; grid-template-columns:88px minmax(0,1fr); gap:0 8px; align-items:start; }
+.nle-track-head{
+  font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em;
+  padding:6px 0; display:flex; align-items:center; gap:6px;
+}
+.nle-track-head .dot{ width:8px; height:8px; border-radius:2px; background:var(--phos); }
+.nle-track-head.audio .dot{ background:var(--amber); }
+
+/* ------------------------------------------------------------- status -- */
+
+.nle-status{
+  display:none;
+  height:26px; align-items:center; gap:14px; padding:0 12px;
+  background:var(--panel2); border-top:1px solid var(--edge);
+  font-size:12px; color:var(--muted);
+}
+body.nle .nle-status{ display:flex; }
+.nle-status .sep{ width:1px; height:14px; background:var(--edge2); }
+.nle-status strong{ color:var(--text); font-weight:600; }
+.nle-status .ok{ color:var(--phos); }
+.nle-status .warn{ color:var(--amber); }
+
+/* -------------------------------------------------------- responsive -- */
+
+/* Below this there is no honest way to show bin + monitor + inspector at once,
+   so the editor stacks rather than shrinking every pane past usefulness. */
+@media (max-width:1180px){
+  body.nle{ height:auto; overflow:auto; }
+  body.nle main{
+    grid-template-areas:"monitor" "transport" "clip" "inspector" "timeline" "bin";
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto;
+    height:auto;
+  }
+  body.nle .nle-bin{ border-right:0; border-top:1px solid var(--edge); }
+  /* Stacked, the pane is one band among several and needs no cap of its own —
+     46vh of a scrolling page would clip the fields for no reason. */
+  body.nle .nle-inspector{ border-left:0; border-top:1px solid var(--edge); max-height:none; }
+  body.nle .view.active .grid > .panel:not(.stagewrap){ border-left:0; }
+  /* Height:100% resolves against an auto-height page here, which is no bound at
+     all — a 1920-tall frame then ran off the bottom of the window. */
+  body.nle .view.active .panel.stagewrap canvas.stage{ height:auto; max-height:52vh; }
+  .nle-transport{ position:static; }
+}
+
+@media (forced-colors: active){
+  .nle-tool[aria-pressed="true"],
+  .nle-ws[aria-selected="true"]{ border:2px solid CanvasText; }
+}
+
+
+/* ------------------------------------------------- settings sections -- */
+
+/* The segmented control above the settings column. A group of toggle buttons,
+   not a tablist — see the note in ui/sections.js. */
+.sec-strip{
+  display:flex; flex-wrap:wrap; gap:2px;
+  position:sticky; top:0; z-index:3;
+  margin:-10px -12px 10px; padding:6px 12px;
+  background:var(--panel); border-bottom:1px solid var(--edge);
+}
+.sec-strip button{
+  flex:1 1 auto; min-width:0;
+  background:transparent; border:1px solid transparent; border-radius:5px;
+  color:var(--muted); font:inherit; font-size:12px; letter-spacing:.04em;
+  padding:5px 10px; cursor:pointer; white-space:nowrap;
+}
+.sec-strip button:hover{ color:var(--text); background:var(--panel2); }
+.sec-strip button[aria-pressed="true"]{
+  background:var(--panel2); border-color:var(--phos); color:var(--phos); font-weight:600;
+}
+.section-hidden{ display:none !important; }
+
+
+/* ----------------------------------------------------------- importing -- */
+
+.nle-bin-import{
+  margin-left:6px; width:24px; height:22px; padding:0; line-height:1;
+  background:var(--panel2); border:1px solid var(--edge2); border-radius:4px;
+  color:var(--phos); font-size:14px; cursor:pointer;
+}
+.nle-bin-import:hover{ background:var(--phos); border-color:var(--phos); color:#06121f; }
+.nle-bin-import:disabled{ opacity:.5; cursor:default; }
+.nle-bin-note{ margin:0 0 8px; font-size:12px; color:var(--amber); }
+
+/* The whole window is the drop target — the overlay is what says so. Pointer
+   events off, or the card under the cursor swallows the drop it is advertising. */
+.drop-overlay{
+  position:fixed; inset:0; z-index:10003; pointer-events:none;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(4,10,16,.72);
+}
+.drop-overlay[hidden]{ display:none; }
+.drop-card{
+  border:2px dashed var(--phos); border-radius:10px;
+  padding:26px 34px; background:var(--panel);
+  color:var(--phos); font-size:15px; letter-spacing:.02em;
+  box-shadow:0 18px 60px rgba(0,0,0,.6);
+}
+
+/* ------------------------------------------------- lane block marks -- */
+
+/* A clip's keyframes, as marks along its block. A curve used to be invisible
+   from the lane — the only way to know a clip was animated was to select it and
+   open the picker — so "which of these did I animate, and where" was a question
+   you could only answer one clip at a time. */
+.tl-clip .tl-key{
+  position:absolute; bottom:2px; width:2px; height:5px; margin-left:-1px;
+  background:var(--amber); border-radius:1px; pointer-events:none; opacity:.9;
+}
+
+/* The transition's length, drawn AS its length: the handle is the readout, and
+   dragging it is the one place in the tool where the number and the picture of
+   the number are the same object. Sits at the clip's start because that is
+   where a transition is measured from — which is also why it is tested for
+   before the trim grips, whose left one it overlaps. */
+.tl-clip .tl-xgrip{
+  position:absolute; left:0; top:0; bottom:0; z-index:2;
+  cursor:ew-resize; border-right:1px solid var(--cyan);
+  background:linear-gradient(90deg, rgba(57,255,158,.30), rgba(57,255,158,.06));
+}
+.tl-clip .tl-xgrip:hover{ background:linear-gradient(90deg, rgba(57,255,158,.45), rgba(57,255,158,.12)); }

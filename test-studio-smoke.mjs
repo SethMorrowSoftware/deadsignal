@@ -1,0 +1,1657 @@
+/* Dead Signal Studio — end-to-end browser smoke test.
+ *
+ * Drives the real page through its own UI controls only: it never reaches for
+ * an internal function or module binding. That is deliberate — it means this
+ * suite is invariant under refactoring of studio.js, so it can act as the
+ * regression net while the engine is restructured.
+ *
+ * Covers: every video scene renders non-blank, every screen template renders
+ * non-blank, the audio engine renders + meters + encodes, stego round-trips
+ * through an export, the library/bundle wiring generates, and the ZIP writer
+ * produces a well-formed archive — all with zero uncaught page errors.
+ *
+ * Requires Playwright + Chromium. Skips cleanly (exit 0) when unavailable so a
+ * checkout without browsers does not fail the gate.
+ */
+import { dirname, resolve, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { existsSync, readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { deflateSync } from 'node:zlib';
+
+/** zlib stream for a PNG IDAT — Node's deflate is exactly what the format wants. */
+const zlibSync = (buf) => deflateSync(buf);
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/* The studio is ES modules now, and browsers refuse to load those over
+   file:// (CORS, origin "null"). Serve the folder on an ephemeral port. */
+const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css',
+               '.json':'application/json', '.svg':'image/svg+xml' };
+const server = createServer((req, res) => {
+  if (req.url === '/favicon.ico') { res.writeHead(204); return res.end(); }   // harness noise, not a page fault
+  const rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^(\.\.[/\\])+/, '');
+  const file = join(HERE, rel === '/' ? 'index.html' : rel);
+  if (!file.startsWith(HERE) || !existsSync(file)) { res.writeHead(404); return res.end('not found'); }
+  res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream' });
+  res.end(readFileSync(file));
+});
+await new Promise(r => server.listen(0, '127.0.0.1', r));
+const PAGE = `http://127.0.0.1:${server.address().port}/index.html`;
+
+let chromium;
+try {
+  ({ chromium } = await import('playwright'));
+} catch {
+  try { ({ chromium } = await import('/opt/node22/lib/node_modules/playwright/index.mjs')); }
+  catch {
+    console.log('Dead Signal Studio smoke: playwright not installed — SKIPPED');
+    process.exit(0);
+  }
+}
+
+const EXEC = ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome']
+  .find(p => existsSync(p));
+
+let pass = 0, fail = 0;
+const check = (name, ok, extra = '') => {
+  if (!ok) fail++; else pass++;
+  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? ' — ' + extra : ''}`);
+};
+
+console.log('Dead Signal Studio smoke');
+console.log('-'.repeat(58));
+
+const browser = await chromium.launch(EXEC ? { executablePath: EXEC } : {});
+const page = await browser.newPage();
+const errors = [];
+page.on('pageerror', e => errors.push(String(e)));
+/* The CLOUD tab probes for an optional backend at boot. With no API present
+   the fetch fails and the browser logs a console error — that is the probe
+   working, not a fault. Filtered by URL so real errors still surface. */
+page.on('console', (m) => {
+  if (m.type() !== 'error') return;
+  const from = m.location?.().url || '';
+  // Same optional-lookup 404s as the audit suite: the API probe (./api, then
+  // ./api/index.php), and the deployment note the setup wizard writes (absent
+  // on a static deploy).
+  if (/\/api(\/index\.php)?\/system\/health$/.test(from) || from.endsWith('/studio.config.json')) return;
+  errors.push('console: ' + m.text());
+});
+
+await page.addInitScript(() => {
+  // A cold browser profile has never seen the welcome card, and it is modal.
+  // Suppress it the way a returning author's browser would, so the suites
+  // exercise the studio rather than the first-run screen. The card itself is
+  // covered by its own section below.
+  try { localStorage.setItem('deadsignal.studio.welcomed', 'true'); } catch { /* ignore */ }
+});
+
+await page.goto(PAGE);
+// <option> elements are never "visible" to Playwright — wait on the DOM instead.
+await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+
+/* Is a canvas actually drawn on? Counts distinct pixels so a flat fill and an
+   all-transparent canvas both read as "blank". */
+const canvasStats = (id) => page.evaluate((id) => {
+  const c = document.getElementById(id);
+  if (!c || !c.width) return { ok: false, reason: 'missing canvas' };
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  const seen = new Set();
+  let opaque = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] > 0) opaque++;
+    if (seen.size < 64) seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+  }
+  return { ok: true, colors: seen.size, opaque, px: d.length / 4 };
+}, id);
+
+/* Set a control the way a user would. Since Phase 2 the document is
+   authoritative, so assigning .value without dispatching does NOT reach it —
+   the page would keep rendering the old value, which is correct behaviour. */
+/* Some controls now live in a settings SECTION the panel is not showing, so a
+   click has to bring that section up first — the same thing a person does. The
+   suite mirrors the UI here rather than reaching past it. */
+const clickControl = async (sel) => {
+  await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    const fs = el?.closest('fieldset[data-section]');
+    const view = el?.closest('.view');
+    if (fs && view) window.DeadSignalStudio.showSection(view.id, fs.dataset.section);
+    fs?.classList.remove('collapsed');
+  }, sel);
+  await page.click(sel);
+};
+
+const setControl = (id, value) => page.evaluate(({ id, value }) => {
+  const el = document.getElementById(id);
+  if (el.type === 'checkbox') el.checked = !!value; else el.value = String(value);
+  el.dispatchEvent(new Event('input',  { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, { id, value });
+
+/* ------------------------------------------------------------ stylesheets -- */
+{
+  // The CSS is external now; a bad path yields an unstyled page that would
+  // still pass every canvas check below.
+  const r = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    return {
+      sheets: document.styleSheets.length,
+      phos: cs.getPropertyValue('--phos').trim(),
+      skin: document.documentElement.getAttribute('data-skin') || 'crt',
+      bodyFont: getComputedStyle(document.body).fontFamily,
+      monoToken: cs.getPropertyValue('--mono').trim(),
+      /* Whether the selected view LOOKS selected. Asserting one specific
+         property (a borderless tab) pinned one skin's styling; what has to be
+         true in every skin is that the strip distinguishes the active tab at
+         all — which is the thing component CSS is for. */
+      tabActive: getComputedStyle(document.querySelector('.tab.active')).color,
+      tabIdle: getComputedStyle(document.querySelector('.tab:not(.active)')).color,
+    };
+  });
+  check('stylesheets load', r.sheets >= 4, `${r.sheets} sheets`);
+  check('design tokens resolve', /^#/.test(r.phos), r.phos || '(unset)');
+  /* The interface font is a property of the SKIN, and the studio skin is a UI
+     stack on purpose: a whole editor set in a terminal face is a costume, and
+     it is the media this tool makes that is supposed to look like a signal, not
+     the tool. What must hold in either skin is that the monospace token still
+     resolves — timecode, numeric fields and the log line up in a column, and
+     those are the places digits have to. */
+  check('the interface font suits the skin',
+    r.skin === 'crt' ? /mono|Consolas|Courier/i.test(r.bodyFont) : /system-ui|Segoe|Roboto|sans-serif/i.test(r.bodyFont),
+    `${r.skin}: ${r.bodyFont}`);
+  check('the monospace token still resolves for numbers and timecode',
+    /mono|Consolas|Courier/i.test(r.monoToken), r.monoToken);
+  check('component rules apply — the active view is visibly the active one',
+    !!r.tabActive && r.tabActive !== r.tabIdle, `${r.tabActive} vs ${r.tabIdle}`);
+}
+
+/* ---------------------------------------------------------------- scenes -- */
+{
+  const scenes = await page.$$eval('#v-scene option', os => os.map(o => ({ v: o.value, t: o.textContent })));
+  console.log(`\n[scenes] ${scenes.length} registered`);
+  let bad = [];
+  for (const s of scenes) {
+    await page.evaluate((v) => {
+      const el = document.getElementById('v-scene');
+      el.value = v;
+      el.dispatchEvent(new Event('input',  { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, s.v);
+    await page.waitForTimeout(90);          // let the preview loop paint
+    const st = await canvasStats('vcanvas');
+    // "videoin" and "kenburns" legitimately render a placeholder until media is
+    // imported; they must still paint something rather than throw.
+    if (!st.ok || st.colors < 2 || st.opaque === 0) bad.push(`${s.v}(${st.colors ?? '?'}c)`);
+  }
+  check(`all ${scenes.length} scenes render non-blank`, bad.length === 0, bad.join(', '));
+}
+
+/* ------------------------------------------------------------- templates -- */
+{
+  await page.click('.tab[data-view="image"]');
+  const tpls = await page.$$eval('#i-tpl option', os => os.map(o => o.value));
+  console.log(`\n[templates] ${tpls.length} registered`);
+  let bad = [];
+  for (const t of tpls) {
+    await page.evaluate((v) => {
+      const el = document.getElementById('i-tpl');
+      el.value = v;
+      el.dispatchEvent(new Event('input',  { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, t);
+    await page.waitForTimeout(40);
+    const st = await canvasStats('icanvas');
+    if (!st.ok || st.colors < 2 || st.opaque === 0) bad.push(`${t}(${st.colors ?? '?'}c)`);
+  }
+  check(`all ${tpls.length} templates render non-blank`, bad.length === 0, bad.join(', '));
+}
+
+/* ----------------------------------------------------------------- stego -- */
+{
+  const r = await page.evaluate(async () => {
+    for (const [id, v] of [['i-tpl','terminal'], ['i-stego','OBSERVE-0347']]) {
+      const el = document.getElementById(id);
+      el.value = v;
+      el.dispatchEvent(new Event('input',  { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    await new Promise(r => setTimeout(r, 160));
+    const got = window.DeadSignalStudio.decodeStego();
+    document.getElementById('i-stego').value = '';
+    document.getElementById('i-stego').dispatchEvent(new Event('input', { bubbles: true }));
+    return String(got);
+  });
+  check('stego payload round-trips', /OBSERVE-0347/.test(r), r);
+}
+
+/* ----------------------------------------------------------------- audio -- */
+{
+  await page.click('.tab[data-view="audio"]');
+  await setControl('a-dur', '2');
+  await setControl('a-drone', true);
+  await setControl('a-morse', true);
+  await page.click('#a-render');
+  await page.waitForFunction(
+    () => /Rendered/.test(document.getElementById('a-status').textContent),
+    null, { timeout: 30000 }
+  );
+  const st = await page.evaluate(() => ({
+    status: document.getElementById('a-status').textContent,
+    peak:   document.getElementById('a-peakv').textContent,
+    dlOn:   !document.getElementById('a-dl').disabled,
+  }));
+  check('audio renders', /Rendered/.test(st.status), st.status.trim());
+  check('peak meter reports a level', /-?\d/.test(st.peak) && st.peak !== '—', st.peak);
+  check('wav download is armed', st.dlOn);
+  const wave = await canvasStats('acanvas');
+  check('waveform is drawn', wave.ok && wave.colors >= 2, `${wave.colors} colors`);
+}
+
+/* -------------------------------------------------- library + bundle + zip -- */
+{
+  const r = await page.evaluate(async () => {
+    // The audio render above already put one asset in the library.
+    document.querySelector('.tab[data-view="bundle"]').click();
+    document.getElementById('b-gen').click();
+    const wiring = document.getElementById('b-out').textContent;
+    document.getElementById('b-validate').click();
+    const report = document.getElementById('b-report').textContent;
+
+    // Exercise the ZIP writer without touching the download path.
+    let zipBytes = null;
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = (blob) => { zipBytes = blob; return origCreate.call(URL, blob); };
+    await window.DeadSignalStudio.exportCampaignBundle();
+    URL.createObjectURL = origCreate;
+    const buf = zipBytes ? new Uint8Array(await zipBytes.arrayBuffer()) : null;
+    return {
+      wiring,
+      report,
+      zipSize: buf ? buf.length : 0,
+      zipMagic: buf ? String.fromCharCode(buf[0], buf[1], buf[2], buf[3]) : '',
+      // End of central directory signature must be present.
+      hasEOCD: buf ? Array.from(buf.slice(-22, -18)).join(',') === '80,75,5,6' : false,
+    };
+  });
+  check('bundle wiring generates a manifest', /media-manifest\.json/.test(r.wiring));
+  check('bundle wiring emits index.json', /index\.json/.test(r.wiring));
+  check('bundle validates', /valid|✔/i.test(r.report), r.report.trim().slice(0, 70));
+  check('zip writer produces bytes', r.zipSize > 0, `${r.zipSize} bytes`);
+  check('zip has PK local-header magic', r.zipMagic === 'PK', JSON.stringify(r.zipMagic));
+  check('zip has end-of-central-directory', r.hasEOCD);
+}
+
+/* ------------------------------------------------------ project round-trip -- */
+{
+  await setControl('v-text', 'ROUND TRIP MARKER');
+  const r = await page.evaluate(() => {
+    const proj = window.DeadSignalStudio.readProject();
+    const el = document.getElementById('v-text');
+    el.value = 'clobbered';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    window.DeadSignalStudio.applyProject(JSON.parse(JSON.stringify(proj)));
+    return { dom: el.value, doc: window.DeadSignalStudio.store.get('tabs.video.v-text') };
+  });
+  check('project save/load round-trips', r.dom === 'ROUND TRIP MARKER', r.dom);
+  check('the document is the source of truth', r.doc === r.dom, `${r.doc} / ${r.dom}`);
+}
+
+/* ------------------------------------------------------- document + undo -- */
+{
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-text', 'FIRST');
+  // Two edits to the same control inside the coalesce window are ONE gesture
+  // by design (typing a word must not become ten undo steps), so pause to make
+  // these two distinct gestures.
+  await page.waitForTimeout(700);
+  await setControl('v-text', 'SECOND');
+  const undoResult = await page.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    const before = S.store.get('tabs.video.v-text');
+    S.undo();
+    const afterUndo = { doc: S.store.get('tabs.video.v-text'),
+                        dom: document.getElementById('v-text').value };
+    S.redo();
+    const afterRedo = { doc: S.store.get('tabs.video.v-text'),
+                        dom: document.getElementById('v-text').value };
+    return { before, afterUndo, afterRedo };
+  });
+  check('undo reverts the document', undoResult.afterUndo.doc === 'FIRST', undoResult.afterUndo.doc);
+  check('undo writes back to the DOM', undoResult.afterUndo.dom === 'FIRST', undoResult.afterUndo.dom);
+  check('redo restores', undoResult.afterRedo.doc === 'SECOND' && undoResult.afterRedo.dom === 'SECOND');
+
+  // Ctrl+Z must reach the store through the real key handler.
+  await page.evaluate(() => document.body.focus());
+  await page.keyboard.press('Control+z');
+  check('Ctrl+Z undoes',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('tabs.video.v-text')) === 'FIRST');
+  await page.keyboard.press('Control+Shift+Z');
+  check('Ctrl+Shift+Z redoes',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('tabs.video.v-text')) === 'SECOND');
+
+  const slider = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const depth0 = S.store.undoDepth;
+    const el = document.getElementById('v-scan');
+    for (const v of [20, 30, 40, 50]) {
+      el.value = String(v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return { added: S.store.undoDepth - depth0, value: S.store.get('tabs.video.v-scan') };
+  });
+  check('a slider drag collapses to one undo entry', slider.added === 1, `${slider.added} entries`);
+  check('the drag still recorded its final value', slider.value === '50', String(slider.value));
+}
+
+/* ------------------------------------------------------------ persistence -- */
+{
+  const tier = await page.evaluate(() => window.DeadSignalStudio.backend?.tier ?? 0);
+  check('a storage backend is open', tier > 0, `tier ${tier}`);
+
+  await setControl('v-hud', 'SURVIVES RELOAD');
+  await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
+  await page.reload();
+  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  // Restore is async (it opens the database first).
+  await page.waitForFunction(
+    () => document.getElementById('v-hud').value === 'SURVIVES RELOAD',
+    null, { timeout: 8000 }
+  ).catch(() => {});
+  const after = await page.evaluate(() => ({
+    dom: document.getElementById('v-hud').value,
+    doc: window.DeadSignalStudio.store?.get('tabs.video.v-hud'),
+  }));
+  check('the session survives a reload (F-05)', after.dom === 'SURVIVES RELOAD', after.dom);
+  check('the restored document matches the DOM', after.doc === after.dom, `${after.doc} / ${after.dom}`);
+}
+
+/* ------------------------------------------------------ timeline clips --- */
+/* The clip list used to be a module-scope array that only reached the document
+   when the author pressed SAVE. Three bugs fell out of that one shortcut:
+   adding a clip raised no undo entry, triggered no autosave, and never reached
+   the stored project — so clips vanished on reload and Ctrl+Z right after
+   adding one silently undid some earlier edit instead. Clips are document
+   state now; this section is what keeps them there. */
+{
+  const clipLabels = () => page.evaluate(() =>
+    (window.DeadSignalStudio.store.get('timeline.clips') || []).map(c => c.label));
+  const tableRows = () => page.evaluate(() =>
+    [...document.querySelectorAll('#tl-body tr')].map(r => r.children[1]?.textContent ?? null));
+
+  const addClip = async (scene, text) => {
+    await page.click('.tab[data-view="video"]');
+    await setControl('v-scene', scene);
+    await setControl('v-text', text);
+    await page.click('.tab[data-view="timeline"]');
+    await page.click('#tl-add');
+  };
+
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'timeline.clips', value: [], label: 'reset for test' }));
+  await addClip('bars', 'CLIP ONE');
+  await addClip('matrix', 'CLIP TWO');
+
+  const added = await clipLabels();
+  check('a clip lands in the document, not just a local array', added.length === 2, added.join(' | '));
+  check('the table shows what the document holds',
+        JSON.stringify(await tableRows()) === JSON.stringify(added));
+
+  await page.evaluate(() => window.DeadSignalStudio.undo());
+  const afterUndo = await clipLabels();
+  check('undo removes the clip it added', afterUndo.length === 1, afterUndo.join(' | '));
+  check('undo re-renders the clip table',
+        JSON.stringify(await tableRows()) === JSON.stringify(afterUndo));
+  await page.evaluate(() => window.DeadSignalStudio.redo());
+  check('redo puts it back', (await clipLabels()).length === 2);
+
+  // Reordering and removing go through the same path, so they are undoable too.
+  await page.click('#tl-body tr:first-child button[data-act="dn"]');
+  const moved = await clipLabels();
+  check('move-down reorders the document', moved[0] === added[1] && moved[1] === added[0],
+        moved.join(' | '));
+  await page.click('#tl-body tr:first-child button[data-act="rm"]');
+  check('remove drops one clip', (await clipLabels()).length === 1);
+  await page.evaluate(() => window.DeadSignalStudio.undo());
+  check('undo restores a removed clip',
+        JSON.stringify(await clipLabels()) === JSON.stringify(moved));
+
+  await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
+  await page.reload();
+  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(
+    () => (window.DeadSignalStudio.store?.get('timeline.clips') || []).length === 2,
+    null, { timeout: 8000 },
+  ).catch(() => { /* asserted below with the real values */ });
+  const reloaded = await clipLabels();
+  check('clips survive a reload', JSON.stringify(reloaded) === JSON.stringify(moved),
+        reloaded.join(' | '));
+  await page.click('.tab[data-view="timeline"]');
+  check('…and the restored table matches',
+        JSON.stringify(await tableRows()) === JSON.stringify(reloaded));
+
+  /* Both previews used to run at once — they share the persistence buffer and
+     the clip scratch canvas, so each wiped the other's frame mid-draw and the
+     picture flickered or went black. Exactly one loop may be alive. */
+  const painting = () => page.evaluate(async () => {
+    const grab = () => ['vcanvas', 'tlcanvas'].map((id) => {
+      const c = document.getElementById(id);
+      if (!c || !c.width) return 'none';
+      const n = Math.min(32, c.width), m = Math.min(32, c.height);
+      return c.getContext('2d').getImageData(0, 0, n, m).data.join(',');
+    });
+    const a = grab();
+    await new Promise(r => setTimeout(r, 400));
+    const b = grab();
+    return { video: a[0] !== b[0], timeline: a[1] !== b[1] };
+  });
+  const onTimeline = await painting();
+  check('on the TIMELINE tab only the timeline preview runs',
+        onTimeline.timeline && !onTimeline.video, JSON.stringify(onTimeline));
+  await page.click('.tab[data-view="video"]');
+  const onVideo = await painting();
+  check('on the VIDEO tab only the video preview runs',
+        onVideo.video && !onVideo.timeline, JSON.stringify(onVideo));
+
+  // An undo on the timeline tab must not wake the video loop back up.
+  await page.click('.tab[data-view="timeline"]');
+  await page.evaluate(() => window.DeadSignalStudio.undo());
+  const afterUndoOnTimeline = await painting();
+  check('undo on the timeline tab does not restart the video preview',
+        !afterUndoOnTimeline.video, JSON.stringify(afterUndoOnTimeline));
+}
+
+/* ---------------------------------------------------------------- toasts -- */
+{
+  const t = await page.evaluate(() => {
+    const box = document.getElementById('toasts');
+    if (!box) return { err: 'no toast container' };
+    box.replaceChildren();
+    // Eight *different* messages: the cap is what stops them covering the page.
+    for (let i = 0; i < 8; i++) window.DeadSignalStudio.addTimelineClip();
+    const capped = box.children.length;
+    // Four *identical* ones: a repeat should tick a counter, not add a row.
+    box.replaceChildren();
+    for (let i = 0; i < 4; i++) window.DeadSignalStudio.clearLibrary();
+    return { capped, repeated: box.children.length,
+             pointerEvents: getComputedStyle(box).pointerEvents,
+             last: box.lastElementChild?.textContent ?? '' };
+  });
+  // Eight actions used to leave eight stacked toasts covering the settings
+  // column, and the container took clicks, so the controls beneath it stopped
+  // responding — which reads as the tool being broken, not as a busy corner.
+  check('toasts are capped', !t.err && t.capped <= 3, `${t.capped} showing`);
+  check('a repeat is counted, not stacked', t.repeated === 1 && /×4$/.test(t.last),
+        `${t.repeated} showing, "${t.last}"`);
+  check('toasts never take clicks', t.pointerEvents === 'none', t.pointerEvents);
+  await page.evaluate(() => {
+    document.getElementById('toasts').replaceChildren();
+    window.DeadSignalStudio.store.apply(
+      { op: 'set', path: 'timeline.clips', value: [], label: 'reset after toast test' });
+  });
+}
+
+/* ------------------------------------------------------- export control -- */
+/* RECORD and STOP have to mean what they say. Both of these were broken in a
+   way that produces a bad file rather than an error, which is the worst kind:
+   the studio looked like it worked and the clip was wrong. */
+{
+  const libCount = () => page.evaluate(() => window.DeadSignalStudio.library.length);
+  const recState = () => page.evaluate(() => ({
+    rec: document.getElementById('v-record').disabled,
+    stop: document.getElementById('v-stop').disabled,
+  }));
+  const waitIdle = (ms = 90000) => page.waitForFunction(
+    () => !document.getElementById('v-record').disabled, null, { timeout: ms },
+  ).then(() => true).catch(() => false);
+
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-scene', 'matrix');
+  await setControl('v-dur', 6); await setControl('v-fps', 24);
+  await setControl('v-w', 480); await setControl('v-h', 360);
+  await page.evaluate(() => window.DeadSignalStudio.clearLibrary());
+
+  // vRecording was only claimed after `await encoderSupport(…)`, so two clicks
+  // in one tick both cleared the guard and ran two encoders over the same
+  // scratch canvases — two exports, both drawing over each other.
+  await page.evaluate(() => { const b = document.getElementById('v-record'); b.click(); b.click(); });
+  const busy = await recState();
+  check('RECORD disables itself while exporting', busy.rec === true);
+  check('STOP is offered while exporting', busy.stop === false);
+  await waitIdle();
+  await page.waitForTimeout(1200);           // give any second encode time to land
+  check('a double-click produces ONE export', await libCount() === 1, `${await libCount()} files`);
+
+  // STOP used to keep whatever frames had been encoded and announce it as a
+  // finished export, so cancelling handed back a silently truncated clip.
+  await page.evaluate(() => window.DeadSignalStudio.clearLibrary());
+  await page.click('#v-record');
+  await page.waitForTimeout(500);
+  const mid = await recState();
+  check('STOP is reachable mid-export', mid.stop === false);
+  await page.click('#v-stop');
+  check('the studio recovers after a cancel', await waitIdle());
+  await page.waitForTimeout(600);
+  check('a cancelled export saves nothing', await libCount() === 0, `${await libCount()} files`);
+  check('…and says so', /cancel/i.test(await page.evaluate(() => document.getElementById('v-status').textContent)));
+
+  // A cancel must not fall through to the real-time recorder, and must leave
+  // the tab able to export again.
+  await setControl('v-dur', 2);
+  await page.click('#v-record');
+  await waitIdle();
+  await page.waitForTimeout(800);
+  check('exporting still works after a cancel', await libCount() === 1, `${await libCount()} files`);
+
+  // One export at a time: the four still exporters share RECORD's scratch
+  // canvases (resizing a canvas clears it), so a .gif click mid-export must
+  // refuse rather than queue a second encode over the same buffers.
+  await page.evaluate(() => window.DeadSignalStudio.clearLibrary());
+  const guard = await page.evaluate(() => {
+    document.getElementById('v-record').click();
+    const gifGreyed = document.getElementById('v-gif').disabled;
+    document.getElementById('v-gif').click();          // must be refused
+    return { gifGreyed };
+  });
+  check('still-export buttons grey the instant RECORD starts', guard.gifGreyed === true);
+  await waitIdle();
+  await page.waitForTimeout(1500);                     // give any second encode time to land
+  const exts = await page.evaluate(() => window.DeadSignalStudio.library.map((i) => i.ext));
+  check('a .gif click mid-export is refused — one clip, no gif',
+        exts.length === 1 && !exts.includes('gif'), exts.join(','));
+  check('still buttons recover after the export',
+        await page.evaluate(() => !document.getElementById('v-gif').disabled));
+  await page.evaluate(() => window.DeadSignalStudio.clearLibrary());
+}
+
+/* --------------------------------------------------- record button label -- */
+/* The RECORD button must name whichever container the File picker chose — it
+   used to promise ".webm" while set to MP4, and the file that landed was
+   whatever the encoder actually wrote. */
+{
+  const label = await page.evaluate(() => {
+    const set = (v) => { const s = document.getElementById('v-container');
+      s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); };
+    const read = () => document.getElementById('v-record').textContent.trim();
+    const prev = document.getElementById('v-container').value;
+    set('mp4'); const mp4 = read(); set('webm'); const webm = read(); set(prev || 'webm');
+    return { mp4, webm };
+  });
+  check('RECORD names the container the File picker chose',
+        /\.mp4$/.test(label.mp4) && /\.webm$/.test(label.webm), JSON.stringify(label));
+}
+
+/* --------------------------------------------------------- audio takes -- */
+{
+  await page.click('.tab[data-view="audio"]');
+  await page.evaluate(() => window.DeadSignalStudio.clearLibrary());
+  const render = async () => { await page.click('#a-render');
+    await page.waitForFunction(() => /Rendered|failed/.test(document.getElementById('a-status').textContent),
+                               null, { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(300); };
+  await render();
+  const first = await page.evaluate(() => window.DeadSignalStudio.library.length);
+  await render(); await render();
+  // RENDER is also the audition button, so dialling in a sound used to leave a
+  // near-identical WAV in the library per attempt — and the BUNDLE tab ships
+  // the library, so the package got all of them.
+  check('re-rendering reuses its library row', await page.evaluate(() => window.DeadSignalStudio.library.length) === first,
+        `${await page.evaluate(() => window.DeadSignalStudio.library.length)} rows after 3 renders`);
+  // …but only while the author has shown no interest in the old take.
+  const kept = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    S.library[S.library.length - 1].name = 'keep_this_one';
+    document.getElementById('a-render').click();
+    await new Promise(r => setTimeout(r, 2500));
+    return { n: S.library.length, names: S.library.map(i => i.name) };
+  });
+  check('a renamed take is kept, not overwritten', kept.n === first + 1 && kept.names.includes('keep_this_one'),
+        kept.names.join(', '));
+  await page.evaluate(() => window.DeadSignalStudio.clearLibrary());
+}
+
+/* ------------------------------------- timeline fallback carries its bed -- */
+/* The timeline's real-time fallback (the path every sequence with a Video In
+   clip takes) used to record the bare canvas stream — shipping silent
+   sequences announced as successes. Force the fallback by hiding VideoEncoder
+   and prove the recorded WebM declares an audio track. */
+{
+  // The audio-takes section above just rendered, so 'last' is a real bed.
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-scene', 'matrix');
+  await setControl('v-dur', 2);
+  await page.click('.tab[data-view="timeline"]');
+  await page.click('#tl-clear');
+  await page.click('#tl-add');
+  await setControl('tl-audio', 'last');
+  await page.evaluate(() => { window.__VE = window.VideoEncoder; window.VideoEncoder = undefined; });
+  /* Real-time capture is wall-clock and load-sensitive, and a recorder error
+     now correctly DISCARDS instead of shipping a truncated clip — so under a
+     loaded CI box one attempt can legitimately produce nothing. Two attempts:
+     what is being pinned is the audio track in a successful recording, not the
+     box's scheduling luck. */
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => { window.DeadSignalStudio.clearLibrary(); });
+    await page.click('#tl-record');
+    await page.waitForFunction(() => !document.getElementById('tl-record').disabled,
+                               null, { timeout: 60000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    const got = await page.evaluate(() =>
+      !!window.DeadSignalStudio.library.find((i) => i.kind === 'videos'));
+    if (got) break;
+  }
+  const hasOpus = await page.evaluate(async () => {
+    const it = window.DeadSignalStudio.library.find((i) => i.kind === 'videos');
+    if (!it) return 'no clip';
+    const u8 = new Uint8Array(await it.blob.arrayBuffer());
+    const needle = 'A_OPUS';                    // the Matroska codec id of the audio TrackEntry
+    outer: for (let i = 0; i < u8.length - needle.length; i++) {
+      for (let j = 0; j < needle.length; j++) if (u8[i + j] !== needle.charCodeAt(j)) continue outer;
+      return true;
+    }
+    return false;
+  });
+  check('the timeline fallback recording carries an audio track', hasOpus === true, String(hasOpus));
+  await page.evaluate(() => { window.VideoEncoder = window.__VE; delete window.__VE;
+    window.DeadSignalStudio.clearLibrary(); });
+  await page.click('#tl-clear');
+  await setControl('tl-audio', '');
+  await page.click('.tab[data-view="video"]');
+}
+
+/* --------------------------------------------------------- file import -- */
+/* A real upload, because every earlier suite clicked buttons and never handed
+   the page a file — which is exactly how this shipped broken. Importing an
+   image set `$("v-scene").value` directly; val() reads the DOCUMENT and never
+   looks at the DOM, so the Scene select flipped to Ken Burns while the renderer
+   carried on drawing the old scene and the picture never appeared. */
+{
+  // A 64×64 checkerboard, built here so the suite carries no binary fixture.
+  const png = (() => {
+    const crcTable = [...Array(256)].map((_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    const crc = (buf) => {
+      let c = 0xffffffff;
+      for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+    const u32 = (n) => Buffer.from([n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255]);
+    const chunk = (type, data) => {
+      const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+      return Buffer.concat([u32(data.length), td, u32(crc(td))]);
+    };
+    const W = 64, H = 64, rows = [];
+    for (let y = 0; y < H; y++) {
+      const row = Buffer.alloc(1 + W * 3);
+      for (let x = 0; x < W; x++) {
+        const v = ((x >> 3) + (y >> 3)) % 2 === 0 ? 255 : 20;
+        row[1 + x * 3] = v; row[2 + x * 3] = v; row[3 + x * 3] = v;
+      }
+      rows.push(row);
+    }
+    const ihdr = Buffer.concat([u32(W), u32(H), Buffer.from([8, 2, 0, 0, 0])]);
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', zlibSync(Buffer.concat(rows))),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+  })();
+
+  const file = { name: 'audit-checkerboard.png', mimeType: 'image/png', buffer: png };
+
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-scene', 'terminal');
+  await page.waitForTimeout(200);
+  await page.setInputFiles('#v-imgfile', file);
+  await page.waitForFunction(
+    () => window.DeadSignalStudio.store.get('tabs.video.v-scene') === 'kenburns',
+    null, { timeout: 8000 },
+  ).catch(() => { /* asserted below */ });
+
+  const after = await page.evaluate(() => ({
+    dom: document.getElementById('v-scene').value,
+    doc: window.DeadSignalStudio.store.get('tabs.video.v-scene'),
+    cfg: window.DeadSignalStudio.readVideoCfg().scene,
+  }));
+  check('importing an image switches the scene in the DOCUMENT, not just the widget',
+        after.doc === 'kenburns' && after.cfg === 'kenburns', JSON.stringify(after));
+
+  // The real proof: the imported picture is on the canvas.
+  await page.waitForTimeout(600);
+  const lit = await page.evaluate(() => {
+    const c = document.getElementById('vcanvas');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let white = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) white++;
+    return white;
+  });
+  check('…and the imported image actually renders', lit > 500, `${lit} bright px`);
+
+  await page.click('.tab[data-view="image"]');
+  await setControl('i-tpl', 'terminal');
+  await page.waitForTimeout(200);
+  await page.setInputFiles('#i-imgfile', file);
+  await page.waitForFunction(
+    () => window.DeadSignalStudio.store.get('tabs.image.i-tpl') === 'import',
+    null, { timeout: 8000 },
+  ).catch(() => {});
+  check('importing on the SCREEN tab switches the template in the document',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('tabs.image.i-tpl')) === 'import');
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-scene', 'terminal');
+
+  /* A file input is not document state, and binding it was quietly fatal: the
+     browser reports "C:\\fakepath\\…" and refuses to let anything write it back,
+     so the next project load threw inside renderDocToDom. That throw aborted
+     the WHOLE restore — it travelled up through store.replace() into
+     initPersistence's catch — leaving every dynamic panel showing its empty
+     state while the document behind it was fully populated. Silent, and only
+     after an import, which is why it survived several audits. */
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'layers.video', value: [{ scene: 'matrix', blend: 'screen', opacity: 0.5, enabled: true }] }));
+  await setControl('v-hud', 'AFTER IMPORT');
+  await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
+  await page.reload();
+  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  const restored = await page.waitForFunction(
+    () => document.getElementById('v-hud').value === 'AFTER IMPORT',
+    null, { timeout: 8000 },
+  ).then(() => true).catch(() => false);
+  check('a project still restores after a file has been imported', restored);
+  check('…and the dynamic panels refresh with it',
+        await page.waitForFunction(
+          () => document.querySelectorAll('#v-layers-list .layer-row').length === 1,
+          null, { timeout: 8000 },
+        ).then(() => true).catch(() => false));
+  check('no file input is bound to the document', await page.evaluate(() => {
+    const doc = window.DeadSignalStudio.store.doc;
+    const ids = Object.values(doc.tabs).flatMap((t) => Object.keys(t));
+    return ids.every((id) => document.getElementById(id)?.type !== 'file');
+  }));
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'layers.video', value: [] }));
+}
+
+/* --------------------------------- everything else that writes a control -- */
+/* Same root cause, eight more features. Each one moved its widget and changed
+   nothing, with no error anywhere. */
+{
+  const docGet = (path) => page.evaluate((p) => window.DeadSignalStudio.store.get(p), path);
+
+  await page.click('.tab[data-view="video"]');
+  const seedBefore = await docGet('seed');
+  await page.click('#seed-roll');
+  await page.waitForTimeout(300);
+  check('the seed roller reaches the document', await docGet('seed') !== seedBefore,
+        `${seedBefore} -> ${await docGet('seed')}`);
+
+  await setControl('v-w', 320); await setControl('v-h', 240);
+  await page.waitForTimeout(200);
+  await setControl('v-aspect', '16:9');
+  await page.waitForTimeout(300);
+  check('the aspect-ratio helper reaches the document',
+        String(await docGet('tabs.video.v-h')) === '180', String(await docGet('tabs.video.v-h')));
+
+  const fgBefore = await docGet('tabs.video.v-fg');
+  await page.selectOption('#aesthetic', { index: 2 });
+  await page.waitForTimeout(400);
+  check('switching aesthetic reaches the document',
+        await docGet('tabs.video.v-fg') !== fgBefore,
+        `${fgBefore} -> ${await docGet('tabs.video.v-fg')}`);
+
+  // Presets: the whole point is that they change the picture.
+  const frame = () => page.evaluate(() => {
+    const S = window.DeadSignalStudio, cfg = S.readVideoCfg();
+    const c = document.createElement('canvas'); c.width = cfg.W; c.height = cfg.H;
+    const ctx = c.getContext('2d');
+    let h = 2166136261;
+    for (let k = 0; k < 6; k++) {
+      S.renderVideoFrame(ctx, cfg.W, cfg.H, cfg, (k / 6) * cfg.duration);
+      const d = ctx.getImageData(0, 0, cfg.W, cfg.H).data;
+      for (let i = 0; i < d.length; i += 29) { h ^= d[i]; h = Math.imul(h, 16777619); }
+    }
+    return h >>> 0;
+  });
+  const presets = await page.evaluate(() =>
+    [...document.getElementById('v-preset').options].map(o => o.value)
+      .filter(v => v && v !== '— custom —').slice(0, 3));
+  let changed = 0;
+  for (const name of presets) {
+    const before = await frame();
+    await setControl('v-preset', name);
+    await page.waitForTimeout(250);
+    if (await frame() !== before) changed++;
+  }
+  check('loading a preset changes the render', changed === presets.length,
+        `${changed}/${presets.length}`);
+
+  // Per-section RESET.
+  await setControl('v-scan', 77);
+  await page.waitForTimeout(250);
+  const dirty = await docGet('tabs.video.v-scan');
+  await page.click('#v-reset');
+  await page.waitForTimeout(500);
+  check('RESET reaches the document', String(await docGet('tabs.video.v-scan')) !== String(dirty),
+        `${dirty} -> ${await docGet('tabs.video.v-scan')}`);
+
+  // The FIX button on a validation banner.
+  await setControl('v-dur', 4);
+  await setControl('v-reveal', 'OBSERVE');
+  await setControl('v-revhold', 9);
+  await page.waitForTimeout(500);
+  const fixed = await page.evaluate(async () => {
+    const btn = document.querySelector('#v-banners button');
+    if (!btn) return { raised: false };
+    const before = window.DeadSignalStudio.store.get('tabs.video.v-revhold');
+    btn.click();
+    await new Promise(r => setTimeout(r, 400));
+    return { raised: true, before, after: window.DeadSignalStudio.store.get('tabs.video.v-revhold') };
+  });
+  check('the banner FIX button reaches the document',
+        fixed.raised && String(fixed.after) !== String(fixed.before), JSON.stringify(fixed));
+
+  // The command palette.
+  await page.click('#palette-open');
+  await page.waitForTimeout(300);
+  await page.keyboard.type('Digital Rain');
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(500);
+  check('picking a scene from the command palette reaches the document',
+        await docGet('tabs.video.v-scene') === 'matrix',
+        String(await docGet('tabs.video.v-scene')));
+
+  await page.click('#v-reset');
+  await page.waitForTimeout(300);
+}
+
+/* --------------------------------------------------- palette + explain --- */
+{
+  // Every control must be findable and explained — with 137 of them across
+  // seven tabs, "scroll until you see it" is not a discovery mechanism.
+  const cov = await page.evaluate(() => window.DeadSignalStudio.explainCoverage());
+  check('every control has Explain copy', cov.missing.length === 0,
+        `${cov.total - cov.missing.length}/${cov.total}` +
+        (cov.missing.length ? ' missing: ' + cov.missing.slice(0, 8).join(', ') : ''));
+
+  await page.keyboard.press('Control+k');
+  check('Ctrl+K opens the palette', await page.evaluate(() => !document.getElementById('palette').hidden));
+
+  await page.keyboard.type('scanlines');
+  const hits = await page.evaluate(() =>
+    [...document.querySelectorAll('.pal-item')].map((li) => li.textContent));
+  check('a setting is findable by name', hits.some((h) => /Scanlines/i.test(h)), hits[0] || '(none)');
+
+  await page.keyboard.press('Enter');
+  const jumped = await page.evaluate(() => ({
+    tab: document.querySelector('.tab.active')?.dataset.view,
+    focused: document.activeElement?.id,
+    closed: document.getElementById('palette').hidden,
+  }));
+  check('choosing a setting closes the palette', jumped.closed);
+  check('…switches to the right tab and focuses the control',
+        jumped.tab === 'video' && jumped.focused === 'v-scan', JSON.stringify(jumped));
+
+  await page.keyboard.press('Control+k');
+  await page.keyboard.press('Escape');
+  check('Escape closes the palette', await page.evaluate(() => document.getElementById('palette').hidden));
+
+  // Explain mode must be reachable and usable from the keyboard, not just by
+  // hovering for a title tooltip.
+  // Focus is still in v-scan from the palette jump, and "?" typed into a field
+  // must insert a character rather than toggle a mode — so step out first.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('?');
+  check('? arms Explain mode', await page.evaluate(() => document.body.classList.contains('explain-armed')));
+  const explained = await page.evaluate(() => {
+    document.getElementById('v-scan').focus();
+    const p = document.getElementById('explain-pop');
+    return { shown: !p.hidden, title: p.querySelector('.ex-title')?.textContent,
+             body: (p.querySelector('.ex-body')?.textContent || '').slice(0, 40),
+             meta: p.querySelector('.ex-meta')?.textContent };
+  });
+  check('focusing a control explains it', explained.shown && explained.title === 'Scanlines', explained.title);
+  check('the explanation says what it does', /CRT|lines/i.test(explained.body), explained.body);
+  check('the explanation states range and unit', /Range: 0 to 100/.test(explained.meta), explained.meta);
+  await page.keyboard.press('Escape');
+  check('Escape disarms Explain mode',
+        await page.evaluate(() => !document.body.classList.contains('explain-armed')));
+}
+
+/* ------------------------------------------------- macros + complexity --- */
+{
+  await page.click('.tab[data-view="video"]');
+  const before = await page.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    return { scan: S.store.get('tabs.video.v-scan'), track: S.store.get('tabs.video.v-track'),
+             depth: S.store.undoDepth };
+  });
+  await setControl('v-macro-grime', 80);
+  const after = await page.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    return { scan: S.store.get('tabs.video.v-scan'), track: S.store.get('tabs.video.v-track'),
+             noise: S.store.get('tabs.video.v-noise'), depth: S.store.undoDepth,
+             domScan: document.getElementById('v-scan').value };
+  });
+  check('a macro moves many parameters at once',
+        after.scan !== before.scan && after.track !== before.track && Number(after.noise) > 0,
+        `scan ${before.scan}->${after.scan}, track ${before.track}->${after.track}, noise ${after.noise}`);
+  check('the macro writes through to the real controls', after.domScan === after.scan,
+        `${after.domScan} / ${after.scan}`);
+  check('a macro is a single undo entry', after.depth - before.depth === 1,
+        `${after.depth - before.depth} entries`);
+
+  await page.evaluate(() => window.DeadSignalStudio.undo());
+  const undone = await page.evaluate(() => ({
+    scan: window.DeadSignalStudio.store.get('tabs.video.v-scan'),
+    track: window.DeadSignalStudio.store.get('tabs.video.v-track'),
+  }));
+  check('undo reverts the whole macro', undone.scan === before.scan && undone.track === before.track,
+        `${undone.scan} / ${undone.track}`);
+
+  // Complexity is a view filter: hidden controls keep their values.
+  const simple = await page.evaluate(() => {
+    window.DeadSignalStudio.applyLevel(1);
+    const vis = (id) => { const el = document.getElementById(id);
+      const row = el.closest('.row'); return !!row && !row.classList.contains('level-hidden'); };
+    return { level: window.DeadSignalStudio.getLevel(), scene: vis('v-scene'), mask: vis('v-mask'),
+             grime: vis('v-macro-grime'), maskValue: window.DeadSignalStudio.store.get('tabs.video.v-mask') };
+  });
+  check('Simple hides advanced controls but keeps the essential ones',
+        simple.scene && simple.grime && !simple.mask, JSON.stringify(simple));
+  check('hidden controls keep their value', simple.maskValue !== undefined, String(simple.maskValue));
+
+  const deep = await page.evaluate(() => {
+    window.DeadSignalStudio.applyLevel(3);
+    const el = document.getElementById('v-mask');
+    return !el.closest('.row').classList.contains('level-hidden');
+  });
+  check('Deep shows everything again', deep);
+  await page.evaluate(() => window.DeadSignalStudio.applyLevel(2));
+}
+
+/* --------------------------- palette reveals a detail-hidden setting ------ */
+/* Ctrl+K promises to jump to every setting, not just the visible ones: at the
+   default Studio level a jump to a Deep-only control used to silently do
+   nothing. It must raise the detail level, unhide the row and focus it. */
+{
+  await page.evaluate(() => { window.DeadSignalStudio.applyLevel(2); document.activeElement?.blur(); });
+  await page.keyboard.press('Control+k');
+  await page.keyboard.type('Shadow mask');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => {
+    const row = document.getElementById('v-mask').closest('.row');
+    return { level: window.DeadSignalStudio.getLevel(),
+             hidden: row.classList.contains('level-hidden'),
+             focused: document.activeElement && document.activeElement.id };
+  });
+  check('Ctrl+K to a Deep setting raises the detail level', r.level === 3, String(r.level));
+  check('…and the row is visible and focused', !r.hidden && r.focused === 'v-mask', JSON.stringify(r));
+  await page.evaluate(() => window.DeadSignalStudio.applyLevel(2));
+}
+
+/* ------------------------------------------------------------ flash meter -- */
+{
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-scene', 'terminal');
+  await setControl('v-blink', '');
+  await setControl('v-flick', 0);
+  await page.waitForTimeout(900);
+  const calm = await page.evaluate(() => ({
+    text: document.getElementById('v-flash').textContent,
+    risky: document.getElementById('v-flash').classList.contains('risky'),
+  }));
+  check('the meter is live and reads a calm clip as safe',
+        /flash [\d.]+\/s/.test(calm.text) && !calm.risky, calm.text);
+
+  // The studio's own blink overlay is rgba(255,255,255,.12) over near-black —
+  // about a 0.015 luminance change, well under WCAG's 0.1. It should NOT be
+  // flagged, and asserting that is the point: the built-in strobe is safe by
+  // construction, and the meter must not cry wolf about it.
+  await setControl('v-blink', '30');
+  await setControl('v-dur', 3);
+  await page.waitForTimeout(1800);
+  const blink = await page.evaluate(() =>
+    document.getElementById('v-flash').classList.contains('risky'));
+  check('the built-in blink overlay is below the WCAG threshold', !blink);
+  await setControl('v-blink', '');
+
+  // Drive the readout with a genuine black/white strobe to prove the warning
+  // path itself works — imported footage can absolutely do this.
+  const warned = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    S.resetFlashMeter();
+    const el = document.getElementById('v-flash');
+    let t = 0;
+    for (let i = 0; i < 24; i++) { S.feedLuminance(i % 2 ? 0.9 : 0.0, t); t += 50; }
+    el.dataset.risky = 'false';                 // allow the transition to fire
+    // Paint just after the last sample: resetFlashMeter() cleared the repaint
+    // throttle, and the whole feed has to still be inside the measurement
+    // window or there is nothing left to be alarmed about. (Jumping ten
+    // seconds ahead to dodge the throttle also jumped past the window — it
+    // only ever passed because paintFlash was reading a different clock.)
+    S.paintFlash(el, t + 60);
+    return { text: el.textContent, risky: el.classList.contains('risky'),
+             role: el.getAttribute('role'), rate: S.currentFlashRate(t + 60) };
+  });
+  check('a real strobe is measured over the limit', warned.rate > 3, `${warned.rate.toFixed(1)}/s`);
+  check('the readout turns red', warned.risky, warned.text);
+  check('the warning is announced assertively', warned.role === 'alert', String(warned.role));
+  await page.evaluate(() => window.DeadSignalStudio.resetFlashMeter());
+}
+
+/* -------------------------------------------------------------- workspace -- */
+{
+  const shape = () => page.evaluate(() => {
+    const stage = document.querySelector('.view.active .panel.stagewrap');
+    const insp  = document.querySelector('.view.active .grid > .panel:not(.stagewrap)');
+    const brow  = document.getElementById('ws-browser');
+    const r = (el) => el ? el.getBoundingClientRect() : null;
+    return { on: document.body.classList.contains('workspace'),
+             browser: !!brow, bx: r(brow)?.left, sx: r(stage)?.left, ix: r(insp)?.left,
+             pressed: document.getElementById('workspace-toggle').getAttribute('aria-pressed') };
+  });
+
+  await page.click('.tab[data-view="video"]');
+  const tabs = await shape();
+  check('the tabbed layout is the default', !tabs.on && !tabs.browser, JSON.stringify(tabs));
+
+  await page.click('#workspace-toggle');
+  const ws = await shape();
+  check('the toggle switches to workspace', ws.on && ws.browser);
+  check('panes are laid out left-to-right: browser, viewer, inspector',
+        ws.bx < ws.sx && ws.sx < ws.ix, `${ws.bx} < ${ws.sx} < ${ws.ix}`);
+  check('the toggle reports its state', ws.pressed === 'true');
+
+  // The Browser must actually drive the studio, not just list things.
+  const drove = await page.evaluate(async () => {
+    const el = document.getElementById('ws-search');
+    el.value = 'Digital Rain';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 60));
+    const btn = [...document.querySelectorAll('.ws-item')].find((b) => /Digital Rain/i.test(b.textContent));
+    if (!btn) return { found: false };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 120));
+    return { found: true, scene: window.DeadSignalStudio.store.get('tabs.video.v-scene') };
+  });
+  check('the Browser filters and applies a scene', drove.found && drove.scene === 'matrix',
+        JSON.stringify(drove));
+
+  // Everything built in the tabbed layout must keep working here.
+  await setControl('v-text', 'WORKSPACE MODE');
+  const stillWorks = await page.evaluate(() => ({
+    doc: window.DeadSignalStudio.store.get('tabs.video.v-text'),
+    canvasPainted: (() => {
+      const c = document.getElementById('vcanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let any = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) { any = 1; break; }
+      return !!any;
+    })(),
+  }));
+  check('the document binding still works in workspace', stillWorks.doc === 'WORKSPACE MODE');
+  check('the preview still renders in workspace', stillWorks.canvasPainted);
+
+  await page.keyboard.press('Control+k');
+  const palInWs = await page.evaluate(() => !document.getElementById('palette').hidden);
+  check('the palette still works in workspace', palInWs);
+  await page.keyboard.press('Escape');
+
+  // Turning it off must restore the tabbed layout exactly — the whole point of
+  // shipping this behind a toggle.
+  await page.click('#workspace-toggle');
+  const back = await shape();
+  check('turning it off removes the Browser', !back.on && !back.browser);
+  check('the tabbed layout returns', back.sx !== undefined && back.pressed === 'false');
+  const survived = await page.evaluate(() =>
+    window.DeadSignalStudio.store.get('tabs.video.v-text'));
+  check('nothing was lost switching back', survived === 'WORKSPACE MODE', survived);
+
+  // Ctrl+\ is the keyboard route.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+\\');
+  check('Ctrl+\\ toggles the layout',
+        await page.evaluate(() => document.body.classList.contains('workspace')));
+  await page.keyboard.press('Control+\\');
+}
+
+/* ========================================================== keyframes ====== */
+/* The audit proves a track renders. This proves an author can MAKE one with
+   the panel: scrub, set, press KEY — which is the only route that ships. */
+console.log('\n[layers panel]');
+{
+  await page.evaluate(() => document.querySelector('.tab[data-view="video"]').click());
+  await clickControl('#v-layers-add');
+  await clickControl('#v-layers-add');
+  const rows = await page.evaluate(() => document.querySelectorAll('#v-layers-list .layer-row').length);
+  check('the ＋ LAYER button adds rows', rows === 2, String(rows));
+  check('the stack is in the document',
+        await page.evaluate(() => (window.DeadSignalStudio.store.get('layers.video') || []).length) === 2);
+  check('the legend shows the layer count',
+        await page.evaluate(() => document.getElementById('v-layers-count').textContent) === '2');
+
+  // The list is top-down, so the FIRST row on screen is the LAST layer drawn.
+  await page.evaluate(() => {
+    const sel = document.querySelector('#v-layers-list select[data-k="scene"]');
+    sel.value = 'matrix';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  check('changing a row\'s scene writes to the top layer',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('layers.video')[1].scene) === 'matrix');
+
+  await page.evaluate(() => {
+    const r = document.querySelector('#v-layers-list input[type=range][data-k="opacity"]');
+    r.value = '25';
+    r.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  check('the opacity slider writes through',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('layers.video')[1].opacity) === 0.25);
+
+  await page.evaluate(() => {
+    const c = document.querySelector('#v-layers-list input[type=checkbox][data-k="enabled"]');
+    c.checked = false;
+    c.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  check('a layer can be switched off',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('layers.video')[1].enabled) === false);
+  check('a disabled row is shown as disabled',
+        await page.evaluate(() =>
+          document.querySelector('#v-layers-list .layer-row').classList.contains('off')));
+
+  // Reorder: ↓ on the top row moves it under the other one.
+  await page.click('#v-layers-list button[data-act="dn"]:not([disabled])');
+  check('the arrows reorder the stack',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('layers.video')[0].scene) === 'matrix');
+
+  await page.evaluate(() => window.DeadSignalStudio.undo());
+  check('reordering is undoable',
+        await page.evaluate(() => window.DeadSignalStudio.store.get('layers.video')[1].scene) === 'matrix');
+
+  await page.click('#v-layers-list button[data-act="rm"]');
+  check('the ✕ button removes a layer',
+        await page.evaluate(() => (window.DeadSignalStudio.store.get('layers.video') || []).length) === 1);
+
+  await page.evaluate(() => window.DeadSignalStudio.clearLayers());
+  check('clearing empties the stack',
+        await page.evaluate(() => (window.DeadSignalStudio.store.get('layers.video') || []).length) === 0);
+  check('the empty state explains itself',
+        await page.evaluate(() =>
+          /No layers/.test(document.getElementById('v-layers-list').textContent)));
+}
+
+console.log('\n[keyframe panel]');
+{
+  await page.evaluate(() => {
+    document.querySelector('.tab[data-view="video"]').click();
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    set('v-dur', '10');
+    set('v-auto-param', 'v-scan');
+  });
+
+  // Key at the start with the control low...
+  await page.evaluate(() => {
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    set('v-scrub', '0');
+    set('v-scan', '5');
+  });
+  await clickControl('#v-auto-key');
+  // ...and again at the end with it high.
+  await page.evaluate(() => {
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    set('v-scrub', '1000');
+    set('v-scan', '95');
+  });
+  await clickControl('#v-auto-key');
+
+  const made = await page.evaluate(() =>
+    window.DeadSignalStudio.store.get('automation.video.v-scan'));
+  check('the KEY button writes keys', Array.isArray(made) && made.length === 2,
+        JSON.stringify(made));
+  check('keys land at the scrubbed times',
+        made && made[0].t === 0 && Math.abs(made[1].t - 10) < 0.05,
+        made ? `${made[0].t}s, ${made[1].t}s` : '');
+  check('keys carry the control values at the time they were set',
+        made && made[0].v === 5 && made[1].v === 95,
+        made ? `${made[0].v} → ${made[1].v}` : '');
+
+  const listed = await page.evaluate(() =>
+    document.querySelectorAll('#v-auto-list tbody tr').length);
+  check('both keys are listed', listed === 2, String(listed));
+
+  check('the automated control is marked in the settings panel',
+        await page.evaluate(() => document.getElementById('v-scan').classList.contains('automated')));
+  check('the picker flags which parameters have keys',
+        await page.evaluate(() =>
+          [...document.querySelectorAll('#v-auto-param option')]
+            .some((o) => o.value === 'v-scan' && o.textContent.includes('◆'))));
+
+  // Undo is the safety net that makes keying cheap to try.
+  await page.evaluate(() => window.DeadSignalStudio.undo());
+  check('undo removes the last key',
+        await page.evaluate(() =>
+          (window.DeadSignalStudio.store.get('automation.video.v-scan') || []).length) === 1);
+  await page.evaluate(() => window.DeadSignalStudio.redo());
+
+  // Removing a key from the list.
+  await page.click('#v-auto-list button[data-rm]');
+  check('the ✕ button removes a key',
+        await page.evaluate(() =>
+          (window.DeadSignalStudio.store.get('automation.video.v-scan') || []).length) === 1);
+
+  await clickControl('#v-auto-clear');
+  check('CLEAR empties the track',
+        await page.evaluate(() =>
+          (window.DeadSignalStudio.store.get('automation.video.v-scan') || []).length) === 0);
+  check('…and the control stops being marked',
+        await page.evaluate(() => !document.getElementById('v-scan').classList.contains('automated')));
+}
+
+/* ========================================================= onboarding ====== */
+/* The first thirty seconds. Runs last because it reloads the page with a cold
+   profile, which would otherwise throw away everything the suite set up. */
+console.log('\n[first run]');
+{
+  // A FRESH page, not a reload: addInitScript runs on every navigation, so
+  // reloading this one would re-suppress the card it is meant to test. A new
+  // page gets its own context, and therefore its own empty localStorage.
+  const first = await browser.newPage();
+  first.on('pageerror', (e) => errors.push('first-run: ' + String(e)));
+  await first.goto(PAGE);
+  await first.waitForFunction(() => window.DeadSignalStudio
+    && document.querySelectorAll('#v-scene option').length > 0);
+
+  const shown = await first.evaluate(() => {
+    const el = document.getElementById('welcome');
+    return { visible: el && el.style.display !== 'none',
+             focused: document.activeElement?.id,
+             modal: el?.getAttribute('aria-modal') };
+  });
+  check('the welcome card appears on a cold start', shown.visible);
+  check('…with the primary action focused', shown.focused === 'welcome-sample', shown.focused);
+  check('…and declares itself modal', shown.modal === 'true', shown.modal);
+
+  await first.click('#welcome-sample');
+  const after = await first.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    return {
+      hidden: document.getElementById('welcome').style.display === 'none',
+      name: S.store.get('meta.name'),
+      text: S.store.get('tabs.video.v-text'),
+      domText: document.getElementById('v-text').value,
+      keys: (S.store.get('automation.video.v-scan') || []).length,
+      layers: (S.store.get('layers.video') || []).length,
+      stereo: S.store.get('tabs.audio.a-channels'),
+      tab: document.querySelector('.tab.active')?.dataset.view,
+      flagged: document.getElementById('v-scan').classList.contains('automated'),
+    };
+  });
+  check('the sample loads and closes the card', after.hidden);
+  check('the sample names itself', /sample/i.test(after.name || ''), after.name);
+  check('the sample reaches the document', /ARCHIVE NODE/.test(after.text || ''), after.text);
+  // The whole point of the overlay approach: the DOM must follow the document.
+  check('…and the DOM re-rendered from it', after.domText === after.text);
+  check('the sample brings keyframes', after.keys === 2, String(after.keys));
+  check('…and a layer', after.layers === 1, String(after.layers));
+  check('…and a stereo audio bed', after.stereo === '2', String(after.stereo));
+  check('the keyframed control is marked in the panel', after.flagged);
+  check('it lands on the video tab', after.tab === 'video', after.tab);
+
+  // The sample must actually render, not just populate fields.
+  const drew = await first.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    const cfg = Object.assign(S.readVideoCfg(), { W: 160, H: 120 });
+    const shot = (t) => {
+      const c = document.createElement('canvas'); c.width = 160; c.height = 120;
+      S.renderVideoFrame(c.getContext('2d'), 160, 120, cfg, t);
+      const d = c.getContext('2d').getImageData(0, 0, 160, 120).data;
+      let lit = 0, h = 2166136261 >>> 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 1] > 40) lit++;
+      for (let i = 0; i < d.length; i++) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; }
+      return { lit, h: h.toString(16) };
+    };
+    const a = shot(1), b = shot(9);
+    return { lit: a.lit, decays: a.h !== b.h };
+  });
+  check('the sample renders a real picture', drew.lit > 200, `${drew.lit} lit px`);
+  check('…and visibly decays across the clip', drew.decays);
+
+  // Dismissing must stick, or it stops being a first-run card.
+  await first.reload();
+  await first.waitForFunction(() => window.DeadSignalStudio);
+  check('the card does not return on the next visit',
+        await first.evaluate(() => document.getElementById('welcome').style.display === 'none'));
+  check('…but HELP can reopen it', await first.evaluate(() => {
+    document.getElementById('help-welcome').click();
+    return document.getElementById('welcome').style.display !== 'none';
+  }));
+
+  /* Mid-project the reopened card must not default Enter onto the destructive
+     action, a dismissed confirm must change nothing, and an accepted load must
+     stash the outgoing project so a misclick is recoverable. */
+  first.on('dialog', (d) => d.dismiss().catch(() => {}));
+  await first.evaluate(() => {
+    document.getElementById('welcome-close').click();
+    const e = document.getElementById('v-text');
+    e.value = 'MY OWN WORK'; e.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('help-welcome').click();
+  });
+  check('the reopened card does not focus the sample button',
+        await first.evaluate(() => document.activeElement?.id) !== 'welcome-sample',
+        await first.evaluate(() => document.activeElement?.id));
+  await first.click('#welcome-sample');
+  await first.waitForTimeout(300);
+  check('a dismissed confirm leaves the project alone',
+        await first.evaluate(() => window.DeadSignalStudio.store.get('tabs.video.v-text')) === 'MY OWN WORK');
+  check('…and the outgoing project is stashed on a real load', await first.evaluate(async () => {
+    window.confirm = () => true;                       // accept this one
+    const W = await import('./src/ui/welcome.js');
+    W.loadSample();
+    const stash = JSON.parse(localStorage.getItem('deadsignal.studio.previous-project') || 'null');
+    return stash?.tabs?.video?.['v-text'] === 'MY OWN WORK';
+  }));
+  await first.close();
+}
+
+/* ------------------------------------------------------------ filter chain -- */
+/* The composable chain: order is the feature, so most of these are about the
+   chain being a chain rather than a set of toggles. */
+{
+  await page.click('.tab[data-view="video"]');
+  const chain = () => page.evaluate(() =>
+    (window.DeadSignalStudio.store.get('filters.video') || []).map(f => f.id + (f.enabled ? '' : ':off')));
+  const frame = () => page.evaluate(() => {
+    const S = window.DeadSignalStudio, cfg = S.readVideoCfg();
+    const c = document.createElement('canvas'); c.width = cfg.W; c.height = cfg.H;
+    S.renderVideoFrame(c.getContext('2d'), cfg.W, cfg.H, cfg, 2.0);
+    const d = c.getContext('2d').getImageData(0, 0, cfg.W, cfg.H).data;
+    let h = 2166136261;
+    for (let i = 0; i < d.length; i += 7) { h ^= d[i]; h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  });
+
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'filters.video', value: [], label: 'reset for test' }));
+  await page.waitForTimeout(150);
+
+  const picker = await page.evaluate(() => ({
+    options: document.querySelectorAll('#v-filters-pick option').length,
+    groups: [...document.querySelectorAll('#v-filters-pick optgroup')].map(o => o.label),
+  }));
+  check('the filter picker is populated and grouped',
+        picker.options >= 20 && picker.groups.length >= 4,
+        `${picker.options} filters in ${picker.groups.length} groups`);
+
+  // An empty chain must be a true no-op, or adding the feature would have
+  // changed every existing project's look.
+  const bare = await frame();
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'filters.video', value: [{ id: 'blur', params: {}, enabled: false }] }));
+  await page.waitForTimeout(120);
+  check('a bypassed filter renders identically to no filter', await frame() === bare);
+
+  await page.selectOption('#v-filters-pick', 'duotone');
+  await clickControl('#v-filters-add');
+  await page.waitForTimeout(200);
+  await page.selectOption('#v-filters-pick', 'mosaic');
+  await clickControl('#v-filters-add');
+  await page.waitForTimeout(300);
+  const added = await chain();
+  check('adding filters builds a chain in order',
+        added.slice(-2).join(',') === 'duotone,mosaic', added.join(','));
+  check('each step renders its own parameter controls',
+        await page.evaluate(() => document.querySelectorAll('#v-filters-list input[data-key]').length) >= 4);
+
+  const beforeSwap = await frame();
+  await page.click('#v-filters-list .filter-row:last-child button[data-act="up"]');
+  await page.waitForTimeout(300);
+  const swapped = await chain();
+  check('the arrows reorder the chain',
+        swapped.slice(-2).join(',') === 'mosaic,duotone', swapped.join(','));
+  // The entire justification for a chain instead of checkboxes.
+  check('running the same filters in the other order is a different picture',
+        await frame() !== beforeSwap);
+
+  const beforeBypass = await frame();
+  await page.click('#v-filters-list .filter-row:last-child button[data-act="toggle"]');
+  await page.waitForTimeout(250);
+  check('bypass keeps the step but changes the render',
+        (await chain()).join(',').includes(':off') && await frame() !== beforeBypass);
+
+  // A parameter drag has to reach the document and stay one undo entry.
+  const depth0 = await page.evaluate(() => window.DeadSignalStudio.store.undoDepth);
+  await page.evaluate(() => {
+    const el = document.querySelector('#v-filters-list input[type=range][data-key]');
+    for (const v of [10, 20, 30, 40]) { el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }
+  });
+  await page.waitForTimeout(300);
+  const dragged = await page.evaluate(() => ({
+    depth: window.DeadSignalStudio.store.undoDepth,
+    params: window.DeadSignalStudio.store.get('filters.video')[0].params,
+  }));
+  check('a parameter drag reaches the document', Object.keys(dragged.params).length > 0,
+        JSON.stringify(dragged.params));
+  check('…and collapses to one undo entry', dragged.depth - depth0 === 1,
+        `${dragged.depth - depth0} entries`);
+
+  await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
+  await page.reload();
+  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => (window.DeadSignalStudio.store?.get('filters.video') || []).length > 0,
+                             null, { timeout: 8000 }).catch(() => {});
+  check('the chain survives a reload', (await chain()).length >= 2, (await chain()).join(','));
+  // Wait on the PANEL, not the document: the restore is async and the row
+  // count is what actually proves the panel re-read it.
+  const redrew = await page.waitForFunction(
+    () => document.querySelectorAll('#v-filters-list .filter-row').length >= 2,
+    null, { timeout: 8000 },
+  ).then(() => true).catch(() => false);
+  check('…and the panel redraws from it', redrew,
+        JSON.stringify(await page.evaluate(() => ({
+          rows: document.querySelectorAll('#v-filters-list .filter-row').length,
+          listEl: !!document.getElementById('v-filters-list'),
+          listHtml: (document.getElementById('v-filters-list')?.innerHTML || '').slice(0, 60),
+          doc: (window.DeadSignalStudio.store.get('filters.video') || []).length,
+          tab: document.querySelector('.tab.active')?.dataset.view,
+        }))));
+
+  // A clip has to carry the chain it was made with, like it carries layers.
+  await page.click('.tab[data-view="timeline"]');
+  await page.click('#tl-add');
+  await page.waitForTimeout(400);
+  check('a timeline clip captures its filter chain',
+        await page.evaluate(() => (window.DeadSignalStudio.store.get('timeline.clips').at(-1)?.rec?.__filters || []).length) >= 2);
+
+  await page.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    S.store.apply({ op: 'set', path: 'filters.video', value: [] });
+    S.store.apply({ op: 'set', path: 'timeline.clips', value: [] });
+  });
+  await page.click('.tab[data-view="video"]');
+  await page.waitForTimeout(200);
+}
+
+/* ---------------------------------------------------- every filter draws -- */
+{
+  await page.click('.tab[data-view="video"]');
+  const ids = await page.evaluate(() => [...document.querySelectorAll('#v-filters-pick option')].map(o => o.value));
+  const inert = await page.evaluate(async (ids) => {
+    const S = window.DeadSignalStudio;
+    const { FILTERS } = await import('./src/fx/filters.js');
+    const shot = () => {
+      const cfg = S.readVideoCfg();
+      const c = document.createElement('canvas'); c.width = cfg.W; c.height = cfg.H;
+      S.renderVideoFrame(c.getContext('2d'), cfg.W, cfg.H, cfg, 2.0);
+      const d = c.getContext('2d').getImageData(0, 0, cfg.W, cfg.H).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 7) { h ^= d[i]; h = Math.imul(h, 16777619); }
+      return h >>> 0;
+    };
+    S.store.apply({ op: 'set', path: 'filters.video', value: [] });
+    const base = shot();
+
+    /* Parameters come from each filter's OWN declaration rather than one shared
+       bag of every key in the tool.
+     *
+       The bag was wrong twice over. `levels: 4` meant Posterize's level count
+       AND, once a Levels filter existed, nothing it recognised — keys are not a
+       shared namespace. And the bag had grown to 44 keys against a document
+       guard that keeps 24 (MAX_PARAM_KEYS), so two thirds of it was being
+       dropped before it ever reached a filter: the test looked thorough and was
+       running most filters on their defaults.
+
+       Deriving from the registry also means a filter added later is exercised
+       without anyone remembering to extend a list. */
+    const TUNE = {
+      // Timing, not intensity: pushing these toward max moves the effect
+      // outside the frame being sampled instead of strengthening it.
+      lower3: { in: 0, hold: 30 },
+      stamp: { blink: 0 },
+      streak: { threshold: 40 },
+    };
+    const paramsFor = (f) => {
+      const o = {};
+      for (const s of f.params) {
+        if (TUNE[f.id] && s.key in TUNE[f.id]) { o[s.key] = TUNE[f.id][s.key]; continue; }
+        if (s.kind === 'color') o[s.key] = '#ff3b6b';
+        else if (s.kind === 'text') o[s.key] = 'FILTER';
+        else if (s.kind === 'select') o[s.key] = s.def;
+        else {
+          // Away from the default, toward whichever end has room.
+          const up = s.def + (s.max - s.def) * 0.4;
+          o[s.key] = Math.abs(up - s.def) > 1e-6 ? up : s.def + (s.min - s.def) * 0.4;
+        }
+      }
+      return o;
+    };
+
+    const dead = [];
+    for (const id of ids) {
+      const f = FILTERS[id];
+      if (!f) { dead.push(id + ' (not registered)'); continue; }
+      // Defaults first — that is what an author gets when they add it — then
+      // pushed off the defaults, because a few are deliberately an identity
+      // there (a Colour Grade that changed the picture the moment you added it
+      // would be wrong).
+      S.store.apply({ op: 'set', path: 'filters.video', value: [{ id, enabled: true, params: {} }] });
+      if (shot() !== base) continue;
+      S.store.apply({ op: 'set', path: 'filters.video', value: [{ id, enabled: true, params: paramsFor(f) }] });
+      if (shot() === base) dead.push(id);
+    }
+    S.store.apply({ op: 'set', path: 'filters.video', value: [] });
+    return dead;
+  }, ids);
+  check(`all ${ids.length} filters change the picture`, inert.length === 0, inert.join(', '));
+}
+
+/* --------------------------------------------------- preview under load -- */
+/* The preview is main-thread work. A filter chain at a large output size costs
+   a quarter of a second per frame, and scheduled straight back onto rAF that
+   leaves no gap between blocks — typing one word into the Browser took six
+   seconds, which is indistinguishable from the tool freezing. */
+{
+  await page.click('.tab[data-view="video"]');
+  await setControl('v-fps', 12);
+  await setControl('v-dur', 8);
+  await setControl('v-w', 320);
+  await setControl('v-h', 240);
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'filters.video', value: [] }));
+  await page.waitForTimeout(400);
+
+  // The loop redraws on the CLIP's frame grid, not the display's: at 12fps a
+  // 60Hz screen was rendering each frame five times, and showing intermediate
+  // motion the export could never produce.
+  const rate = await page.evaluate(async () => {
+    const c = document.getElementById('vcanvas');
+    const g = () => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 2166136261; for (let i = 0; i < d.length; i += 97) { h ^= d[i]; h = Math.imul(h, 16777619); } return h >>> 0; };
+    let last = g(), n = 0;
+    const t0 = performance.now();
+    // Poll on rAF so a 60Hz redraw would be counted if it were happening.
+    while (performance.now() - t0 < 2000) {
+      await new Promise(r => requestAnimationFrame(r));
+      const h = g(); if (h !== last) { n++; last = h; }
+    }
+    return n / ((performance.now() - t0) / 1000);
+  });
+  // A 12fps clip must redraw ~12 times a second, not once per display refresh.
+  // The old loop rendered every rAF tick: five identical renders per frame, and
+  // continuous scenes moved more smoothly than the export ever would.
+  check('the preview redraws at the clip frame rate, not the display rate',
+        rate > 6 && rate < 24, `${rate.toFixed(1)} redraws/s at 12fps`);
+
+  // The property that matters: a heavy chain must slow the PICTURE, not the
+  // interface. Measured as how long a trivial main-thread turn has to wait.
+  await setControl('v-w', 960);
+  await setControl('v-h', 720);
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'filters.video', value: [
+      { id: 'edges', params: {}, enabled: true },
+      { id: 'halftone', params: {}, enabled: true },
+      { id: 'pixelsort', params: {}, enabled: true },
+      { id: 'crosshatch', params: {}, enabled: true }] }));
+  await page.evaluate(() => window.DeadSignalStudio.startVideoPreview());
+  await page.waitForTimeout(1200);
+  const latency = await page.evaluate(async () => {
+    // Ten queued turns: without a yield they land behind back-to-back renders.
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+    return Math.round(performance.now() - t0);
+  });
+  // Generous: the point is seconds vs not-seconds, and CI machines vary.
+  check('a heavy filter chain does not lock the interface', latency < 2500, `${latency}ms for 10 turns`);
+  check('…and says the preview eased off rather than looking broken',
+        /eased off/.test(await page.evaluate(() => document.getElementById('v-est').textContent)),
+        await page.evaluate(() => document.getElementById('v-est').textContent));
+
+  // Leaving the tab must clear BOTH schedulers, or a throttled loop keeps
+  // running after its tab is gone (cancelAnimationFrame cannot clear a timeout).
+  await page.click('.tab[data-view="audio"]');
+  await page.waitForTimeout(900);
+  const stopped = await page.evaluate(async () => {
+    const c = document.getElementById('vcanvas');
+    const g = () => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 2166136261; for (let i = 0; i < d.length; i += 97) { h ^= d[i]; h = Math.imul(h, 16777619); } return h >>> 0; };
+    const a = g();
+    await new Promise(r => setTimeout(r, 1200));
+    return a === g();
+  });
+  check('leaving the tab stops the throttled preview too', stopped);
+
+  await page.click('.tab[data-view="video"]');
+  await page.evaluate(() => window.DeadSignalStudio.store.apply(
+    { op: 'set', path: 'filters.video', value: [] }));
+  await setControl('v-w', 320);
+  await setControl('v-h', 240);
+  await page.waitForTimeout(300);
+}
+
+console.log('-'.repeat(58));
+check('no uncaught page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+await browser.close();
+server.close();
+
+console.log(`\nDead Signal Studio smoke: ${pass} passed, ${fail} failed`);
+process.exit(fail === 0 ? 0 : 1);

@@ -1,0 +1,84 @@
+/* Dead Signal Studio — tokens.css
+   Design tokens, reset, and the page-level CRT chrome. */
+:root{
+    --bg:#05080a; --panel:#0a1016; --panel2:#0d151c; --edge:#123; --edge2:#2c4a5c;
+    --phos:#39ff9e; --phos-dim:#1f7d55; --amber:#ffb347; --cyan:#5fd9ff; --red:#ff5a5a;
+    --text:#bfeee0; --muted:#96bdb4; --hot:#ff3860; --crt:0.5;
+    --mono:"DejaVu Sans Mono","Consolas","Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(120% 90% at 50% -10%, #0b1620 0%, var(--bg) 60%) fixed, var(--bg);
+    color:var(--text); font-family:var(--mono); font-size:14px; line-height:1.45; -webkit-font-smoothing:none;
+  }
+  body::after{content:""; position:fixed; inset:0; pointer-events:none; z-index:9998;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
+    mix-blend-mode:multiply; opacity:calc(var(--crt)*1);}
+  a{color:var(--cyan)}
+
+/* ---------------------------------------------------------------------------
+   High contrast. Every colour is a token, so the theme is a token override
+   rather than a parallel stylesheet — nothing can be styled in one and missed
+   in the other.
+
+   The CRT overlay and the phosphor bloom are the point of the normal look and
+   also the two things that hurt contrast most, so this turns them off. It
+   applies to the TOOL CHROME only: the media you render is unaffected, which
+   is what makes it usable rather than a compromise on the output.
+   ------------------------------------------------------------------------- */
+:root[data-contrast="high"]{
+  --bg:#000; --panel:#0a0a0a; --panel2:#141414; --edge:#5a5a5a; --edge2:#8a8a8a;
+  --phos:#4dffa6; --phos-dim:#37b877; --amber:#ffc266; --cyan:#7fe0ff; --red:#ff8080;
+  --text:#f2f2f2; --muted:#d0d0d0; --hot:#ff6b8a;
+  --crt:0;
+}
+:root[data-contrast="high"] body{ background:var(--bg) }
+:root[data-contrast="high"] body::after{ display:none }        /* scanline overlay */
+:root[data-contrast="high"] .screen{ box-shadow:none }
+/* Glow is decorative and reduces legibility of the thing it surrounds. */
+:root[data-contrast="high"] *{ text-shadow:none !important }
+:root[data-contrast="high"] :where(a,button,input,select,textarea,[tabindex]):focus-visible{
+  outline:3px solid #fff; outline-offset:2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Accessibility baseline. Kept in the token sheet so a pack that restyles the
+   chrome cannot quietly drop it.
+   ------------------------------------------------------------------------- */
+
+/* Visible focus everywhere, including for the CRT-styled controls whose own
+   borders would otherwise swallow the indicator. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible{
+  outline:2px solid var(--cyan);
+  outline-offset:2px;
+  border-radius:2px;
+}
+
+/* Skip link: off-screen until focused. */
+.skip-link{
+  position:absolute; left:-9999px; top:0; z-index:10000;
+  background:var(--phos); color:#021; padding:10px 16px;
+  font-family:var(--mono); font-size:14px; letter-spacing:1px; text-decoration:none;
+}
+.skip-link:focus{ left:8px; top:8px; }
+
+/* The scanline overlay and the toast transition are decoration. Under
+   prefers-reduced-motion the overlay is removed outright rather than slowed:
+   a static 3px stripe pattern over body text is itself a legibility problem,
+   and this tool is used by people who are sensitive to exactly that. */
+@media (prefers-reduced-motion: reduce){
+  body::after{ opacity:0 !important; animation:none !important; }
+  *, *::before, *::after{
+    animation-duration:.001ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+    scroll-behavior:auto !important;
+  }
+}
+
+/* Forced-colors / high-contrast: let the OS palette win. */
+@media (forced-colors: active){
+  .btn, .tab, .panel, fieldset{ border:1px solid CanvasText; }
+  body::after{ display:none; }
+}

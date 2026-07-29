@@ -1,0 +1,50 @@
+/* Dead Signal Studio — layout.css
+   Page furniture: header, tabs, view grid, panels, stage. */
+header.top{padding:12px 18px 8px; border-bottom:1px solid var(--edge2); display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    background:linear-gradient(180deg,#0a141c,#070d12); position:sticky; top:0; z-index:50}
+  header.top h1{margin:0; font-size:18px; letter-spacing:3px; color:var(--phos); text-shadow:0 0 8px rgba(57,255,158,.45)}
+  header.top .sub{color:var(--muted); font-size:12.5px; letter-spacing:1px}
+  header .spacer{flex:1}
+  header .ctl{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted)}
+  .tabs{display:flex; gap:2px; padding:8px 14px 0; flex-wrap:wrap; border-bottom:1px solid var(--edge)}
+  .tab{background:var(--panel); color:var(--muted); border:1px solid var(--edge2); border-bottom:none;
+    padding:7px 15px; cursor:pointer; letter-spacing:2px; font-size:13px; user-select:none}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:#031; background:var(--phos); border-color:var(--phos); font-weight:bold}
+  main{padding:14px; max-width:1240px; margin:0 auto}
+  .view{display:none}
+  .view.active{display:block}
+  .grid{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:16px}
+  @media(max-width:900px){ .grid{grid-template-columns:1fr} }
+  .panel{background:linear-gradient(180deg,var(--panel2),var(--panel)); border:1px solid var(--edge2); border-radius:3px; padding:12px}
+  .panel h2{margin:0 0 9px; font-size:13px; letter-spacing:2px; color:var(--cyan); border-bottom:1px dashed var(--edge2); padding-bottom:6px; display:flex; justify-content:space-between; align-items:center}
+  .stagewrap{display:flex; flex-direction:column; align-items:center; gap:9px}
+  .screen{position:relative; background:#000; border:2px solid #0c1c22; border-radius:10px; padding:10px;
+    box-shadow:0 0 0 2px #060c0f, inset 0 0 40px rgba(0,0,0,.9), 0 0 30px rgba(0,40,30,.35)}
+  /* Both maxima with auto sizing, so the canvas scales down preserving its
+     ratio whichever way round it is. Width alone was enough while every frame
+     was landscape; a 1080×1920 vertical clip scaled to the panel width is over
+     800px tall and pushes the transport controls off the screen. */
+  canvas.stage{display:block; image-rendering:pixelated; width:auto; height:auto;
+               max-width:100%; max-height:58vh; border-radius:6px; background:#000}
+  .row{display:flex; gap:9px; align-items:center; margin:6px 0; flex-wrap:wrap}
+  /* A row whose control is taller than one line (a textarea): stack the label
+     above it rather than centring the label against a four-line box. */
+  .row.col{flex-direction:column; align-items:stretch}
+  .row label{color:var(--muted); min-width:98px; font-size:13px; letter-spacing:.4px}
+  .row .grow{flex:1; min-width:110px}
+  .tabhelp{color:var(--text); font-size:13px; margin:0 0 12px; padding:8px 11px; border:1px solid var(--edge2);
+    border-left:3px solid var(--cyan); border-radius:2px; background:rgba(95,217,255,.05); line-height:1.5}
+  .tabhelp b{color:var(--cyan)}
+  code{color:var(--amber); background:rgba(255,179,71,.08); padding:0 3px; border-radius:2px; font-size:.95em}
+  .panel h2 .hdr-actions{display:flex; gap:6px}
+  .panel h2 .hdr-actions .btn{padding:3px 9px; font-size:12px; letter-spacing:1px}
+  .split2{display:grid; grid-template-columns:1fr 1fr; gap:9px}
+  .split3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:9px}
+  .foot{color:var(--muted); font-size:12px; text-align:center; padding:16px 10px 26px; letter-spacing:1px}
+
+/* Two even columns that stack on a narrow screen. Used where a panel holds
+   two related lists (version history beside sharing) that read better side by
+   side but must not force a horizontal scroll. */
+.grid2{ display:grid; grid-template-columns:repeat(auto-fit,minmax(20rem,1fr)); gap:1.2rem }
+.grid2 h3{ margin:0 0 .3rem; font-size:.95em; color:var(--phos) }

@@ -1,0 +1,325 @@
+/* Dead Signal Studio — panels.css
+   Console, tables, banners, toasts, overlays, badges. */
+.console{background:#020506; border:1px solid var(--edge2); border-radius:2px; padding:7px 9px; height:110px; overflow:auto; font-size:12px; color:var(--phos-dim); white-space:pre-wrap}
+  .console .ok{color:var(--phos)} .console .err{color:var(--red)} .console .info{color:var(--cyan)} .console .warn{color:var(--amber)}
+  table.lib{width:100%; border-collapse:collapse; font-size:12.5px}
+  table.lib th,table.lib td{border:1px solid var(--edge2); padding:4px 6px; text-align:left}
+  table.lib th{color:var(--cyan); background:#060d11}
+  table.lib .fn{color:var(--phos); word-break:break-all}
+  table.lib input[type=text]{padding:2px 4px; font-size:12.5px}
+  table.lib select{padding:2px 4px; font-size:12.5px}
+  pre.snip{background:#020506; border:1px solid var(--edge2); border-radius:2px; padding:9px; overflow:auto; color:var(--cyan); font-size:13px; margin:5px 0; max-height:260px}
+  .pill{display:inline-block; padding:1px 6px; border:1px solid var(--edge2); border-radius:2px; color:var(--amber); font-size:12px; letter-spacing:1px}
+  .k{color:var(--amber)}
+  .banner{border:1px solid var(--amber); background:#221803; color:var(--amber); padding:6px 9px; border-radius:2px; font-size:12.5px; margin:6px 0; display:flex; gap:8px; align-items:center; justify-content:space-between}
+  .banner.err{border-color:var(--red); background:#2a0808; color:var(--red)}
+  #toasts{position:fixed; right:14px; bottom:14px; z-index:9999; display:flex; flex-direction:column; gap:6px}
+  .toast{background:#0a141c; border:1px solid var(--phos-dim); color:var(--phos); padding:8px 12px; border-radius:3px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.5); max-width:320px}
+  .toast.err{border-color:var(--red); color:var(--red)} .toast.info{border-color:var(--cyan); color:var(--cyan)}
+  .badge2{font-size:12px; padding:1px 6px; border-radius:2px; border:1px solid var(--edge2); color:var(--muted)}
+  .badge2.stale{border-color:var(--amber); color:var(--amber)}
+  .tag{font-size:12px; color:var(--muted); border:1px solid var(--edge2); padding:0 4px; border-radius:2px}
+  /* inline library preview overlay (works from file:// — never opens a blob:null tab) */
+  .preview-overlay{position:fixed; inset:0; z-index:10000; background:rgba(2,5,8,.9); backdrop-filter:blur(2px);
+    display:flex; align-items:center; justify-content:center; padding:22px}
+  .preview-overlay .pv-box{display:flex; flex-direction:column; align-items:center; gap:10px; max-width:94vw; max-height:88vh}
+  .preview-overlay img,.preview-overlay video{max-width:92vw; max-height:74vh; border:2px solid var(--edge2); border-radius:4px;
+    background:#000; box-shadow:0 0 40px rgba(0,0,0,.7)}
+  .preview-overlay audio{width:min(92vw,420px)}
+  .preview-overlay .pv-bar{display:flex; gap:9px; align-items:center; flex-wrap:wrap; justify-content:center}
+  .preview-overlay .pv-name{color:var(--text); font-size:13px}
+
+/* ---------------------------------------------------------------------------
+   Command palette (⌘K) and Explain mode.
+   ------------------------------------------------------------------------- */
+.sr-only{
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
+}
+
+.palette{
+  position:fixed; inset:0; z-index:10001;
+  background:rgba(2,6,8,.72);
+  display:flex; align-items:flex-start; justify-content:center;
+  padding:10vh 16px 16px;
+}
+.palette[hidden]{ display:none; }
+.pal-box{
+  width:min(680px,100%); background:var(--panel2);
+  border:1px solid var(--phos-dim); border-radius:4px;
+  box-shadow:0 18px 60px rgba(0,0,0,.7);
+  display:flex; flex-direction:column; max-height:70vh;
+}
+.pal-input{
+  background:#050a0d; color:var(--phos); border:none; border-bottom:1px solid var(--edge2);
+  font-family:var(--mono); font-size:16px; padding:14px 16px; width:100%; border-radius:4px 4px 0 0;
+}
+.pal-input:focus{ outline:none; }
+.pal-list{ list-style:none; margin:0; padding:4px; overflow:auto; }
+.pal-item{
+  display:grid; grid-template-columns:78px 1fr auto; gap:10px; align-items:baseline;
+  padding:8px 12px; border-radius:2px; cursor:pointer; font-size:13px;
+}
+.pal-item.sel{ background:var(--phos); color:#021; }
+.pal-item.sel .pal-kind, .pal-item.sel .pal-hint{ color:#021; }
+.pal-kind{ font-size:12px; letter-spacing:1px; color:var(--amber); text-transform:uppercase; }
+.pal-label{ color:var(--text); }
+.pal-item.sel .pal-label{ color:#021; font-weight:bold; }
+.pal-hint{ font-size:12px; color:var(--muted); }
+.pal-empty, .pal-foot{ margin:0; padding:10px 16px; font-size:12px; color:var(--muted); }
+.pal-foot{ border-top:1px solid var(--edge2); letter-spacing:1px; }
+
+/* Explain mode */
+body.explain-armed input, body.explain-armed select, body.explain-armed textarea{
+  cursor:help; outline:1px dashed var(--amber); outline-offset:1px;
+}
+.explain-pop{
+  position:fixed; z-index:10002; max-width:340px;
+  background:var(--panel2); border:1px solid var(--amber); border-radius:3px;
+  padding:12px 14px; box-shadow:0 10px 34px rgba(0,0,0,.6);
+}
+.explain-pop[hidden]{ display:none; }
+.ex-title{ margin:0 0 6px; font-size:13.5px; color:var(--amber); letter-spacing:1px; }
+.ex-body{ margin:0 0 8px; font-size:13px; color:var(--text); line-height:1.5; }
+.ex-meta{ margin:0; font-size:12px; color:var(--muted); }
+
+/* Flash the control the palette just jumped to. */
+@keyframes flashTarget{ 0%,100%{ background:transparent; } 30%{ background:rgba(255,179,71,.28); } }
+.flash-target{ animation:flashTarget 1.2s ease-out; border-radius:3px; }
+@media (prefers-reduced-motion: reduce){
+  .flash-target{ animation:none; outline:2px solid var(--amber); outline-offset:2px; }
+}
+
+/* Photosensitivity readout. Warns; never blocks — the content is intentional,
+   but the author is entitled to know what they have made. */
+.flashmeter{ margin-left:6px; }
+.flashmeter.risky{
+  color:#100; background:var(--hot); border-color:var(--hot); font-weight:bold;
+}
+
+/* Welcome card ------------------------------------------------------------
+   An overlay rather than a panel in the flow: it appears once, on a cold
+   start, and everything behind it is already the real studio. */
+#welcome{
+  position:fixed; inset:0; z-index:60;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(2,6,10,.82); padding:1.5rem; overflow:auto;
+}
+.welcome-card{
+  background:var(--panel); border:1px solid var(--phos-dim); border-radius:3px;
+  padding:1.4rem 1.6rem; max-width:44rem; width:100%;
+  box-shadow:0 0 40px rgba(57,255,158,.09);
+}
+.welcome-card h2{ color:var(--phos); margin:0 0 .6rem }
+.welcome-card p{ margin:.5rem 0 }
+.welcome-steps{ margin:.9rem 0; padding-left:1.3rem; line-height:1.75 }
+.welcome-steps li{ margin:.35rem 0 }
+.welcome-card .btns{ margin-top:1.1rem }
+@media (prefers-reduced-motion: no-preference){
+  .welcome-card{ animation:welcome-in .18s ease-out }
+  @keyframes welcome-in{ from{ opacity:0; transform:translateY(6px) } to{ opacity:1; transform:none } }
+}
+
+/* Toasts are notifications, not targets. Without this they sit over the
+   settings column and eat clicks meant for the controls underneath. */
+#toasts{ pointer-events:none }
+
+/* ---- text variables ---------------------------------------------------- */
+/* A variable is a name and a value, and the name has to read as the thing you
+   type into a text box — so it is shown exactly as it is written there. */
+.vars-rows { display:flex; flex-direction:column; gap:4px; margin-bottom:6px }
+.vars-row { align-items:center; gap:6px }
+.vars-name { color:var(--phos); background:rgba(0,0,0,.35); border:1px solid var(--phos-dim);
+             padding:1px 5px; border-radius:2px; white-space:nowrap; font-size:11px }
+.vars-add { gap:6px; align-items:center }
+.vars-add .vars-newname { width:9em }
+
+/* ---- preset manager ---------------------------------------------------- */
+.preset-manager { min-width:min(560px,92vw); max-height:82vh; overflow:auto; padding:14px }
+.preset-manager h2 { margin:0 0 10px; font-size:13px; color:var(--phos); letter-spacing:.08em }
+.preset-manager table { width:100% }
+.preset-manager .btns { margin-top:10px }
+
+/* ---- per-layer overrides ------------------------------------------------ */
+/* Folded away by default: a layer that inherits everything is the common case,
+   and four more controls apiece would bury a six-deep stack. */
+.layer-more { margin-top:4px; border-top:1px dotted var(--phos-dim); padding-top:4px }
+.layer-more > summary { cursor:pointer; font-size:10px; letter-spacing:.06em;
+                        color:var(--phos-dim); list-style:none; user-select:none }
+.layer-more > summary::-webkit-details-marker { display:none }
+.layer-more > summary::before { content:"▸ "; }
+.layer-more[open] > summary::before { content:"▾ "; }
+.layer-more > summary:hover { color:var(--phos) }
+.layer-more textarea { width:100%; min-height:2.6em; margin:4px 0 }
+.layer-more .row { gap:6px; flex-wrap:wrap }
+.layer-more label { font-size:10px; color:var(--phos-dim) }
+
+/* ---- sequence track ----------------------------------------------------- */
+/* A queue with ↑↓ buttons cannot show that one clip is twice as long as
+   another, and gives nothing to grab. Blocks are buttons so the track is
+   focusable and readable, not a picture of an editor. */
+/* The track-header column, DEFINED rather than defaulted. It used to be read
+   twice — by .tl-row's grid and by .tl-ruler's indent — and set nowhere, so two
+   independent `30px` fallbacks happened to agree, and they were the only thing
+   keeping a tick above the cut it names. */
+:root { --tl-head:30px; --tl-gap:6px }
+
+.tl-track { width:100%; margin:8px 0 2px }
+/* The horizontal scroller. It is an ANCESTOR of the lanes and never a lane
+   itself — see the note in ui/track.js renderTrack; the whole pointer model
+   depends on .tl-lane being the full content width. */
+.tl-scroll { overflow-x:auto; overflow-y:hidden; touch-action:pan-x }
+.tl-content { position:relative }
+/* Track headers down the left, as in every editor. The ruler carries the same
+   indent so a tick and the clip under it are at the same x. */
+.tl-row { display:grid; grid-template-columns:var(--tl-head) minmax(0,1fr); gap:0 var(--tl-gap);
+          align-items:center; margin-bottom:3px }
+.tl-head { font-size:10px; letter-spacing:.08em; color:var(--muted); text-align:right;
+           font-family:var(--mono);
+           /* Pinned while the lane scrolls under it: a track label that slides
+              away is a lane you cannot identify once you are zoomed in. */
+           position:sticky; left:0; z-index:2; background:var(--panel) }
+.tl-row.overlay .tl-lane { height:32px }
+.tl-row.overlay .tl-head { color:var(--amber) }
+.tl-row.audio .tl-lane { height:34px }
+.tl-row.audio .tl-head { color:var(--cyan) }
+
+/* A sound block. Its own class, not .tl-clip — every selector in the app and in
+   three suites keys on that one, and a sound answering to it would join every
+   count and every handler written for pictures. The waveform is a cached
+   background image (see ui/wavethumb.js), stretched with the zoom. */
+.tl-aclip { position:absolute; top:3px; bottom:3px; padding:0 8px; overflow:hidden;
+            background:#0c1c26 center/100% 100% no-repeat; border:1px solid var(--cyan);
+            border-radius:2px; color:var(--text); font:inherit; font-size:10px; text-align:left;
+            cursor:grab; display:flex; flex-direction:column; justify-content:center; gap:1px }
+.tl-aclip:hover { border-color:var(--phos) }
+.tl-aclip.sel { outline:1px solid var(--phos); outline-offset:-2px }
+.tl-aclip:focus-visible { outline:2px solid var(--phos); outline-offset:-2px }
+.tl-aclip.dragging { cursor:grabbing; opacity:.75 }
+/* Muted reads as struck through rather than merely dimmer: dimmer is what a
+   quiet sound looks like, and those are two different things. */
+.tl-aclip.muted { opacity:.55; border-style:dashed }
+.tl-aclip.muted .tl-name { text-decoration:line-through }
+.tl-ruler { position:relative; height:14px; border-bottom:1px solid #12211d; margin-bottom:2px;
+            margin-left:calc(var(--tl-head) + var(--tl-gap)); overflow:hidden }
+/* --muted, not --phos-dim. These are 9-10px labels, so WCAG asks 4.5:1 of them,
+   and the dim phosphor token lands at 3.1:1 on the panel in the studio skin —
+   it is a token for RULES and borders, not for type. The lane was empty in the
+   a11y sweep until a clip was put in it, which is the only reason this stood. */
+.tl-tick { position:absolute; top:0; font-size:9px; color:var(--muted); transform:translateX(-1px);
+           padding-left:3px; border-left:1px solid #1b3630; line-height:14px; white-space:nowrap }
+/* The final tick sits at the content edge; left-aligned it would overhang, and
+   inside a scroller that overhang IS scrollable width — which slides the ruler
+   out of step with the lanes by exactly however far it stuck out. */
+.tl-tick.end { transform:translateX(-100%); padding:0 3px 0 0;
+               border-left:none; border-right:1px solid #1b3630 }
+.tl-lane { position:relative; height:46px; background:#05090b; border:1px solid #12211d; border-radius:3px;
+           overflow:hidden; box-sizing:border-box }
+/* touch-action sits on the draggable things rather than on the lane, so a
+   touch drag along the lane still scrolls it while a drag ON a block edits. */
+.tl-clip,.tl-aclip,.tl-grip { touch-action:none }
+.tl-clip { position:absolute; top:3px; bottom:3px; padding:0 8px; overflow:hidden;
+           background:#0d2620; border:1px solid var(--phos-dim); border-radius:2px; color:var(--text);
+           font:inherit; font-size:10px; text-align:left; cursor:grab; display:flex; flex-direction:column;
+           justify-content:center; gap:1px }
+.tl-clip.still { background:#241a2e; border-color:#7a5fa8 }
+/* The overlay track reads amber against the spine's phosphor green — the same
+   pairing the status bar and the audio lane already use for "this one is not
+   the main thing". */
+.tl-clip.overlay { background:#2b2210; border-color:var(--amber) }
+/* Full strength: at .8 over the block's own background this dropped under the
+   4.5:1 a 9px label needs. */
+.tl-clip.overlay .tl-len { color:var(--amber) }
+.tl-clip:hover { border-color:var(--phos) }
+.tl-clip.sel { outline:1px solid var(--phos); outline-offset:-2px }
+.tl-clip:focus-visible { outline:2px solid var(--phos); outline-offset:-2px }
+.tl-clip.dragging { cursor:grabbing; opacity:.75 }
+.tl-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none }
+.tl-len { color:var(--muted); font-size:9px; pointer-events:none }
+.tl-grip { position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; background:transparent }
+.tl-grip:hover { background:var(--phos); opacity:.35 }
+.tl-grip.l { left:0 } .tl-grip.r { right:0 }
+.tl-playhead { position:absolute; top:0; bottom:0; width:1px; background:var(--hot);
+               pointer-events:none; box-shadow:0 0 4px var(--hot) }
+.tl-help { margin:4px 0 0 }
+/* The lane, while an asset is being dragged over it. */
+.tl-track.drop-here .tl-lane{ border-color:var(--phos); box-shadow:inset 0 0 0 1px var(--phos) }
+
+
+/* The waveform selection overlay. Absolutely positioned over the canvas rather
+   than drawn into it, so a selection change repaints one div instead of the
+   whole wave — and drawWaveform() stays a function of the audio alone. */
+.wave-sel{
+  position:absolute; top:0; bottom:0;
+  background:rgba(95,217,255,.18);
+  border-left:1px solid var(--fg,#5fd9ff);
+  border-right:1px solid var(--fg,#5fd9ff);
+  pointer-events:none;
+}
+
+/* Solo. The button sits inside the layer's own enable row, so it is where your
+   eye already is when you decide you want to hear only that. Amber rather than
+   phosphor because solo is a temporary state you are meant to notice and undo —
+   the same colour the warning banner uses, for the same reason. */
+/* --muted at 12px, not --phos-dim at 11px: this is a labelled control, so it
+   owes WCAG 4.5:1 and a legible size. The dim phosphor token is for rules and
+   borders — against the panel it lands at 3.1:1, which is the level a DISABLED
+   control is allowed, and this one is very much live. */
+.solo-btn{
+  margin-left:auto; padding:0 6px; min-width:22px; line-height:18px;
+  background:transparent; color:var(--muted); border:1px solid var(--edge2);
+  border-radius:2px; font:inherit; font-size:12px; letter-spacing:1px; cursor:pointer;
+}
+.solo-btn:hover{ border-color:var(--amber); color:var(--amber) }
+.solo-btn.on{ background:var(--amber); border-color:var(--amber); color:#210; font-weight:bold }
+.solo-btn:focus-visible{ outline:2px solid var(--amber); outline-offset:1px }
+fieldset.soloed{ border-color:var(--amber) }
+/* Loud on purpose: the render is the export, so a forgotten solo would ship. */
+.solo-banner{
+  border:1px solid var(--amber); background:#221803; color:var(--amber);
+  padding:6px 9px; border-radius:2px; font-size:12.5px; margin:0 0 6px;
+  display:flex; gap:8px; align-items:center; justify-content:space-between;
+}
+.solo-banner em{ font-style:normal; text-decoration:underline }
+
+/* Screen marks. The row reuses .filter-row — it is the same shape of thing (an
+   ordered list of items with a body that opens) and giving it a second visual
+   language would be noise. Only the selected state is new. */
+.filter-row.sel{ border-color:var(--amber) }
+.filter-body{ margin-top:5px; padding-top:5px; border-top:1px dashed var(--edge2) }
+.filter-body input[type=color]{ width:44px; height:20px; padding:0 }
+.btn.ghost{ background:transparent; border-color:transparent; padding:0 4px; text-align:left }
+.btn.ghost:hover{ border-color:var(--edge2) }
+
+/* The preset gallery. A grid of real renders — the point is to compare them at
+   a glance, so the cards are uniform and the names sit under the picture rather
+   than over it. */
+.gallery{ display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
+          gap:6px; margin:6px 0 8px; max-height:44vh; overflow:auto;
+          border:1px solid var(--edge2); border-radius:2px; padding:6px }
+.gal-group{ grid-column:1/-1; font-size:11px; letter-spacing:1px; color:var(--amber);
+            border-bottom:1px solid var(--edge2); padding-bottom:2px; margin-top:2px }
+.gal-card{ display:flex; flex-direction:column; gap:3px; padding:3px; cursor:pointer;
+           background:transparent; border:1px solid var(--edge2); border-radius:2px;
+           color:inherit; font:inherit; text-align:left }
+.gal-card:hover{ border-color:var(--phos) }
+.gal-card.sel{ border-color:var(--amber); box-shadow:0 0 0 1px var(--amber) inset }
+.gal-card:focus-visible{ outline:2px solid var(--phos); outline-offset:1px }
+.gal-thumb{ width:100%; height:auto; display:block; image-rendering:pixelated;
+            background:#000; border:1px solid var(--edge2) }
+.gal-name{ font-size:11px; line-height:1.2; overflow:hidden; text-overflow:ellipsis;
+           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical }
+/* Sound gets a contents list instead of a picture: forty waveforms at this size
+   are forty grey bricks, and what you actually want to know is what is in it. */
+.gal-audio{ display:flex; flex-wrap:wrap; gap:2px; align-content:flex-start;
+            min-height:56px; padding:2px }
+.gal-audio .pill{ font-size:10px; padding:0 4px; letter-spacing:0 }
+.gal-secs{ width:100%; font-size:10px; color:var(--phos-dim) }
+
+/* A row whose control does nothing for the current screen template. Dimmed and
+   explained rather than removed: a control that disappears when you change a
+   picker is harder to trust than one that stays put and says why it is off, and
+   it comes straight back the moment you pick a template that takes colour. */
+.row.is-fixed label{ opacity:.55; }
+#i-palette-note:empty{ display:none; }
+#i-palette-note{ margin:2px 0 0; color:var(--muted); }

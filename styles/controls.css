@@ -1,0 +1,102 @@
+/* Dead Signal Studio — controls.css
+   Form controls, buttons, fieldsets, sliders, meters. */
+input[type=text],input[type=number],textarea,select{background:#050a0d; color:var(--phos); border:1px solid var(--edge2);
+    border-radius:2px; font-family:var(--mono); font-size:13.5px; padding:5px 7px; width:100%}
+  textarea{resize:vertical; min-height:64px; line-height:1.4}
+  input[type=range]{width:100%; accent-color:var(--phos)}
+  input[type=color]{background:#050a0d; border:1px solid var(--edge2); width:42px; height:26px; padding:2px; border-radius:2px}
+  input[type=checkbox]{accent-color:var(--phos); width:15px; height:15px}
+  select option{background:#050a0d}
+  .btn{background:#08131a; color:var(--phos); border:1px solid var(--phos-dim); border-radius:2px; font-family:var(--mono);
+    font-size:13px; letter-spacing:1px; padding:8px 13px; cursor:pointer}
+  .btn:hover{background:var(--phos); color:#021}
+  .btn:disabled{opacity:.4; cursor:not-allowed}
+  .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover{background:var(--hot); color:#100}
+  .btn.small{padding:4px 8px; font-size:12px}
+  .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover{background:var(--amber); color:#210}
+  .btns{display:flex; gap:7px; flex-wrap:wrap; margin-top:9px}
+  .hint{color:var(--muted); font-size:12px; margin:3px 0 0}
+  fieldset{border:1px solid var(--edge2); border-radius:3px; margin:9px 0; padding:7px 9px 9px}
+  fieldset legend{color:var(--amber); font-size:12px; letter-spacing:1px; padding:0 6px; display:flex; gap:6px; align-items:center}
+  fieldset legend .rst{cursor:pointer; color:var(--muted); font-size:12.5px}
+  fieldset legend .lk{cursor:pointer; color:var(--muted)}
+  /* collapsible fieldsets: click the legend title to fold a section away */
+  fieldset legend .ttl{cursor:pointer; user-select:none; display:inline-flex; gap:5px; align-items:center}
+  fieldset legend .ttl:hover{color:var(--phos)}
+  fieldset legend .ttl .caret{color:var(--muted); font-size:12px; transition:transform .12s}
+  fieldset.collapsed{padding-bottom:2px}
+  fieldset.collapsed > *:not(legend){display:none !important}
+  fieldset.collapsed legend .ttl .caret{transform:rotate(-90deg)}
+  /* audio layer on/off indicator in the legend */
+  fieldset legend .ttl .dot{font-size:12px; color:var(--muted)}
+  fieldset.layer-on > legend{color:var(--phos)}
+  fieldset.layer-on > legend .ttl .dot{color:var(--phos)}
+  /* per-panel header action buttons (reset / tidy) */
+  .meter{height:10px; background:#020506; border:1px solid var(--edge2); border-radius:2px; overflow:hidden; margin:2px 0}
+  .meter > div{height:100%; background:linear-gradient(90deg,#2b6,#fd4,#f44)}
+  .scrub{display:flex; gap:8px; align-items:center; width:100%}
+  .scrub input[type=range]{flex:1}
+  /* The peak readout sits in the transport and must not shove the scrubber
+     around as its text changes from "silent" to "−3.2 dB · CLIPPING", so it
+     reserves a width and never grows past it. */
+  #tl-peak{min-width:8.5em; text-align:right; font-variant-numeric:tabular-nums}
+  #tl-peak.warn{color:var(--amber); font-weight:600}
+
+/* Complexity filter: a view over the same document, so hidden rows keep their
+   values and keep applying — they are simply not shown. */
+.level-hidden{ display:none !important; }
+
+/* Macro dials sit above the detail they drive. */
+fieldset.macros{ border-color:var(--amber); }
+fieldset.macros legend{ color:var(--amber); font-weight:bold; }
+fieldset.macros input[type=range]{ accent-color:var(--amber); }
+
+/* Keyframes ---------------------------------------------------------------
+   A control whose value comes from a track needs to say so: otherwise the
+   number in the box disagrees with the picture on screen and reads as a bug.
+   The marker means "this is the base value, the track is in charge". */
+.row.automated > label::after{ content:" ◆"; color:var(--cyan); }
+input.automated, select.automated{
+  border-color:var(--cyan);
+  box-shadow:inset 2px 0 0 var(--cyan);
+}
+table.keyframes{ width:100%; border-collapse:collapse; margin-top:6px; font-size:12px }
+table.keyframes th, table.keyframes td{
+  text-align:left; padding:3px 6px; border-bottom:1px solid var(--edge2);
+}
+table.keyframes th{ color:var(--muted); font-weight:normal }
+table.keyframes select{ font-size:11px; padding:1px 2px }
+
+/* Layer stack: each row is one scene composited over the base. */
+.layer-row{ border:1px solid var(--edge2); border-radius:2px; padding:4px 6px; margin:5px 0 }
+.layer-row .row{ margin:3px 0 }
+.layer-row.off{ opacity:.55 }
+.layer-row.off select, .layer-row.off input[type=range]{ filter:grayscale(1) }
+
+/* Server tables (versions, shares, assets) reuse the keyframe table's shape. */
+table.srv{ width:100%; border-collapse:collapse; margin-top:6px; font-size:12px }
+table.srv th, table.srv td{ text-align:left; padding:3px 6px; border-bottom:1px solid var(--edge2) }
+table.srv th{ color:var(--muted); font-weight:normal }
+/* A wide table must scroll inside itself rather than pushing the page sideways. */
+.srv-wrap{ overflow-x:auto; max-width:100% }
+/* The one-time share token: readable, selectable, obviously temporary. */
+.token-box{ border:1px solid var(--amber); border-radius:2px; padding:8px; margin:8px 0 }
+.token-box input{ width:100%; font-size:11px }
+
+/* ---- FILTERS panel: one row per chain step, parameters built from the
+   filter's own declared list (see fx/filters.js), so the grid has to cope
+   with any number of them. ---- */
+.filter-row{ border:1px solid var(--edge2); border-radius:2px; padding:4px 6px; margin:5px 0 }
+.filter-row.off{ opacity:.5 }
+.filter-head{ display:flex; align-items:center; justify-content:space-between; gap:6px }
+.filter-name{ font-weight:600; letter-spacing:.03em }
+.filter-actions{ display:flex; gap:3px; flex:0 0 auto }
+/* label · control · readout. The readout is fixed-width so a dragging slider
+   does not reflow the row under the pointer. */
+.filter-params{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 3.2em;
+                gap:2px 6px; align-items:center; margin-top:4px }
+.filter-param{ font-size:11px; opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.filter-value{ font-size:11px; opacity:.7; text-align:right; font-variant-numeric:tabular-nums }
+.filter-params input[type=range]{ width:100% }
+.filter-params input[type=text]{ width:100%; min-width:0 }
+.filter-params input[type=color]{ width:100%; height:20px; padding:0 }
