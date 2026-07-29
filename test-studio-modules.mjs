@@ -265,6 +265,27 @@ check(`all ${files.length} modules import cleanly`, namespaces.size === files.le
         `riff ${ov.getUint32(4, true)}, data ${ov.getUint32(40, true)}`);
 }
 
+/* The boot-time orphan sweep, whose failure mode is losing a project's media.
+   It deletes every stored asset the RUNTIME library does not refer to, which is
+   only a safe root set when the author's own document loaded, completely. Two
+   states break that, and only one of them used to be handled: a share-link
+   visit deliberately does not apply the autosave, and a restore that THREW
+   leaves the library empty while the project sits intact on disk. In the second
+   case the sweep read every asset of that project as an orphan and deleted the
+   lot — one block after telling the author "the saved copy is untouched".
+   The rule is asserted here rather than left as two `if`s inside a 60-line
+   async function, because that is the shape the next edit reorders. */
+{
+  const may = namespaces.get('boot.js').maySweepOrphans;
+  check('an ordinary boot sweeps orphans', may({}) === true);
+  check('a share-link visit does not sweep', may({ arrivedByShareLink: true }) === false);
+  check('a boot whose session did not restore does not sweep',
+        may({ restoreFailed: true }) === false);
+  check('…nor when both are true', may({ arrivedByShareLink: true, restoreFailed: true }) === false);
+  check('the sweep is guarded by that one predicate, not by open-coded ifs',
+        (readFileSync(join(SRC, 'boot.js'), 'utf8').match(/maySweepOrphans\(/g) || []).length >= 2);
+}
+
 /* Cross-module references that were never imported. Importing a module proves
    its top level runs; it does NOT prove that a name used inside a function body
    resolves. That gap is exactly how a mechanical split loses a reference — a

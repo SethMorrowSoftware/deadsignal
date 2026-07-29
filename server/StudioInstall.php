@@ -288,9 +288,33 @@ final class StudioInstall
     public static function needsReconfirm(bool $envExists, bool $isLocked, bool $creatingHere, string $secret): bool
     {
         if (!$envExists) return false;      // nothing configured yet — first run
-        if ($secret === '') return false;   // no secret to check against
         if ($isLocked) return true;         // finished installs: always, this session included
+        if ($secret === '') return false;   // mid-install, nothing to check against
         return !$creatingHere;
+    }
+
+    /**
+     * A finished install with no secret at all: the wizard must not run, and no
+     * key can unlock it either.
+     *
+     * `$secret === ''` used to be checked BEFORE the lock, so the guard failed
+     * OPEN in exactly that case — an anonymous visitor got the whole installer
+     * on a live install, could re-point it at a database of their own and
+     * create themselves an account at step 5. Reachable without anything
+     * exotic: server/env.example.php ships with an empty database password AND
+     * an empty setup.secret, and copying it by hand is a documented way to
+     * configure the studio, so any socket-auth install set up that way had an
+     * open installer.
+     *
+     * Refusing outright rather than demanding a key that does not exist is the
+     * point: there is nothing to compare against, so any check would either
+     * pass for everyone or fail for everyone. The way back in is from the
+     * server — write a `setup.secret` into env.php, or delete the lock file —
+     * which is exactly the access this guard exists to require.
+     */
+    public static function lockedWithNoSecret(bool $envExists, bool $isLocked, string $secret): bool
+    {
+        return $envExists && $isLocked && $secret === '';
     }
 
     /** Constant-time check of a supplied reconfirm key. */

@@ -66,6 +66,13 @@ $API_PATH  = StudioInstall::apiUrlPath(StudioInstall::scriptUrlDir($_SERVER));
 
 session_start();
 
+/* The wizard's every page describes this server's configuration and carries a
+   credential in its forms. Neither should be indexed, and neither should leak
+   through a Referer to anything this page links to. */
+header('X-Robots-Tag: noindex, nofollow');
+header('Referrer-Policy: no-referrer');
+header('Cache-Control: no-store');
+
 // ---------------------------------------------------------------------------
 // Guard: a configured install may only be reconfigured by someone who can read
 // its secrets.
@@ -83,8 +90,32 @@ $installingHere = !empty($_SESSION['studio_setup_creating']) && !$isLocked;
 if ($envExists) {
     $existingEnv = @include $ENV_FILE;
     $secret = is_array($existingEnv) ? StudioInstall::reconfirmSecret($existingEnv) : '';
+    /* A finished install with nothing to check a key against does not open for
+       anybody. There is no key that could be right, so demanding one would be
+       theatre; the way back in is from the server, which is the access this
+       guard exists to require. Before this, the empty-secret case returned
+       "no key needed" and handed the whole wizard to an anonymous visitor. */
+    if (StudioInstall::lockedWithNoSecret($envExists, $isLocked, $secret)) {
+        studioSetupBail('This studio is installed and cannot be reconfigured from the web', <<<HTML
+<p>The install at <code>server/env.php</code> is complete, and it holds neither a database password
+   nor a <code>setup.secret</code> — so there is nothing this wizard could check a visitor against.
+   Rather than open to everyone, it opens to nobody.</p>
+<p>To re-run it, do one of these <strong>from the server</strong>:</p>
+<ul>
+  <li>add a <code>'setup' =&gt; ['secret' =&gt; '…']</code> value to <code>server/env.php</code>, then
+      return with <code>?reconfirm_key=</code> that value; or</li>
+  <li>delete <code>server/config/.setup-complete</code>.</li>
+</ul>
+<p>To change settings without the wizard at all, edit <code>server/config/studio.php</code> directly;
+   it documents itself and is safe to delete and regenerate. Setting
+   <code>'enabled' =&gt; false</code> there turns the backend off without uninstalling anything.</p>
+HTML);
+    }
+    /* The key may also come from the session — see the redirect below. Without
+       that, every step of the wizard would have to carry it in the URL. */
+    $offered = $_POST['reconfirm_key'] ?? $_GET['reconfirm_key'] ?? ($_SESSION['studio_reconfirm'] ?? '');
     if (StudioInstall::needsReconfirm($envExists, $isLocked, $installingHere, $secret)
-        && !StudioInstall::keyAccepted($secret, $_POST['reconfirm_key'] ?? $_GET['reconfirm_key'] ?? '')) {
+        && !StudioInstall::keyAccepted($secret, $offered)) {
         studioSetupBail('This studio is already installed', <<<HTML
 <p>A configuration already exists at <code>server/env.php</code>, so this wizard will not run for an
    anonymous visitor.</p>
@@ -96,8 +127,24 @@ if ($envExists) {
    there turns the backend off without uninstalling anything.</p>
 HTML);
     }
+
+    /* THE KEY IS A PASSWORD, AND IT ARRIVED IN A URL.
+       ?reconfirm_key= is the only practical way in from a browser address bar,
+       so it is still accepted — but a query string lands in the access log, the
+       browser's history and any Referer this page emits, and this particular
+       one is the DATABASE PASSWORD. Take it once, put it in the session, and
+       bounce to a clean URL so it is not re-sent on every subsequent request
+       and is not sitting in the address bar while somebody is looking over a
+       shoulder. The forms below carry it from the session instead. */
+    if (isset($_GET['reconfirm_key']) && StudioInstall::keyAccepted($secret, $_GET['reconfirm_key'])) {
+        $_SESSION['studio_reconfirm'] = (string) $_GET['reconfirm_key'];
+        $q = $_GET; unset($q['reconfirm_key']);
+        $self = (string) ($_SERVER['SCRIPT_NAME'] ?? 'setup.php');
+        header('Location: ' . $self . ($q ? '?' . http_build_query($q) : ''), true, 303);
+        exit;
+    }
 }
-$reconfirmKey = (string) ($_POST['reconfirm_key'] ?? $_GET['reconfirm_key'] ?? '');
+$reconfirmKey = (string) ($_POST['reconfirm_key'] ?? $_GET['reconfirm_key'] ?? ($_SESSION['studio_reconfirm'] ?? ''));
 
 // Nothing configured yet: this session is the one doing the installing.
 if (!$envExists) $_SESSION['studio_setup_creating'] = true;

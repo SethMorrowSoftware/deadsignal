@@ -300,6 +300,12 @@ section('chunked upload');
 // always acceptable to the server).
 $cs = min((int) ($cfg['chunkSize'] ?? 0), 4 * 1024 * 1024);
 if ($cs < 65536) { echo "\nThe server did not advertise a usable chunk size.\n"; exit(1); }
+/* What this account already has, before this run adds anything. Run against an
+   install whose accounts the suite did not create, the rows below outlive it. */
+[, $base0] = req('/studio/assets', 'GET', null, $alice);
+$assetsBefore = ['used' => (int) ($base0['quota']['used'] ?? 0),
+                 'total' => (int) ($base0['total'] ?? 0)];
+
 $payload = random_bytes((int) ($cs * 2.5));
 $sha = hash('sha256', $payload);
 [$s, $init] = req('/studio/assets/init', 'POST',
@@ -353,9 +359,15 @@ check('another user cannot download it', $s === 404, (string) $s);
 check('identical bytes short-circuit the whole transfer',
     ($dedupe['alreadyUploaded'] ?? false) === true);
 
+/* Deltas, not absolutes. Run with `name:password` arguments against an install
+   whose accounts this suite did not create, these rows outlive the run — so a
+   second run against the same install saw the first run's asset and failed on a
+   count, which reads as a regression and is not one. The baselines are taken
+   before the upload above; what is asserted is what THIS run added. */
 [$s, $r] = req('/studio/assets', 'GET', null, $alice);
 check('the asset is listed with quota usage',
-    $s === 200 && ($r['quota']['used'] ?? 0) === strlen($payload), (string) ($r['quota']['used'] ?? 0));
+    $s === 200 && ($r['quota']['used'] ?? 0) - $assetsBefore['used'] === strlen($payload),
+    (string) (($r['quota']['used'] ?? 0) - $assetsBefore['used']));
 
 $bad = random_bytes(1000);
 [, $i2] = req('/studio/assets/init', 'POST',
@@ -388,8 +400,9 @@ $tinyId = $r['asset']['id'] ?? 0;
 
 [$s, $r] = req('/studio/assets?limit=1', 'GET', null, $alice);
 check('the listing honours ?limit and reports the total',
-    $s === 200 && count($r['assets'] ?? []) === 1 && ($r['total'] ?? 0) === 2,
-    'total ' . (string) ($r['total'] ?? 'missing'));
+    $s === 200 && count($r['assets'] ?? []) === 1
+    && ($r['total'] ?? 0) - $assetsBefore['total'] === 2,
+    'added ' . (string) (($r['total'] ?? 0) - $assetsBefore['total']));
 [, $r2] = req('/studio/assets?limit=1&offset=1', 'GET', null, $alice);
 check('…and ?offset reaches the rows past the first page',
     count($r2['assets'] ?? []) === 1

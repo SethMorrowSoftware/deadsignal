@@ -316,6 +316,7 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
   setAssetPersister((key,blob)=>{
     backend.putAsset(key,blob,{}).catch((e)=>log("Could not store asset: "+e.message,"warn"));
   });
+  let restoreFailed=false;
   try{
     const saved=await backend.getDoc("current");
     // A share link is an explicit request for someone else's project, and
@@ -329,10 +330,18 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
       log("Opened from a share link — the autosaved session was left alone.","info");
     }
   }catch(e){
-    log("Could not restore the autosaved session ("+e.message+") — starting fresh; the saved copy is untouched.","warn");
+    /* The sweep below must not run after this. Its root set is the RUNTIME
+       library, and a restore that threw leaves that library empty — so every
+       stored byte looks like an orphan and the sweep deletes the lot. The
+       message above promises the saved copy is untouched, and the document
+       indeed is; every asset it points at was being destroyed one block later.
+       Exactly the reasoning the share-link guard already carries, and the same
+       answer: orphans can wait for a visit that knows what is live. */
+    restoreFailed=true;
+    log("Could not restore the autosaved session ("+e.message+") — starting fresh; the saved copy and its media are untouched.","warn");
   }
   try{
-    await rehydrateAssets(backend, session, { arrivedByShareLink });
+    await rehydrateAssets(backend, session, { arrivedByShareLink, restoreFailed });
   }catch(e){
     log("Could not restore library assets: "+e.message,"warn");
   }
@@ -351,6 +360,30 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
   if(backend.tier<2) log("No IndexedDB here — the session will not survive a reload.","warn");
 }
 
+/**
+ * May the boot-time orphan sweep run?
+ *
+ * The sweep's root set is the RUNTIME library — whatever the document that just
+ * loaded refers to. That is only a safe thing to delete against when the
+ * document that loaded is the author's own and it loaded completely. Two states
+ * fail that test and both used to be handled differently:
+ *
+ *   - a share-link visit deliberately does not apply the autosave, so the
+ *     runtime library is empty or is somebody else's (already guarded);
+ *   - a restore that THREW leaves the runtime library empty while the author's
+ *     project sits intact on disk. The sweep then read every one of its assets
+ *     as an orphan and deleted the lot — immediately after telling the author
+ *     "the saved copy is untouched".
+ *
+ * Exported and named because the rule is the whole of the safety property, and
+ * a rule spelled out as two `if`s in the middle of a 60-line function is one
+ * that gets reordered by the next edit. Orphans are cheap; a project's media is
+ * not, so the sweep waits for a boot that knows what is live.
+ */
+export function maySweepOrphans({ arrivedByShareLink = false, restoreFailed = false } = {}) {
+  return !arrivedByShareLink && !restoreFailed;
+}
+
 /* Put the bytes back under the restored rows, then collect the orphans.
  *
  * Removing a row does NOT delete its bytes — undo has to be able to bring the
@@ -358,7 +391,7 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
  * once here, against the library the restored document actually refers to.
  * Best-effort throughout: a failure to restore one clip must not cost the
  * project it belongs to. */
-async function rehydrateAssets(backend, session, { arrivedByShareLink=false }={}){
+async function rehydrateAssets(backend, session, { arrivedByShareLink=false, restoreFailed=false }={}){
   let restored=0, missing=0;
   const rows=session.store.get("library")||[];
   for(const r of rows){
@@ -375,12 +408,11 @@ async function rehydrateAssets(backend, session, { arrivedByShareLink=false }={}
         +(missing?" ("+missing+" without bytes — re-render to fill them in)":""),
         missing?"warn":"ok");
   }
-  /* The sweep's root set is the RUNTIME library. On a share-link visit the
-     autosaved document was deliberately not applied, so that library is empty
-     (or someone else's) and every stored byte of the reader's own session
-     would look like an orphan — following a link must never cost the work it
-     interrupted. Orphans wait for the next ordinary visit. */
-  if(arrivedByShareLink) return;
+  // Only against a library this boot can vouch for — see maySweepOrphans().
+  if(!maySweepOrphans({ arrivedByShareLink, restoreFailed })){
+    if(restoreFailed) log("Orphan sweep skipped: the session did not restore, so nothing here knows which assets are still in use.","info");
+    return;
+  }
   try{
     const live=referencedKeys();
     for(const k of await backend.listAssets()) if(!live.has(k)) await backend.deleteAsset(k);

@@ -96,6 +96,10 @@ $profile = [
     'chunk_size' => 65536,
 ];
 $store = new StudioStorage($profile);
+/* Every upload below belongs to this account. Named, because storeChunk() and
+   completeUpload() now REFUSE a session that belongs to somebody else and the
+   owner id is the thing being asserted, not scenery. */
+$OWNER = 1;
 check('assets shard by the first two hex characters',
     str_ends_with($store->assetPath(7, str_repeat('ab', 32)), '/assets/7/ab/' . str_repeat('ab', 32)));
 check('assetPath refuses a checksum that is not hex',
@@ -116,7 +120,7 @@ $mkChunk = function (string $data): string {
     return $f;
 };
 $parts = str_split($payload, 65536);
-foreach ($parts as $i => $part) $store->storeChunk($init['uploadId'], $i, $mkChunk($part));
+foreach ($parts as $i => $part) $store->storeChunk($OWNER, $init['uploadId'], $i, $mkChunk($part));
 check('every chunk is recorded',
     $store->receivedChunks($init['uploadId']) === range(0, count($parts) - 1));
 // Resuming must report what already arrived, or a dropped connection restarts.
@@ -134,13 +138,13 @@ check('MIME is detected from the bytes, not claimed by the client',
 
 // Corruption must be caught: it is what makes dedupe by checksum safe.
 $bad = $store->initUpload(1, 10, str_repeat('c', 64));
-$store->storeChunk($bad['uploadId'], 0, $mkChunk('not the declared bytes'));
+$store->storeChunk($OWNER, $bad['uploadId'], 0, $mkChunk('not the declared bytes'));
 check('a checksum mismatch is refused',
     refuses(fn () => $store->completeUpload(1, $bad['uploadId'], str_repeat('c', 64), 0), '/checksum/i'));
 
 // A gap means a lost chunk; concatenating around it yields a wrong file.
 $gap = $store->initUpload(1, 100, hash('sha256', 'x'));
-$store->storeChunk($gap['uploadId'], 1, $mkChunk('second only'));
+$store->storeChunk($OWNER, $gap['uploadId'], 1, $mkChunk('second only'));
 check('a missing chunk is refused rather than silently skipped',
     refuses(fn () => $store->completeUpload(1, $gap['uploadId'], hash('sha256', 'x'), 0), '/missing chunk/i'));
 $store->discardUpload($gap['uploadId']);
@@ -149,9 +153,9 @@ $store->discardUpload($gap['uploadId']);
 // slack — a correct client's chunks sum to exactly the declared size). This is
 // the bound that stops init-and-never-complete from bypassing quota.
 $bound = $store->initUpload(1, 1000, str_repeat('ab', 32));
-$store->storeChunk($bound['uploadId'], 0, $mkChunk(random_bytes(60000)));  // 60000 <= 1000 + 65536: fits
+$store->storeChunk($OWNER, $bound['uploadId'], 0, $mkChunk(random_bytes(60000)));  // 60000 <= 1000 + 65536: fits
 check('a chunk session cannot exceed its declared size',
-    refuses(fn () => $store->storeChunk($bound['uploadId'], 1, $mkChunk(random_bytes(60000))), '/declared/i'));
+    refuses(fn () => $store->storeChunk($OWNER, $bound['uploadId'], 1, $mkChunk(random_bytes(60000))), '/declared/i'));
 $store->discardUpload($bound['uploadId']);
 
 check('an oversized file is refused up front',
@@ -159,9 +163,52 @@ check('an oversized file is refused up front',
 check('completing an unknown upload is refused',
     refuses(fn () => $store->completeUpload(1, str_repeat('f', 32), $sha, 0), '/unknown upload/i'));
 
+/* AN UPLOAD SESSION BELONGS TO THE ACCOUNT THAT OPENED IT.
+   initUpload() wrote the owner into the session's meta and then nothing ever
+   read it back: storeChunk() took no owner at all, completeUpload() took one and
+   never compared it, and initUpload() resumed any session whose directory
+   existed. An account holding another account's uploadId could inject chunks
+   into that transfer, or finish it and take the resulting asset as its own. The
+   id is 128 bits of random_bytes, so this was never a guessing attack — but an
+   id that reaches the client reaches proxy logs, a shared browser and a bug
+   report, and "unguessable" is not "authorised". */
+{
+    $intruder = $OWNER + 1;
+    $mine = $store->initUpload($OWNER, strlen($payload), $sha);
+    $store->storeChunk($OWNER, $mine['uploadId'], 0, $mkChunk($parts[0]));
+
+    check('another account cannot push a chunk into my upload',
+        refuses(fn () => $store->storeChunk($intruder, $mine['uploadId'], 1, $mkChunk($parts[1])),
+                '/unknown upload/i'));
+    check('…nor resume it',
+        refuses(fn () => $store->initUpload($intruder, strlen($payload), $sha, $mine['uploadId']),
+                '/unknown upload/i'));
+    check('…nor complete it and take the asset',
+        refuses(fn () => $store->completeUpload($intruder, $mine['uploadId'], $sha, strlen($payload)),
+                '/unknown upload/i'));
+    // And the refused chunk really did not land — a check that only asserted the
+    // throw would pass on an implementation that threw after writing.
+    check('…and the chunk it tried to push is not on disk',
+        $store->receivedChunks($mine['uploadId']) === [0],
+        implode(',', $store->receivedChunks($mine['uploadId'])));
+
+    // The owner is unaffected by any of it.
+    foreach ($parts as $i => $part) {
+        if ($i === 0) continue;
+        $store->storeChunk($OWNER, $mine['uploadId'], $i, $mkChunk($part));
+    }
+    $ok = $store->completeUpload($OWNER, $mine['uploadId'], $sha, strlen($payload));
+    check('…while the owner finishes their own upload normally',
+        $ok['size'] === strlen($payload), (string) $ok['size']);
+
+    check('a session that does not exist is refused the same way, disclosing nothing',
+        refuses(fn () => $store->storeChunk($intruder, str_repeat('e', 32), 0, $mkChunk('x')),
+                '/unknown upload/i'));
+}
+
 // Dedupe: the same bytes again must not write a second file.
 $again = $store->initUpload(1, strlen($payload), $sha);
-foreach ($parts as $i => $part) $store->storeChunk($again['uploadId'], $i, $mkChunk($part));
+foreach ($parts as $i => $part) $store->storeChunk($OWNER, $again['uploadId'], $i, $mkChunk($part));
 $second = $store->completeUpload(1, $again['uploadId'], $sha, strlen($payload));
 check('the same bytes uploaded twice are deduped', $second['deduped'] === true);
 check('…and still resolve to the one stored file', $second['path'] === $done['path']);
@@ -398,8 +445,29 @@ check('another visitor mid-install still needs the key',
     StudioInstall::needsReconfirm(true, false, false, 'secret') === true);
 check('once locked, the key is required from everyone — the installer included',
     StudioInstall::needsReconfirm(true, true, true, 'secret') === true);
-check('with no secret to check against there is nothing to demand',
-    StudioInstall::needsReconfirm(true, true, false, '') === false);
+check('mid-install, with nothing to check against, there is nothing to demand',
+    StudioInstall::needsReconfirm(true, false, false, '') === false);
+
+/* THE GUARD MUST NOT FAIL OPEN.
+   `$secret === ''` used to be tested BEFORE the lock, so a FINISHED install
+   with no database password and no setup.secret answered "no key needed" and
+   handed the whole wizard to an anonymous visitor — who could re-point it at a
+   database of their own and create themselves an account at step 5. This is not
+   an exotic state: server/env.example.php ships with both fields empty and
+   copying it by hand is a documented way to configure the studio, so every
+   socket-auth install set up that way had an open installer.
+   There is no key that could be right, so the answer is not "demand one" — it
+   is refuse, and say which server-side change re-opens it. */
+check('a LOCKED install with no secret still demands a key rather than opening',
+    StudioInstall::needsReconfirm(true, true, false, '') === true);
+check('…and is reported as unopenable, because no key could ever match',
+    StudioInstall::lockedWithNoSecret(true, true, '') === true);
+check('a locked install WITH a secret is opened by that secret, not refused outright',
+    StudioInstall::lockedWithNoSecret(true, true, 'secret') === false);
+check('an unlocked mid-install is not refused outright',
+    StudioInstall::lockedWithNoSecret(true, false, '') === false);
+check('a first run is not refused outright',
+    StudioInstall::lockedWithNoSecret(false, false, '') === false);
 
 check('keyAccepted matches the exact secret', StudioInstall::keyAccepted('s3cr3t', 's3cr3t'));
 check('keyAccepted rejects a near miss', !StudioInstall::keyAccepted('s3cr3t', 's3cr3t '));
