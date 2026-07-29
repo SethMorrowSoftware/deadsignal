@@ -343,15 +343,31 @@ export async function consumeShareFragment() {
   try {
     await openSharedLink(m[1]);
   } catch (e) {
-    // A transient failure (backend restarting, wifi blip) must not SPEND the
-    // link: put the fragment back so a plain reload retries it. A revoked or
-    // wrong token fails again then — same message, honestly earned.
-    try { history.replaceState(null, '', location.pathname + location.search + '#share=' + m[1]); } catch { /* ignore */ }
+    /* A TRANSIENT failure (backend restarting, wifi blip) must not SPEND the
+       link: put the fragment back so a plain reload retries it.
+       A token the server has REFUSED is different, and treating the two the same
+       was doing real harm. boot() decides whether to install the autosave writer
+       from `hasShareFragment()`, so a restored fragment meant "a reader is
+       viewing someone else's project" on every subsequent load — and a revoked
+       token, which can never succeed, therefore disabled autosave and session
+       restore for that URL permanently. There is nothing to retry on a 403/404:
+       the fragment is spent and the visit is an ordinary one. */
+    const permanent = e && (e.status === 403 || e.status === 404 || e.status === 410);
+    if (!permanent) {
+      try { history.replaceState(null, '', location.pathname + location.search + '#share=' + m[1]); } catch { /* ignore */ }
+    }
     toast('Could not open the share link — ' + e.message, 'err');
+    if (_onShareFailed) _onShareFailed({ permanent });
     throw e;
   }
   return true;
 }
+
+/* What boot() wants to know: the link did not open, so this is an ordinary
+   visit after all and the reader's own work must start being saved. Registered
+   rather than imported so cloud.js keeps knowing nothing about persistence. */
+let _onShareFailed = null;
+export function onShareFailed(fn) { _onShareFailed = typeof fn === 'function' ? fn : null; }
 
 export async function openFromServer(id) {
   const r = await API.getProject(id);

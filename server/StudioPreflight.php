@@ -101,14 +101,52 @@ final class StudioPreflight
     {
         $base = self::webBaseFor($studioDir);
         if ($base === null) return null;
-        $ctx = stream_context_create(['http' => [
-            'method' => 'GET', 'timeout' => 3, 'ignore_errors' => true,
-        ]]);
-        @file_get_contents($base . '/server/data/.htaccess', false, $ctx);
-        foreach ($http_response_header ?? [] as $h) {
-            if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string) $h, $m)) return (int) $m[1];
+
+        /* Probe an ORDINARY FILE, not the .htaccess.
+         *
+         * Fetching server/data/.htaccess answers a question nobody asked. Plenty
+         * of hosts deny dotfiles by name — `<FilesMatch "^\.">` is a common
+         * stock rule — while serving everything else in the tree perfectly
+         * happily. On one of those, the old probe got 403 for the dotfile and
+         * this check reported "present and enforced (live-checked)" over a
+         * storage tree whose every uploaded asset could be fetched by URL. A
+         * false OK on a check that says "live-checked" is worse than no check,
+         * because it is the one an operator will believe.
+         *
+         * So: write a canary with an ordinary name, ask the web server for it,
+         * and delete it. What comes back is the answer for the assets too,
+         * because it is the same kind of request. */
+        return self::probeStorageUrl($base, rtrim($studioDir, '/') . '/server/data');
+    }
+
+    /** The canary itself, with the base already resolved — so it can be tested. */
+    public const PROBE_CANARY = 'preflight-storage-canary';
+
+    public static function probeStorageUrl(string $base, string $dir): ?int
+    {
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return null;
+        $name = 'preflight-probe-' . bin2hex(random_bytes(8)) . '.txt';
+        if (@file_put_contents($dir . '/' . $name, self::PROBE_CANARY . "\n") === false) return null;
+
+        try {
+            $ctx = stream_context_create(['http' => [
+                'method' => 'GET', 'timeout' => 3, 'ignore_errors' => true,
+            ]]);
+            $body = @file_get_contents(rtrim($base, '/') . '/server/data/' . $name, false, $ctx);
+            $status = null;
+            foreach ($http_response_header ?? [] as $h) {
+                if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string) $h, $m)) { $status = (int) $m[1]; break; }
+            }
+            /* A 200 only proves exposure if the body is OUR canary. A host that
+               serves index.html for every unknown path would otherwise be read
+               as an exposed storage tree — the same trap src/platform/api.js
+               documents at length for API discovery. */
+            if ($status === 200 && !is_string($body)) return null;
+            if ($status === 200 && strpos((string) $body, self::PROBE_CANARY) === false) return 404;
+            return $status;
+        } finally {
+            @unlink($dir . '/' . $name);
         }
-        return null;
     }
 
     /** The studio folder's own base URL, derivable only when serving a real request. */
@@ -254,8 +292,10 @@ final class StudioPreflight
                 'NOT enforced — server/data/.htaccess is web-readable (live-checked)',
                 'The web server serves server/data/ directly, so uploaded assets can be fetched by URL. This host likely ignores .htaccess (AllowOverride None) — point storage_path in server/config/studio.php at a directory above the docroot, or deny it in the server config.');
         } elseif ($probe !== null && $hasDeny) {
+            // Live-checked against an ordinary filename, which is what an asset
+            // is — see probeDataProtection on why the dotfile was the wrong ask.
             $r[] = self::row(self::OK, 'server/data/ protected by .htaccess',
-                'present and enforced (live-checked: HTTP ' . $probe . ')', '');
+                'present and enforced (live-checked with a real filename: HTTP ' . $probe . ')', '');
         } else {
             $r[] = self::row($hasDeny ? self::OK : self::WARN, 'server/data/ protected by .htaccess',
                 $hasDeny ? 'present (file check only)' : 'missing or permissive',

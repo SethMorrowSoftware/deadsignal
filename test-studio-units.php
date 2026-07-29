@@ -517,6 +517,29 @@ check('writeStudioProfile creates the config directory and writes the profile',
 /* --- deny files --------------------------------------------------------- */
 StudioInstall::writeDenyFile($tmp . '/denyme', 'unit test');
 $deny = (string) @file_get_contents($tmp . '/denyme/.htaccess');
+/* THE STORAGE PROBE MUST ASK ABOUT A REAL FILENAME.
+   It used to fetch server/data/.htaccess. Plenty of hosts deny dotfiles by name
+   — <FilesMatch "^\."> is a stock rule — while serving everything else in the
+   tree, so on one of those the probe got 403 and this check reported
+   "present and enforced (live-checked)" over a storage tree whose every uploaded
+   asset was fetchable by URL. A false OK on a check that advertises itself as
+   live-checked is worse than no check: it is the one an operator believes. */
+{
+    $dataDir = sys_get_temp_dir() . '/studio-probe-' . getmypid();
+    // Nothing is listening on this port, so the probe cannot run — and must say
+    // so rather than guessing, and must not leave its canary behind.
+    $res = StudioPreflight::probeStorageUrl('http://127.0.0.1:1', $dataDir);
+    check('a probe that cannot reach the host reports "unknown", not "protected"',
+        $res === null, var_export($res, true));
+    $left = is_dir($dataDir)
+        ? array_values(array_filter(scandir($dataDir) ?: [], fn ($f) => strpos($f, 'preflight-probe-') === 0))
+        : [];
+    check('…and cleans up its canary either way', $left === [], implode(',', $left));
+    check('the canary is an ORDINARY filename, not a dotfile — that is the whole point',
+        strpos(StudioPreflight::PROBE_CANARY, '.') !== 0);
+    $rm($dataDir);
+}
+
 check('writeDenyFile denies both Apache generations',
     str_contains($deny, 'Require all denied') && str_contains($deny, 'Deny from all'));
 file_put_contents($tmp . '/denyme/.htaccess', '# hand-edited');

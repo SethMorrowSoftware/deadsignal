@@ -1,5 +1,5 @@
 /* Dead Signal Studio — video/capture.js */
-import { encodeClip, encoderSupport, fillContainerSelect } from '../export/encoder.js';
+import { CONTAINERS, encodeClip, encoderSupport, fillContainerSelect } from '../export/encoder.js';
 import { sampleFlash, paintFlash, resetFlashMeter } from '../ui/flashmeter.js';
 import { download } from '../core/blobs.js';
 import { $, clamp, log, num, setVal, toast, val } from '../core/dom.js';
@@ -116,7 +116,24 @@ const FRAME_BUDGET_MS = 24;
    same frames at the same cost, so this is a far better predictor than the
    frame size alone. */
 let _frameMs=0;
-export function updateVideoEst(cfg, throttled){ const est=$("v-est"); if(!est)return; const mb=(cfg.bitrate>0?cfg.bitrate:(cfg.W*cfg.H*cfg.fps*0.00000009))*cfg.duration/8;
+/* The RECORD button names the file it will write.
+ *
+ * It was hard-coded "● RECORD .webm" in the markup and nothing ever re-synced
+ * it, so choosing MP4 in the File picker left the button claiming .webm while
+ * the export wrote .mp4 — and the label is the only place that answers "what am
+ * I about to get" before you press it.
+ *
+ * Read from the SELECTED CONTAINER, not from the last export: this runs before
+ * anything has been written. The offline path can still degrade MP4 to WebM on a
+ * build without an H.264 licence, and it says so in the console and records the
+ * extension it actually wrote — a promise the button cannot make and does not. */
+export function syncRecordLabel(){
+  const b=$("v-record"); if(!b) return;
+  const id=val("v-container")||"webm";
+  const c=CONTAINERS.find((x)=>x.id===id)||CONTAINERS[0];
+  b.textContent="● RECORD ."+c.ext;
+}
+export function updateVideoEst(cfg, throttled){ syncRecordLabel(); const est=$("v-est"); if(!est)return; const mb=(cfg.bitrate>0?cfg.bitrate:(cfg.W*cfg.H*cfg.fps*0.00000009))*cfg.duration/8;
   // Whether export costs wall-clock time depends on the offline encoder being
   // usable here, so say which one the button will actually take. The cheap
   // synchronous check is enough for a label — the export itself re-checks

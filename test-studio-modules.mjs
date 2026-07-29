@@ -265,6 +265,45 @@ check(`all ${files.length} modules import cleanly`, namespaces.size === files.le
         `riff ${ov.getUint32(4, true)}, data ${ov.getUint32(40, true)}`);
 }
 
+/* A frame cap must cost FRAMES, not change the speed.
+   The animated stills cap N at 240, but collectFrames spreads those N frames
+   across the whole clip — so the content was right and the per-frame delay was
+   computed from the REQUESTED rate, which is only correct when the cap did not
+   bite. A 30s clip at 12fps wants 360 frames, got 240, and played them at 12fps:
+   twenty seconds of GIF for a thirty-second clip, running 1.5x fast, silently.
+   Asserted in both directions, because the fix would be worthless if it changed
+   uncapped exports: below the cap the delay must be EXACTLY what it always was. */
+{
+  const G = namespaces.get('video/gif.js');
+  const { animFrameCount, animDelay, animCapped, ANIM_MAX_FRAMES } = G;
+  check('the animated-still frame cap is what it says', ANIM_MAX_FRAMES === 240);
+
+  const uncapped = [[10, 12], [8, 20], [3, 12], [20, 12], [2, 2]];
+  const sameAsBefore = uncapped.every(([d, f]) =>
+    !animCapped(d, f)
+    && animDelay(d, animFrameCount(d, f), 100) === Math.round(100 / f)
+    && animDelay(d, animFrameCount(d, f), 1000) === Math.round(1000 / f));
+  check('below the cap the delay is unchanged, so an uncapped export is identical',
+        sameAsBefore, uncapped.map(([d, f]) => `${d}s@${f}`).join(' '));
+
+  const capped = [[30, 12], [60, 20], [45, 15], [120, 20]];
+  const held = capped.map(([d, f]) => {
+    const n = animFrameCount(d, f);
+    const played = (n * animDelay(d, n, 100)) / 100;      // centiseconds → seconds
+    return { d, f, n, played, off: Math.abs(played - d) / d };
+  });
+  check('past the cap every export still runs its own length',
+        held.every((h) => h.n === ANIM_MAX_FRAMES && h.off < 0.05),
+        held.map((h) => `${h.d}s@${h.f}→${h.played.toFixed(1)}s`).join(' '));
+  /* The old behaviour, stated so the regression is unmistakable: 100/fps on a
+     capped clip is what produced the fast playback. */
+  const oldWay = held.map((h) => (h.n * Math.round(100 / h.f)) / 100);
+  check('…which the old fixed-rate delay did not', oldWay.every((p, i) => p < held[i].d * 0.9),
+        oldWay.map((p, i) => `${held[i].d}s→${p.toFixed(1)}s`).join(' '));
+  check('a delay is never zero, whatever the numbers',
+        [[0, 12], [0.001, 20], [1e6, 2]].every(([d, f]) => animDelay(d, animFrameCount(d, f), 100) >= 1));
+}
+
 /* A pixel parameter has to REACH the biggest frame the tool can make.
    scaleFilterPx carries a look through a format change by multiplying every
    parameter marked `px` by the size factor and clamping to the control's own

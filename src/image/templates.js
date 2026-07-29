@@ -72,7 +72,12 @@ template("explorer","File Explorer",(ctx,W,H,c)=>{ ctx.fillStyle="#0a5a6a"; ctx.
   const rows=macros(c.body||"INDEX.txt|2KB|Text|03:47\nEREBUS_SPEC.txt|4KB|Text|03:47\nwebb_merge.log|4.7KB|Log|03:47\n[CORRUPTED]|??|??|??").split("\n"); let y=win.cy+24;
   rows.forEach((r,i)=>{ const cells=r.split("|"); if(/CORRUPT/i.test(r)){ ctx.fillStyle="#a00"; } else ctx.fillStyle= i%2?"#000":"#202020"; ctx.fillText((cells[0]||"").padEnd(24).slice(0,24)+(cells[1]||"").padEnd(8)+(cells[2]||"").padEnd(12)+(cells[3]||""),win.cx+8,y); y+=16; }); });
 template("boot","Boot Splash",(ctx,W,H,c)=>{ ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H); setFont(ctx,c.font+6); ctx.textAlign="center"; ctx.textBaseline="middle"; glowText(ctx,c.title||"EREBUS 95",W/2,H*0.4,c.fg,10);
-  ctx.strokeStyle=c.fg; const bw=W*0.4,bx=W*0.3,by=H*0.62; ctx.strokeRect(bx,by,bw,12); ctx.fillStyle=c.fg; for(let x=0;x<bw*0.6;x+=6)ctx.fillRect(bx+2+x,by+2,4,8); setFont(ctx,11); glowText(ctx,macros(c.body||"Starting the archive..."),W/2,by+30,c.fg,0); });
+  ctx.strokeStyle=c.fg; const bw=W*0.4,bx=W*0.3,by=H*0.62; ctx.strokeRect(bx,by,bw,12); ctx.fillStyle=c.fg; for(let x=0;x<bw*0.6;x+=6)ctx.fillRect(bx+2+x,by+2,4,8); setFont(ctx,11);
+  /* SPREAD, for the same reason the NT STOP screen had to be: the body went in
+     as one string, so its own newlines were never split — canvas fillText does
+     not break lines — and a four-line status message drew as a single run that
+     ran off both edges of the frame. */
+  bodyLines(ctx,c,"Starting the archive...",W*0.86).forEach((l,i)=>glowText(ctx,l,W/2,by+30+i*15,c.fg,0)); });
 template("shutdown","Shutdown Screen",(ctx,W,H,c)=>{ ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H); setFont(ctx,Math.max(16,c.font+4)); ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillStyle="#ffb000"; ctx.shadowColor="#ffb000"; ctx.shadowBlur=8;
   const t=bodyLines(ctx,c,"It is now safe to turn off\nyour computer.",W*0.72); t.forEach((l,i)=>ctx.fillText(l,W/2,H/2-((t.length-1)/2-i)*c.font*1.6));
   /* The heading above it — the Title box was inert on this template, which on a
@@ -165,7 +170,14 @@ template("implant","Cyber Implant ID",(ctx,W,H,c)=>{ ctx.fillStyle=c.bg; ctx.fil
 /* ---- VAPORWAVE templates ---- */
 template("vapordesktop","Vapor Desktop",(ctx,W,H,c)=>{ const g=ctx.createLinearGradient(0,0,W,H); g.addColorStop(0,"#ff9ff3"); g.addColorStop(1,"#7af0ff"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   const win=win95(ctx,W*0.15,H*0.18,W*0.7,H*0.52,c.title||"ａｅｓｔｈｅｔｉｃ.exe",true); ctx.fillStyle="#fff"; ctx.fillRect(win.cx,win.cy,win.cw,win.ch); bevel(ctx,win.cx,win.cy,win.cw,win.ch,false);
-  setFont(ctx,Math.max(18,c.font*1.4)); ctx.textAlign="center"; ctx.textBaseline="middle"; glowText(ctx,fullwidth(macros(c.body||"WELCOME")),W/2,win.cy+win.ch/2,"#ff2bd6",6); ctx.textBaseline="top"; ctx.textAlign="left";
+  setFont(ctx,Math.max(18,c.font*1.4)); ctx.textAlign="center"; ctx.textBaseline="middle";
+  /* Also one string, also never split — and fullwidth() doubles every glyph's
+     width, so this one ran off the window sooner than any other template. The
+     lines are centred as a block about the window's middle. */
+  { const ls=bodyLines(ctx,c,"WELCOME",win.cw-16).map((l)=>fullwidth(l));
+    const lh=Math.max(18,c.font*1.4)*1.35, mid=win.cy+win.ch/2;
+    ls.forEach((l,i)=>glowText(ctx,l,W/2,mid-((ls.length-1)/2-i)*lh,"#ff2bd6",6)); }
+  ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.fillStyle="#c0c0c0"; ctx.fillRect(0,H-26,W,26); bevel(ctx,0,H-26,W,26,true); ctx.fillStyle="#c0c0c0"; ctx.fillRect(4,H-22,52,18); bevel(ctx,4,H-22,52,18,true); setFont(ctx,12); ctx.fillStyle="#000"; ctx.fillText("Start",10,H-19); ctx.textAlign="right"; ctx.fillText("3:47",W-8,H-19); ctx.textAlign="left"; });
 template("mall","Mall Directory",(ctx,W,H,c)=>{ ctx.fillStyle="#120a2e"; ctx.fillRect(0,0,W,H); setFont(ctx,Math.max(20,c.font*1.6)); ctx.textAlign="center"; ctx.textBaseline="top"; glowText(ctx,fullwidth(c.title||"PLAZA"),W/2,20,"#ff9ff3",12);
   setFont(ctx,c.font); ctx.textAlign="left"; let y=H*0.24; macros(c.body||"01  SUNSET RECORDS\n02  NEO-TOKYO ARCADE\n03  MARBLE FOUNTAIN\n04  FOOD COURT\n47  ??? (CLOSED)").split("\n").forEach(l=>{ glowText(ctx,l,W*0.2,y,"#7af0ff",4); y+=c.font*1.7; }); });

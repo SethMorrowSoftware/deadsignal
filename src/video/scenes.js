@@ -219,7 +219,21 @@ scene("countdown","Film Countdown",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.
   const n=Math.max(2,8-Math.floor(t)); setFont(ctx,R*1.4); ctx.textAlign="center"; ctx.textBaseline="middle"; glowText(ctx,String(n),cx,cy+R*0.05,cfg.fg,12); ctx.textAlign="left"; ctx.textBaseline="top";
   if(t%1<0.05){ ctx.fillStyle="rgba(255,255,255,.14)"; ctx.fillRect(0,0,W,H); } });
 scene("credits","Credits Crawl",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.fillRect(0,0,W,H); const lines=(macros(cfg.text)||"DEAD SIGNAL\n\na film by\nYOU\n\n1985").split("\n"); setFont(ctx,cfg.font); ctx.textAlign="center"; ctx.textBaseline="top";
-  const lh=cfg.font*1.8; const start=H+10; let y=start-(t*(cfg.cps||14)*1.2);
+  const lh=cfg.font*1.8;
+  /* Starts ON SCREEN, and comes to REST rather than scrolling into nothing.
+     It used to begin at H+10 — the first line below the bottom edge — so t=0 was
+     a blank frame at every speed, which is the one thing every scene in this
+     tool promises not to be. And because the travel is a flat cps*1.2 px/s with
+     no reference to the clip length, a slow crawl never arrived: measured at
+     cps 2 over a 10s clip, the frame was empty for the first five seconds, and a
+     fast one had rolled off the top and gone blank again by 9.9s.
+     So: the first line sits just inside the lower fade band at t=0, and the
+     scroll stops once the last line reaches the upper one. A credits sequence
+     that ends on its final card is what a credits sequence does; a clip that
+     opens and closes on black is a bug in three different places. */
+  const start=H*0.82;
+  const rest=Math.max(0, start+(lines.length-1)*lh - H*0.18);
+  const y=start-Math.min(t*(cfg.cps||14)*1.2, rest);
   lines.forEach((ln,i)=>{ const yy=y+i*lh; if(yy<-lh||yy>H)return; const a=clamp(Math.min(yy/(H*0.2),(H-yy)/(H*0.2)),0,1); ctx.globalAlpha=a; glowText(ctx,cfg.fullwidth?fullwidth(ln):ln,W/2,yy,cfg.fg,6); });
   ctx.globalAlpha=1; ctx.textAlign="left"; });
 /**
