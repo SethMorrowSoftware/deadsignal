@@ -1805,12 +1805,12 @@ section('a layer is its own signal');
     const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
     set('v-scene', 'terminal'); set('v-text', 'BASE MESSAGE'); set('v-fg', '#39ff9e');
     set('v-wrap', ''); document.getElementById('v-wrap').checked = false;
-    window.__shot = (ls) => {
+    window.__shot = (ls, over) => {
       const S = window.DeadSignalStudio;
       S.store.apply({ op: 'set', path: 'layers.video', value: ls });
       const c = document.createElement('canvas'); c.width = 320; c.height = 240;
       const ctx = c.getContext('2d');
-      S.renderVideoFrame(ctx, 320, 240, S.readVideoCfg(), 1.0);
+      S.renderVideoFrame(ctx, 320, 240, { ...S.readVideoCfg(), ...(over || {}) }, 1.0);
       const d = ctx.getImageData(0, 0, 320, 240).data;
       let sum = 0, r = 0;
       for (let i = 0; i < d.length; i += 4) { sum += d[i] + d[i + 1] + d[i + 2]; r += d[i]; }
@@ -1860,18 +1860,39 @@ section('a layer is its own signal');
   /* A layer draws on black so an additive blend drops its background. That
      made multiply against black BLACK: choosing Multiply crushed the whole
      frame (mean 9 → 1), and Overlay and Hard Light nearly as badly. Three of
-     the six blends on offer were traps. */
+     the six blends on offer were traps.
+
+     Measured against a DELIBERATE base rather than whatever the tab is holding
+     by the time this section runs. That base was a near-black terminal frame
+     with a mean of 10 out of 255, and the assertion was `multiply >= base` — so
+     the whole check was being decided by one unit of rounding in the browser's
+     blend maths, and it duly disagreed between two Chromium builds on the same
+     commit. It also asserted the wrong thing: multiply is SUPPOSED to darken
+     where the layer draws. What it must not do is collapse the picture, which
+     is what the 89% loss above was. So: a bright, flat, quiet base, and a
+     threshold that a crush fails and ordinary darkening passes. */
   const b = await page.evaluate(() => {
-    const base = window.__shot([]);
+    const BASE = { scene: 'terminal', bg: '#6a6a6a', fg: '#e8e8e8', text: 'BLEND BASE',
+                   // Silence everything that would move the mean on its own.
+                   scan: 0, noise: 0, vig: 0, flick: 0, chroma: 0, bloom: 0, persist: 0,
+                   mask: 0, hum: 0, track: 0, shake: 0, roll: 0, dither: false, fade: 0,
+                   hud: '', tc: false, morse: '', blink: '', reveal: '', sub: '', filters: [] };
+    const base = window.__shot([], BASE);
     const out = { base: base.mean };
     for (const blend of ['overlay', 'hard-light', 'multiply', 'screen', 'lighter', 'difference']) {
-      out[blend] = window.__shot([{ scene: 'matrix', blend, opacity: 1, enabled: true }]).mean;
+      out[blend] = window.__shot([{ scene: 'matrix', blend, opacity: 1, enabled: true }], BASE).mean;
     }
     return out;
   });
-  check('multiply no longer crushes the frame to black', b.multiply >= b.base, `${b.base} → ${b.multiply}`);
-  check('…nor overlay', b.overlay >= b.base, `${b.base} → ${b.overlay}`);
-  check('…nor hard-light', b['hard-light'] >= b.base, `${b.base} → ${b['hard-light']}`);
+  check('the blend base is bright enough to measure a crush against', b.base > 80, String(b.base));
+  /* Two thirds: the bug this guards was a 90% collapse, and a keyed multiply
+     over a matrix layer legitimately takes a few percent off. Anything between
+     is a blend that is eating the picture. */
+  const KEEP = 0.66;
+  check('multiply no longer crushes the frame to black', b.multiply >= b.base * KEEP,
+        `${b.base} → ${b.multiply}`);
+  check('…nor overlay', b.overlay >= b.base * KEEP, `${b.base} → ${b.overlay}`);
+  check('…nor hard-light', b['hard-light'] >= b.base * KEEP, `${b.base} → ${b['hard-light']}`);
   check('…and the additive blends still brighten', b.screen > b.base && b.lighter > b.base,
         `screen ${b.screen}, lighter ${b.lighter}`);
 

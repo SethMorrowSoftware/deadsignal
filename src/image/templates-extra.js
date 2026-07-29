@@ -162,16 +162,32 @@ export function registerExtraTemplates() {
     ctx.fillStyle = '#03070a'; ctx.fillRect(0, 0, W, H);
     // Three traces, each with its own colour and numeric readout — the layout
     // is what makes it legible as a monitor, not the waveform detail.
+    /* The readouts beside each trace. Only the ECG one took an author value
+       (the Title box); SpO2 and RESP were hard-coded '00' and the Body box was
+       unread on this template entirely. One line of Body per trace now, so a
+       monitor can say what it is actually reading. */
+    const vals = macros(c.body || '').split('\n').map((v) => v.trim()).filter(Boolean);
     const rows = [
-      { label: 'ECG', colour: '#39ff9e', value: macros(c.title || '—') },
-      { label: 'SpO2', colour: '#5fd9ff', value: '00' },
-      { label: 'RESP', colour: '#ffb347', value: '00' },
+      { label: 'ECG', colour: '#39ff9e', value: vals[0] || '—' },
+      { label: 'SpO2', colour: '#5fd9ff', value: vals[1] || '00' },
+      { label: 'RESP', colour: '#ffb347', value: vals[2] || '00' },
     ];
-    const rh = H / rows.length;
+    /* The patient banner every bedside monitor carries along its top edge.
+       Title used to be the ECG number and nothing else, which meant it and the
+       Body box were competing for one slot — so whichever you typed in, the
+       other did nothing. Title names the bed, Body reads out the traces. */
+    const banner = macros(c.title || 'BED 47 · UNIDENTIFIED');
+    const bh = Math.max(12, c.font * 1.5);
+    ctx.fillStyle = '#0a1218'; ctx.fillRect(0, 0, W, bh);
+    setFont(ctx, Math.max(9, c.font * 0.9));
+    ctx.fillStyle = '#9fd8c4'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(banner, 8, bh / 2);
+    ctx.textBaseline = 'top';
+    const rh = (H - bh) / rows.length;
     setFont(ctx, Math.max(9, c.font * 0.8));
     ctx.textBaseline = 'top';
     rows.forEach((r, i) => {
-      const y0 = i * rh;
+      const y0 = bh + i * rh;
       ctx.strokeStyle = 'rgba(60,110,95,.18)';
       ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();
       // A flatline with a single blip, or nothing at all: this is a horror
