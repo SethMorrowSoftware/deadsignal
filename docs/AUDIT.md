@@ -26,7 +26,7 @@ their output implied:
 
 There was also no CI, so nothing ran any of them on a push.
 
-**Total now: 2214 checks across ten gated suites, plus 93 against a live backend.**
+**Total now: 2216 checks across ten gated suites, plus 93 against a live backend.**
 
 ---
 
@@ -93,6 +93,42 @@ A redaction is a property of the span, not of the characters, so
 `redactedLines()` returns runs and treats each marker as unbreakable. Asserted
 at six measures from 400 px down to 20 px.
 
+### Seven selects blanked on the first edit, killing both effect chains
+
+`index.html` declares seven selects with no `<option>` children — the lists come
+from the registries at init time, which runs long after `startSession` seeds the
+document from the markup. So the value recorded as their boot default was the
+**empty string**, and `renderDocToDom` writes the document back to the DOM on
+*every* notification, including the author's own edits.
+
+Measured: **one move of the Scanlines slider drove all seven to
+`selectedIndex = -1`.** After that `＋ FILTER` and `＋ FX` were no-ops answering
+*"Pick one first"* — the two headline features the HELP tab advertises, dead on
+the author's first interaction with any control — and `＋ KEY` silently wrote a
+keyframe onto whatever the first automatable parameter happens to be, while its
+picker showed nothing.
+
+The comment directly above `startSession` states the invariant these seven
+violate: *"Selects must already be filled, or their .value would not yet be the
+real default the markup implies."*
+
+Fixed in three layers, because each one alone leaves a way back in:
+
+- The five **pickers** (`v-filters-pick`, `a-fx-pick`, `v-auto-param`,
+  `a-region-op`, `i-anno-kind`) are no longer document state at all. They say
+  "which one to add next" — a question, not an answer — and belong beside the
+  scrubbers in `NOT_DOCUMENT` for the reason already written there: *a readout is
+  not state*. A project file should not carry the last filter you were about to
+  add.
+- The two **container** selects are real project state, so they are now filled
+  *before* the document is seeded, which is what the invariant asks for.
+- `writeControl` refuses to write a value onto a `<select>` that has no matching
+  option, so the next ordering slip is invisible instead of breaking two
+  features.
+
+This one was found by the audit's own adversarial verifier after the first pass
+had dismissed it, which is the argument for running the verify phase at all.
+
 ### `api/.htaccess` was missing from the repository
 
 Load-bearing, not hardening: without it Apache 404s every request to
@@ -148,11 +184,13 @@ page load 404s — on a subdirectory install, against somebody else's site.
 
 Recorded because "we looked and it was fine" is a result.
 
-- **"Six option-less selects make boot record `""` as their default, so every
-  reload blanks them."** Measured across all 29 option-less selects: every one
-  is populated by boot, RESET blanks none, and the ones reading `""` read it
-  because their first option *is* the empty sentinel — `auto` codec, `free`
-  aspect, `— silent —` bed, "the last file you loaded" footage.
+- **"Six option-less selects make boot record `""` as their default."** Filed as
+  a non-defect on a first pass and that was **wrong** — see
+  *Seven selects blanked on the first edit* under Critical. The first
+  measurement asked whether RESET blanked them (it does not) and never tried the
+  path that actually breaks: the document→DOM write that follows any ordinary
+  edit. The finding was right, the count was seven rather than six, and the
+  repro is one slider move rather than a reload.
 - **"Halftone is 3–9× slower than any other filter."** Not supported by
   measurement; the claim's own numbers contradicted it.
 - **"Crosshatch never reads `dirs[k][0]`."** True when filed, already fixed by

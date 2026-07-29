@@ -2744,6 +2744,47 @@ section('the document is wired to itself correctly');
     wiring.danglingAria.length === 0, wiring.danglingAria.slice(0, 8).join(', '));
   check('no <select> is empty by the time boot has finished',
     wiring.emptySelects.length === 0, wiring.emptySelects.slice(0, 8).join(', '));
+
+  /* …and no select is blanked by the document a moment later.
+     "Empty at boot" was checked; "blanked on the first edit" was not, and that
+     is what was happening. index.html declares seven selects with no <option>
+     children — the lists come from the registries at init time, which runs long
+     after startSession seeds the document from the markup — so the value
+     recorded as their boot default was "". renderDocToDom writes the document
+     back to the DOM on EVERY notification, including the author's own edits, so
+     one move of any slider drove all seven to selectedIndex -1: an empty box,
+     ＋ FILTER and ＋ FX answering "Pick one first", and ＋ KEY silently writing
+     onto whatever the first automatable parameter happens to be.
+     Asserted through a real edit rather than by reading the markup, because the
+     markup was never the broken part — the ordering was. */
+  const blanking = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const sels = [...document.querySelectorAll('.view select')].filter((s) => s.id && s.options.length);
+    const before = sels.map((s) => [s.id, s.selectedIndex]);
+    const scan = document.getElementById('v-scan');
+    const was = scan.value;
+    scan.value = String(Math.max(1, (Number(was) + 17) % 100));
+    scan.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 250));
+    const blanked = sels.filter((s) => s.selectedIndex === -1).map((s) => s.id);
+
+    // The consequence, not just the symptom: the two chain pickers must still add.
+    const vBefore = (S.store.get('filters.video') || []).length;
+    document.getElementById('v-filters-add')?.click();
+    const aBefore = (S.store.get('filters.audio') || []).length;
+    document.getElementById('a-fx-add')?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const added = { video: (S.store.get('filters.video') || []).length - vBefore,
+                    audio: (S.store.get('filters.audio') || []).length - aBefore };
+    S.clearFilters(); S.clearChain?.('a-fx');
+    scan.value = was; scan.dispatchEvent(new Event('input', { bubbles: true }));
+    return { count: before.length, blanked, added };
+  });
+  check('no <select> is blanked by the document on the first ordinary edit',
+    blanking.blanked.length === 0,
+    blanking.blanked.join(', ') || `${blanking.count} selects held their selection`);
+  check('…so ＋ FILTER and ＋ FX still add after an edit, rather than saying "Pick one first"',
+    blanking.added.video === 1 && blanking.added.audio === 1, JSON.stringify(blanking.added));
   check('every number and range input declares its own bounds, so the box agrees with the clamp',
     wiring.unbounded.length === 0, wiring.unbounded.slice(0, 8).join(', '));
 }

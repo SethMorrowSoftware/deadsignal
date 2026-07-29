@@ -52,7 +52,25 @@ const GLOBAL_IDS = ['seed', 'aesthetic'];
  *
  * A readout is not state. Keeping these out of the document is the fix at the
  * only place that decides what the document contains. */
-const NOT_DOCUMENT = new Set(['v-scrub', 'tl-scrub']);
+/* …and neither is a PICKER. These five say "which one to add next" — they are
+   read at the moment a button is pressed and mean nothing before or after it.
+   Keeping them in the document was actively harmful, not merely untidy:
+   index.html declares them with no <option> children (the lists come from the
+   registries at init time, which runs long after startSession seeds the
+   document from the markup), so the value recorded as their boot default was
+   the empty string. renderDocToDom then wrote that "" back on EVERY document
+   notification — including the author's own edits — driving selectedIndex to
+   -1 on all of them. Measured: one move of the Scanlines slider blanked all
+   seven of these selects, after which ＋ FILTER and ＋ FX were no-ops
+   ("Pick one first") and ＋ KEY silently wrote onto whatever
+   AUTOMATABLE[0] happens to be. The two headline chain features died on the
+   author's first interaction with any control.
+   A picker is a question, not an answer. It does not belong in a project file
+   for the same reason a scrub position does not. */
+const NOT_DOCUMENT = new Set([
+  'v-scrub', 'tl-scrub',
+  'v-filters-pick', 'a-fx-pick', 'v-auto-param', 'a-region-op', 'i-anno-kind',
+]);
 
 export function viewControls(viewId) {
   const root = $(viewId);
@@ -71,6 +89,21 @@ export function writeControl(el, value) {
   // written by an older build can still carry a file-input key, and throwing
   // here would take the whole restore down with it.
   if (el.type === 'file') return false;
+  /* Never blank a <select> by writing a value it has no option for.
+     `el.value = "unknown"` sets selectedIndex to -1, which shows an empty box
+     and makes every reader of that control fall through to a default it never
+     announced. A document can hold such a value for three ordinary reasons: it
+     was written by a build whose option list differed, it was seeded before the
+     list was filled, or a hand-edited file simply has a typo. In all three the
+     honest answer is to leave the control showing something real.
+     This is the guard, not the fix — the fix is that pickers are no longer
+     document state and the container selects are filled before the document is
+     seeded. It is here so that the next ordering mistake is invisible instead
+     of breaking two features. */
+  if (el.tagName === 'SELECT' && el.options.length) {
+    const want = value == null ? '' : String(value);
+    if (!Array.from(el.options).some((o) => o.value === want)) return false;
+  }
   if (el.type === 'checkbox') {
     const v = !!value;
     if (el.checked === v) return false;

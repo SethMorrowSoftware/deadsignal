@@ -1,5 +1,6 @@
 /* Dead Signal Studio — boot.js */
 import { doRenderAudio, initAudioTab, markAudioStale } from './audio/ui.js';
+import { fillContainerSelect } from './export/encoder.js';
 import { download } from './core/blobs.js';
 import { $, log, setVal, toast } from './core/dom.js';
 import { applyAesthetic, applyPack, fillPaletteSelect } from './core/palettes.js';
@@ -77,6 +78,14 @@ export function boot(){
   ["v-palette","i-palette"].forEach(id=>fillPaletteSelect($(id)));
   ["v-fontfam","i-fontfam"].forEach(id=>fillFontSelect($(id)));
   rebuildPresetSelect("video"); rebuildPresetSelect("audio"); rebuildPresetSelect("image");
+  /* The container pickers, HERE rather than in initVideoTab/initTimelineTab.
+     They are real project state — the export format an author chose — so unlike
+     the transient "which one to add next" pickers they cannot simply be kept out
+     of the document. That means they have to obey the invariant stated
+     immediately below, and they were the two that did not: filled at init time,
+     long after the document was seeded from the markup, so their recorded boot
+     default was the empty string and every document→DOM write blanked them. */
+  fillContainerSelect($("v-container")); fillContainerSelect($("tl-container"));
   // The document becomes authoritative here. Selects must already be filled,
   // or their .value would not yet be the real default the markup implies.
   /* Every panel that is a PROJECTION of the document rather than a control.
