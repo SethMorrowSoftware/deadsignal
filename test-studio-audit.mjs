@@ -1196,15 +1196,23 @@ section('layers');
 
 /* ================================================= campaign file merge ===== */
 /* The whole point is that installing the bundle over a campaign that already
-   has media does not delete any of it. Uses the REPO'S REAL files, because a
-   toy fixture would not catch a format assumption. */
-section('campaign merge (real EREBUS files)');
+   has media does not delete any of it. Uses full-size campaign files in the
+   campaign's own formats — a two-entry toy would not catch a format assumption.
+
+   These used to be read from the EREBUS repository through '../../assets/…'.
+   The studio is a folder you copy anywhere, so that path was wrong everywhere
+   except one checkout, and readFileSync THREW rather than failing a check —
+   taking every section below this one with it. The fixtures are pinned in
+   tests/fixtures/campaign/ instead: a merge test whose input can change under
+   it is a test that fails for reasons that have nothing to do with merging. */
+section('campaign merge (campaign-format files)');
 {
+  const FIX = join(HERE, 'tests', 'fixtures', 'campaign');
   const real = {
-    manifest: readFileSync(join(HERE, '../../assets/media-manifest.json'), 'utf8'),
-    videos: readFileSync(join(HERE, '../../assets/videos/index.json'), 'utf8'),
-    music: readFileSync(join(HERE, '../../assets/music/index.json'), 'utf8'),
-    autoexec: readFileSync(join(HERE, '../../autoexec.retro'), 'utf8'),
+    manifest: readFileSync(join(FIX, 'media-manifest.json'), 'utf8'),
+    videos: readFileSync(join(FIX, 'videos/index.json'), 'utf8'),
+    music: readFileSync(join(FIX, 'music/index.json'), 'utf8'),
+    autoexec: readFileSync(join(FIX, 'autoexec.retro'), 'utf8'),
   };
 
   const r = await page.evaluate(async (real) => {
@@ -1247,8 +1255,13 @@ section('campaign merge (real EREBUS files)');
   }, real);
 
   check('the campaign\'s files are recognised as a merge target', r.wasMerged);
-  check('release lines are read out of the real autoexec.retro', r.releasedFound >= 5,
+  check('release lines are read out of a real autoexec.retro', r.releasedFound >= 5,
         `${r.releasedFound} found`);
+  // The fixture deliberately comments two releases out, with both comment
+  // syntaxes. Counting a commented release would make the studio skip the very
+  // line the author still needs, and the clip would never reach the campaign.
+  check('a commented-out release is not counted as released', r.releasedFound === 10,
+        `${r.releasedFound} found, expected 10`);
   check('every shipped asset survives the merge', r.kept === r.shipped,
         `${r.kept}/${r.shipped} kept`);
   check('the merged manifest keeps the campaign\'s shape', r.manifestShape);

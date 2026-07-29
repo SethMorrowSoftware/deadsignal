@@ -6,7 +6,7 @@
  * the DOM at module scope (scratch canvases), so a minimal stub is installed
  * first — the same approach the FileSystemManager / SessionManager suites use.
  */
-import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -424,11 +424,34 @@ check(`all ${files.length} modules import cleanly`, namespaces.size === files.le
   check('README keyboard line matches the mapping', readme.includes('`1‑8` tabs') && map.length === 8,
         `${map.length} keys`);
 
-  // The gate range the Tests section claims must match ci-gate.sh.
-  const gate = readFileSync(join(HERE, '..', '..', 'scripts', 'ci-gate.sh'), 'utf8');
-  const studioGates = [...gate.matchAll(/report "media studio /g)].length;
-  check('ci-gate.sh runs ten media-studio gates', studioGates === 10, `found ${studioGates}`);
-  check('README claims gates 29–38', readme.includes('gates 29–38'));
+  /* The gate must run every suite the README lists, and the README must list
+     every suite the folder ships. Both directions, because either one alone
+     lets a suite exist and never run.
+
+     This used to read '../../scripts/ci-gate.sh' — the gate of the repository
+     the studio grew up in. The studio is a folder you copy anywhere, so that
+     path was wrong everywhere except one checkout, and readFileSync THREW
+     rather than failing a check, which killed the run before the summary. The
+     gate now ships inside the folder like everything else. */
+  const gate = readFileSync(join(HERE, 'scripts', 'ci-gate.sh'), 'utf8');
+  const gated = [...gate.matchAll(/^report "media studio[^"]*"\s+(\w+)\s+(\S+)/gm)].map((m) => m[2]);
+  check('ci-gate.sh runs ten media-studio gates', gated.length === 10, `found ${gated.length}`);
+
+  const shipped = readdirSync(HERE)
+    .filter((f) => /^test-.*\.(mjs|php)$/.test(f))
+    // The two that need a live server + MySQL are deliberately outside the gate.
+    .filter((f) => f !== 'test-studio-api.php' && f !== 'test-studio-cloud.mjs');
+  const ungated = shipped.filter((f) => !gated.includes(f));
+  check('every gated suite is a file that exists',
+        gated.every((f) => existsSync(join(HERE, f))),
+        gated.filter((f) => !existsSync(join(HERE, f))).join(' ') || 'all present');
+  check('no shipped suite is missing from the gate', ungated.length === 0,
+        ungated.join(' ') || 'none');
+  check('the README lists every gated suite',
+        gated.every((f) => readme.includes(f)),
+        gated.filter((f) => !readme.includes(f)).join(' ') || 'all listed');
+  check('the README does not claim a gate range it no longer has',
+        !readme.includes('gates 29–38'));
 }
 
 console.log('-'.repeat(58));

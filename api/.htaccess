@@ -1,0 +1,66 @@
+# Dead Signal Studio — API front-controller rewrite.
+#
+# WHY THIS FILE IS LOAD-BEARING
+#
+# Every backend request arrives at <studio>/api/<something> and there is no file
+# on disk with that name — only index.php. Without this rewrite Apache 404s the
+# lot and the CLOUD tab reports "No backend found" on a perfectly healthy
+# install. It is the single most common deployment failure, because many FTP
+# clients and archive tools skip dotfiles silently. preflight.php checks that
+# this file arrived, for exactly that reason.
+#
+# If the host ignores .htaccess (AllowOverride None), or you are on nginx, the
+# client falls back to <studio>/api/index.php/<something> on its own — the same
+# backend reached without a rewrite — so the studio still works. The nginx
+# equivalent of this file is:
+#
+#     location ^~ /studio/api/ { try_files $uri /studio/api/index.php$is_args$args; }
+#
+# NOTHING HERE ASSUMES WHERE THE STUDIO IS MOUNTED. The substitution is relative
+# and there is no RewriteBase, so this works at the document root, in a
+# subdirectory, or three folders down, unchanged. Every directive is wrapped in
+# an <IfModule> so a host missing any one of these modules gets a working
+# studio rather than a 500.
+
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Apache with CGI/FastCGI drops the Authorization header before PHP sees it,
+    # which would sign every request out with no visible reason. Put it back.
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Anything that really exists on disk is served as-is; everything else is a
+    # route. REQUEST_URI is untouched by an internal rewrite, which is what lets
+    # index.php work out its own mount point from SCRIPT_NAME.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+<IfModule mod_setenvif.c>
+    SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
+# Apache 2.4.13+ can hand the header to PHP directly. Older Apache does not know
+# the directive at all, so it is fenced behind mod_version — and where mod_version
+# is not loaded the rewrite above has already covered it.
+<IfModule mod_version.c>
+    <IfVersion >= 2.4.13>
+        CGIPassAuth On
+    </IfVersion>
+</IfModule>
+
+# index.php is the only thing in here that should ever be fetched. A stray
+# index.php.bak or .env dropped beside it is denied rather than served.
+<FilesMatch "\.(?!php$)[^.]+$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

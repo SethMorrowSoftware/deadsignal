@@ -1,0 +1,14 @@
+{
+    "music": [
+        { "name": "Archive Hum 47", "src": "assets/music/archive_hum_47.mp3" },
+        { "name": "Sable Theme", "src": "assets/music/sable_theme.mp3", "gated": true },
+        { "name": "Cold Room", "src": "assets/music/cold_room.ogg" }
+    ],
+    "videos": [
+        { "name": "Erebus Signal Loop", "src": "assets/videos/erebus_signal_loop.mp4" },
+        { "name": "Webb Last Session", "src": "assets/videos/webb_last_session.mp4", "gated": true },
+        { "name": "Sable First Contact", "src": "assets/videos/sable_first_contact.webm", "gated": true },
+        { "name": "Corridor Cam 3", "src": "assets/videos/corridor_cam_3.webm" },
+        { "name": "Four Keys", "src": "assets/videos/four_keys.mp4", "gated": true }
+    ]
+}

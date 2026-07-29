@@ -1,0 +1,5 @@
+[
+    { "name": "Archive Hum 47", "filename": "archive_hum_47.mp3" },
+    { "name": "Sable Theme", "filename": "sable_theme.mp3", "gated": true },
+    { "name": "Cold Room", "filename": "cold_room.ogg" }
+]

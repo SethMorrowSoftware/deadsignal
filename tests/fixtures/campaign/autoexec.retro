@@ -1,0 +1,40 @@
+# EREBUS — autoexec.retro (fixture excerpt)
+#
+# A campaign's boot script. The studio never rewrites this file: it reads the
+# set of filenames that already carry a `call releaseMedia` line, so the bundle
+# can emit only the lines an author still needs to paste.
+
+on boot:
+    setTitle "EREBUS // ARCHIVE NODE 47"
+    # ungated clips mount at boot — no release line needed
+    call releaseMedia "erebus_signal_loop.mp4"
+    call releaseMedia "archive_hum_47.mp3"
+    call mountVolume "assets/"
+
+on unlockPhase3:
+    print "PHASE 3 // AUDIO ARCHIVE UNSEALED"
+    call releaseMedia 'sable_theme.mp3'
+    // call releaseMedia "not_yet_cut.mp3"   -- a commented release is NOT a release
+    call setFlag "phase3"
+
+on unlockPhase5:
+    print "PHASE 5 // VIDEO ARCHIVE UNSEALED"
+    call releaseMedia "webb_last_session.mp4"
+    call releaseMedia "corridor_cam_3.webm"
+    # call releaseMedia "held_back_reel.webm"   -- also not a release
+
+on erebus:sable:first:
+    call releaseMedia "sable_first_contact.webm"
+    call playMedia "sable_first_contact.webm"
+
+on erebus:sable:call:
+    # The '#' below is inside the quoted filename and must not be read as a
+    # comment — the line is a real release.
+    call releaseMedia "sable_call_#2.mp3"
+
+on announceFourKeys:
+    call releaseMedia "four_keys.mp4"    # released here, not at boot
+    print "FOUR KEYS REMAIN"
+
+on custom:
+    call releaseMedia "extra_a.webm" call releaseMedia "extra_b.webm"

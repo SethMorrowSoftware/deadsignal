@@ -1,11 +1,12 @@
 # Dead Signal Studio
 
-> 📐 **Expansion program:** the specification set that grew this tool into a
-> multi-user content creation studio (timeline editing, project document with
-> undo, aesthetic packs, cPanel multi-user hosting) lives in
-> [`docs/media-studio/`](../../docs/media-studio/README.md) — now largely
-> implemented; read it as design rationale. This README describes the tool
-> **as it ships today**.
+> 📐 **Where this came from:** the tool grew inside the EREBUS campaign
+> repository, driven by a specification set that turned it into a multi-user
+> content creation studio (timeline editing, a project document with undo,
+> aesthetic packs, cPanel multi-user hosting). That program is largely
+> implemented and those specs stayed behind with the campaign. This README
+> describes the tool **as it ships today**, and this repository is the whole of
+> it — nothing here reads a file outside this folder.
 
 An **offline** retro-media asset forge spanning **analogue horror · cyberpunk ·
 vaporwave** — generate CRT/terminal **video**, synth **audio**, and Win95/CRT
@@ -23,7 +24,7 @@ requires the application it grew up in.
 
 ```bash
 python -m http.server 8000      # from the repo root, or any static server
-# then open http://localhost:8000/tools/media-studio/
+# then open http://localhost:8000/
 ```
 
 That is the whole tool, minus accounts and sync. To run the optional backend
@@ -31,8 +32,7 @@ locally as well, use PHP's built-in server with the shipped router (it supplies
 the rewrite that `api/.htaccess` gives Apache):
 
 ```bash
-php -S localhost:8000 tools/media-studio/router.php    # from the repo root
-# or, from inside this folder:  php -S localhost:8000 router.php
+php -S localhost:8000 router.php    # from the repo root
 ```
 
 > ⚠️ **It must be served — opening `index.html` from the filesystem no longer
@@ -1428,7 +1428,7 @@ want), clear it to go back to detecting.
 and everything else is untouched.
 
 The minimum upload set and the full walkthrough are in
-[`docs/media-studio/INSTALL.md`](../../docs/media-studio/INSTALL.md).
+[`docs/INSTALL.md`](docs/INSTALL.md).
 
 ## Constraints (browser reality)
 
@@ -1478,7 +1478,7 @@ headless), the frame-strip export, stego round-trip, the ZIP writer, and project
 save/load (incl. timeline) — zero JS errors.
 
 The inline **GIF encoder** is separately pinned by a dependency-free Node gate,
-`node tools/media-studio/test-gif-encoder.mjs` (wired into `scripts/ci-gate.sh`):
+`node test-gif-encoder.mjs` (gate 1 of `scripts/ci-gate.sh`):
 it encodes rich frames that cross the LZW code-size boundaries and decodes them
 with an **independent** decoder, asserting a byte-exact round-trip — so the
 "looks fine at the top, then corrupts" desync class can't regress.
@@ -1486,30 +1486,33 @@ with an **independent** decoder, asserting a byte-exact round-trip — so the
 ## Tests
 
 ```bash
-node tools/media-studio/test-gif-encoder.mjs      # GIF89a LZW byte-exactness (headless)
-node tools/media-studio/test-studio-rng.mjs       # determinism contract (headless)
-node tools/media-studio/test-studio-modules.mjs   # module graph imports (headless)
-node tools/media-studio/test-studio-document.mjs  # project document: commands, undo, round-trip, migrations, muxers (headless)
-node tools/media-studio/test-studio-a11y.mjs      # WCAG 2.1 AA sweep in Chromium (needs Playwright)
-node tools/media-studio/test-studio-audit.mjs     # behaviour audit in Chromium — every control changes the output (needs Playwright)
-node tools/media-studio/test-studio-smoke.mjs     # end-to-end in Chromium (needs Playwright)
-node tools/media-studio/test-studio-deploy.mjs    # API discovery from any folder: subdirectory install, relocated studio folder, wizard note, explicit override (headless)
-php  tools/media-studio/test-studio-units.php    # the backend: sharing rules, upload bounds, document guard, installer primitives (no database)
-node tools/media-studio/test-studio-deep.mjs      # the deep audit in Chromium — every scene, template, filter, sound layer, automated parameter and audio FX ONE AT A TIME from the registries; canvas state hygiene; every control reachable at 8 window sizes in all 3 layouts; modal focus; document wiring (needs Playwright)
+node test-gif-encoder.mjs      # GIF89a LZW byte-exactness (headless)
+node test-studio-rng.mjs       # determinism contract (headless)
+node test-studio-modules.mjs   # module graph imports (headless)
+node test-studio-document.mjs  # project document: commands, undo, round-trip, migrations, muxers (headless)
+node test-studio-a11y.mjs      # WCAG 2.1 AA sweep in Chromium (needs Playwright)
+node test-studio-audit.mjs     # behaviour audit in Chromium — every control changes the output (needs Playwright)
+node test-studio-smoke.mjs     # end-to-end in Chromium (needs Playwright)
+node test-studio-deploy.mjs    # API discovery from any folder: subdirectory install, relocated studio folder, wizard note, explicit override (headless)
+php  test-studio-units.php    # the backend: sharing rules, upload bounds, document guard, installer primitives (no database)
+node test-studio-deep.mjs      # the deep audit in Chromium — every scene, template, filter, sound layer, automated parameter and audio FX ONE AT A TIME from the registries; canvas state hygiene; every control reachable at 8 window sizes in all 3 layouts; modal focus; document wiring (needs Playwright)
 ```
 
-All ten run as gates 29–38 of `bash scripts/ci-gate.sh`. The browser suites
-serve the folder on an ephemeral port, drive the UI only, and skip cleanly when
-Playwright is unavailable.
+All ten run as `bash scripts/ci-gate.sh` (`--headless` skips the four Chromium
+ones). The browser suites serve the folder on an ephemeral port, drive the UI
+only, and skip cleanly when Playwright is unavailable — a machine with no
+browser is not a failing build. `test-studio-modules.mjs` asserts in both
+directions that the gate runs every suite the folder ships and that this list
+names every gate, so a suite cannot be added and then quietly never run.
 
 Two more suites need a live server + MySQL and are deliberately **not** in the
 gate:
 
 ```bash
-php -S 127.0.0.1:8090 tools/media-studio/router.php      # in another terminal
+php -S 127.0.0.1:8090 router.php               # in another terminal
 
-php  tools/media-studio/test-studio-api.php   http://127.0.0.1:8090/tools/media-studio
-node tools/media-studio/test-studio-cloud.mjs http://127.0.0.1:8090
+php  test-studio-api.php   http://127.0.0.1:8090
+node test-studio-cloud.mjs http://127.0.0.1:8090
 ```
 
 `test-studio-api.php` drives the API directly — real SQL, real auth, a real
@@ -1519,4 +1522,4 @@ database of). `test-studio-cloud.mjs` drives the CLOUD tab in Chromium against
 the same server; both skip cleanly when nothing is listening. The cloud suite
 takes an optional second argument for the studio's path within the site, so it
 runs against a subdirectory install with the folder moved:
-`node tools/media-studio/test-studio-cloud.mjs http://host/sub /studio/index.html`.
+`node test-studio-cloud.mjs http://host/sub /studio/index.html`.
