@@ -1485,6 +1485,10 @@ with an **independent** decoder, asserting a byte-exact round-trip — so the
 
 ## Tests
 
+> A full beta-readiness audit of this repository — what was found, what was
+> fixed, what was investigated and turned out to be fine, and what is still
+> open — is written up in [`docs/AUDIT.md`](docs/AUDIT.md).
+
 ```bash
 node test-gif-encoder.mjs      # GIF89a LZW byte-exactness (headless)
 node test-studio-rng.mjs       # determinism contract (headless)

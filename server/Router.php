@@ -132,6 +132,14 @@ class Router
             jsonError('Not found: ' . $path, 404);
         }
 
+        /* The matched PATTERN, for middleware that must not key on the concrete
+           path. The rate limiter is the one that matters: keyed on the path,
+           `/studio/shared/:token` handed every distinct token its own bucket —
+           so the endpoint whose whole job is to resist token guessing had an
+           effectively unlimited budget, and every attempt minted a file in the
+           rate-limit directory from an unauthenticated request. */
+        $GLOBALS['_studio_route'] = $matchedRoute['pattern'] ?? $path;
+
         // Run global middleware first, then any route-scoped middleware
         // attached via group() or the optional middleware array on the
         // route registration. Each layer can short-circuit by calling

@@ -134,13 +134,24 @@ class Middleware
                 return;
             }
 
-            // Normalise exactly as Router::dispatch does ('/' . trim(…, '/')) and
-            // collapse duplicate slashes, so /auth/login, /auth/login/ and
-            // /auth//login share one bucket. Keying on the raw path would let an
-            // attacker mint unlimited buckets and walk straight past the limit.
+            /* Keyed on the matched ROUTE PATTERN, not on the path that matched
+               it. A pattern with a parameter in it — `/studio/shared/:token`,
+               `/studio/projects/:id` — gave every distinct parameter value its
+               own bucket when keyed on the path. So the share-token endpoint,
+               whose entire purpose is to resist guessing, offered 30 attempts
+               PER TOKEN rather than 30 attempts, and each attempt minted a
+               fresh JSON file in the rate-limit directory from an
+               unauthenticated request: an unbounded write as well as an
+               unbounded budget.
+               Router::dispatch publishes the pattern. Falling back to the
+               normalised path keeps this working for a middleware layer that
+               runs before any route matched, and normalising the same way
+               Router does keeps /auth/login, /auth/login/ and /auth//login on
+               one bucket. */
             $rawPath  = parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?? '/';
             $normPath = '/' . trim(preg_replace('#/+#', '/', $rawPath), '/');
-            $key = sha1(self::clientIp() . '|' . $normPath);
+            $bucket   = (string) ($GLOBALS['_studio_route'] ?? $normPath);
+            $key = sha1(self::clientIp() . '|' . $bucket);
             $file = $dir . '/' . substr($key, 0, 16) . '.json';
 
             $fp = @fopen($file, 'c+');
