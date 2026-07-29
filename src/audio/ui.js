@@ -1,5 +1,5 @@
 /* Dead Signal Studio — audio/ui.js */
-import { renderAudio } from './engine.js';
+import { applyEdgeFades, readAudioCfg, renderAudio } from './engine.js';
 import { bufferPeakRms, encodeWav } from './wav.js';
 import { download, makeUrl, revokeUrl } from '../core/blobs.js';
 import { $, chk, log, setVal, toast, val } from '../core/dom.js';
@@ -63,12 +63,20 @@ export async function doRenderAudio(){ if(aRendering)return; aRendering=true; co
        buffer. That is what makes them part of the project rather than a
        destructive button: they undo, they save, and the same project always
        produces the same wave. */
+    const beforeLen=r.channels[0].length;
     const edited=applyRegions(r.channels, r.sr, regions());
     if(edited!==r.channels){
       r.channels=edited; r.data=edited[0];
       // "Crop to" changes the length — the status line, the library row and the
       // bed picker all quote r.duration, so it must follow the edit.
       r.duration=edited[0].length/r.sr;
+      /* …and it throws away the ends the edge fades were ramped onto, so what
+         is left begins and ends mid-signal. Re-ramp the NEW edges: a cropped
+         .wav used to click at both ends and the author's Fade setting was
+         quietly not honoured. Only when the length actually changed — an edit
+         that leaves the ends alone already carries its fade. */
+      const cfg=readAudioCfg();
+      if(edited[0].length!==beforeLen && !cfg.loop) applyEdgeFades(r.channels, r.sr, cfg.fade);
       log("Audio edits: "+regions().length+" applied — "+r.duration.toFixed(2)+"s.","info");
     }
     lastAudio=r; bumpAudioRev(); drawWaveform(r.channels); setRegionDuration(r.channels[0].length/r.sr);
@@ -86,8 +94,20 @@ export async function doRenderAudio(){ if(aRendering)return; aRendering=true; co
     const it=(lastLibId!=null && replaceItem(lastLibId,lastAudio.blob,lastLibName,dur))
              || addToLibrary(lastAudio.blob,"wav","music",slug(nm),dur);
     lastAudio.libId=it.id; lastLibId=it.id; lastLibName=it.name;
-    if(chk("a-autonorm") && pr.peak>0 && pr.peak<0.985){ normalizeAudio(); const p2=bufferPeakRms(lastAudio.channels); const db2=(p2.peak>0?20*Math.log10(p2.peak):-99);
-      $("a-peak").style.width=Math.min(100,p2.peak*100)+"%"; $("a-peakv").textContent=db2.toFixed(1)+"dB"; $("a-status").textContent="Rendered "+r.duration.toFixed(1)+"s · auto-leveled to "+db2.toFixed(1)+"dB."; }
+    /* Auto-level lifts a quiet render AND pulls a hot one down. The guard used
+       to be `peak < 0.985`, which excluded every clipping render — the one case
+       the control exists for. A render at 0dBFS got no auto-level, an amber
+       "Clipping" banner, and a status line that never said why. normalizeAudio()
+       scales to 0.97 in either direction, so the only thing worth skipping is a
+       render that is already there. */
+    const TARGET=0.97, SLACK=0.015;
+    if(chk("a-autonorm") && pr.peak>0 && Math.abs(pr.peak-TARGET)>SLACK){
+      normalizeAudio(); const p2=bufferPeakRms(lastAudio.channels); const db2=(p2.peak>0?20*Math.log10(p2.peak):-99);
+      $("a-peak").style.width=Math.min(100,p2.peak*100)+"%"; $("a-peakv").textContent=db2.toFixed(1)+"dB";
+      $("a-status").textContent="Rendered "+r.duration.toFixed(1)+"s · auto-leveled "
+        +(pr.peak>TARGET?"down":"up")+" to "+db2.toFixed(1)+"dB.";
+      // The banner was raised against the pre-normalise peak. It is gone now.
+      clearBanner("a-banners"); }
   }catch(e){ log("Audio render failed: "+e.message,"err"); $("a-status").textContent="Render failed."; }
   finally{ aRendering=false; const b=$("a-render"); if(b)b.disabled=false; } }
 export function normalizeAudio(){ if(!lastAudio)return; const pr=bufferPeakRms(lastAudio.channels); if(pr.peak<=0)return; const g=0.97/pr.peak;

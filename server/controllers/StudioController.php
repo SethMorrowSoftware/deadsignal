@@ -426,7 +426,7 @@ class StudioController
         if (!$file || !empty($file['error'])) jsonError('No chunk received');
 
         try {
-            $storage->storeChunk($uploadId, $index, (string) $file['tmp_name']);
+            $storage->storeChunk($this->userId(), $uploadId, $index, (string) $file['tmp_name']);
         } catch (\RuntimeException $e) {
             jsonError($e->getMessage());
             return;

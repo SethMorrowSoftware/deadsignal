@@ -362,10 +362,52 @@ export function scheduleOf(clips) {
       acc = Math.max(0, acc - ov);
     }
     starts[i] = round2(acc);
-    acc += clipLength(c);
+    /* Continue from the START THAT WAS PUBLISHED, not from the raw accumulator.
+       They are not the same number: `in`, `out` and `xdur` are all two-decimal,
+       but a clip's length is (out − in) / speed, and any speed that is not 1
+       makes that a repeating fraction. Accumulating the raw value and
+       publishing a rounded one let the two drift apart by up to 0.005s at every
+       join, and compound across a long sequence. */
+    acc = starts[i] + clipLength(c);
     prevSpine = i;
   });
   return { starts, duration: round2(Math.max(acc, overlayEnd)) };
+}
+
+/** The indices of the V1 clips, in order. The spine, skipping every overlay. */
+export function spineOf(clips) {
+  const out = [];
+  if (!Array.isArray(clips)) return out;
+  for (let i = 0; i < clips.length; i++) if (!isOverlay(clips[i])) out.push(i);
+  return out;
+}
+
+/**
+ * When each spine clip holds the picture: `{ i, p, s, e, len }`, in order.
+ *
+ * `e` is NOT simply `s + len`. The schedule publishes starts rounded to 1/100s
+ * while a clip's length is (out − in) / speed — a repeating fraction at any
+ * speed but 1 — so those two numbers disagree by up to 5ms, and where the next
+ * start was the later of the two, an instant existed that no clip covered.
+ * renderTimelineFrame fills black and composites whatever matches, so an
+ * uncovered instant is a BLACK FRAME rather than a seam: measured at 30fps,
+ * roughly one join in three landed a sampled frame inside one, in the preview
+ * and in the export alike.
+ *
+ * So a clip holds the picture until the next one takes it. The last has nothing
+ * to hand it to and keeps its own length. Lives here rather than in the
+ * renderer because the compositor, the mixer and the suites all have to agree
+ * about it, and a rule stated in one of them is a rule the others can drift
+ * from.
+ */
+export function spineSpans(clips, starts) {
+  const spine = spineOf(clips);
+  return spine.map((i, p) => {
+    const len = clipLength(clips[i]);
+    const s = starts[i];
+    const e = p + 1 < spine.length ? Math.max(s + len, starts[spine[p + 1]]) : s + len;
+    return { i, p, s, e, len };
+  });
 }
 
 /**

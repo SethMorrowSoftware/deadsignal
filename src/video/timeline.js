@@ -2,7 +2,7 @@
 import { $, clamp, escHtml, log, num, toast, val } from '../core/dom.js';
 import { readRecipe } from '../core/recipes.js';
 import { MAX_DIM, MIN_H, MIN_W } from '../core/formats.js';
-import { MAX_CLIP, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf } from '../doc/timeline.js';
+import { MAX_CLIP, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf, spineSpans } from '../doc/timeline.js';
 import { audioEnd, makeAudioClip, normalizeAudioClips } from '../doc/audioclip.js';
 import { hasSound, mixParts, mixSignature } from '../doc/audiomix.js';
 import { isIdentity, invertPoint, matrixFor } from '../doc/transform.js';
@@ -570,7 +570,12 @@ export function renderTimelineFrame(ctx,T,sched){ const {clips,starts,tl}=sched;
      both have to skip over any overlay that happens to sit between them in the
      array. */
   const spine=[]; for(let i=0;i<clips.length;i++) if(!isOverlay(clips[i])) spine.push(i);
-  for(let p=0;p<spine.length;p++){ const i=spine[p]; const len=clipLength(clips[i]); const s=starts[i], e=s+len;
+  /* Spans, not `s + len`: a clip holds the picture until the next one takes it.
+     See spineSpans() — the schedule's rounding and a clip's speed-divided length
+     disagree by up to 5ms, and the instant between them used to be covered by
+     nothing at all, which is a black frame rather than a seam. */
+  const spans=spineSpans(clips,starts);
+  for(let p=0;p<spine.length;p++){ const i=spine[p]; const {len,s,e}=spans[p];
     if(!(T>=s-1e-6 && T<e+1e-6)) continue;
     const localT=clamp(T-s,0,len); renderClipTo(sctx,clips[i],localT,tl);
     /* A transition belongs to the clip coming IN, so it reads its own settings
@@ -843,8 +848,26 @@ export function renderTimelineTable(){ const b=$("tl-body"); if(!b)return; b.rep
     else return;
     commitClips(next,a==="rm"?"remove clip":"reorder clips"); }));
   b.querySelectorAll("input,select").forEach(el=>el.addEventListener("change",()=>{
-    const i=+el.dataset.i, k=el.dataset.k; if(!timeline[i])return;
-    editClip(i,{ [k]: (k==="transition"||k==="bed")?el.value:+el.value }, "clip "+k); })); }
+    const i=+el.dataset.i, k=el.dataset.k; const c=timeline[i]; if(!c)return;
+    const v=(k==="transition"||k==="bed")?el.value:+el.value;
+    /* A backwards trim is REFUSED, not absorbed. makeClip's fallback for one is
+       "the whole source is the honest reading" — which is right for a
+       hand-edited file and destructive here: typing 1 into Out on a clip
+       trimmed to 2–8 threw the author's whole trim away and reset the clip to
+       its full length, silently. Put the box back to what is stored and say
+       why; the edit they meant is one keystroke away, the trim they had is not
+       recoverable if we accept this one. */
+    if((k==="in"||k==="out") && Number.isFinite(v)){
+      const inn=k==="in"?v:c.in, out=k==="out"?v:c.out;
+      if(!(out-inn>=MIN_CLIP)){
+        el.value=(k==="in"?c.in:c.out).toFixed(2);   /* dom-only: this cell is redrawn from the document, not bound to it, and dispatching would re-enter this handler */
+        toast("Out must be at least "+MIN_CLIP+"s after In","warn");
+        log("Clip "+(i+1)+": in "+inn.toFixed(2)+" / out "+out.toFixed(2)
+            +" would leave nothing to play — trim unchanged.","warn");
+        return;
+      }
+    }
+    editClip(i,{ [k]: v }, "clip "+k); })); }
 
 /**
  * Where the playhead is INSIDE the selected clip's source, or null.

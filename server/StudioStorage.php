@@ -138,8 +138,11 @@ class StudioStorage
         }
 
         if ($uploadId !== null && self::isValidUploadId($uploadId) && is_dir($this->tmpDir($uploadId))) {
+            // Resuming somebody else's transfer is not resuming, it is taking.
+            $this->assertOwner($uploadId, $ownerId);
             // A pre-upgrade session has no meta file; give it one so the
-            // per-chunk declared-size bound applies from here on.
+            // per-chunk declared-size bound — and the owner check — apply from
+            // here on.
             if ($this->readMeta($uploadId) === null) $this->writeMeta($uploadId, $ownerId, $size);
             return [
                 'uploadId'  => $uploadId,
@@ -189,6 +192,34 @@ class StudioStorage
         return (is_array($m) && isset($m['owner'], $m['size'])) ? $m : null;
     }
 
+    /**
+     * Refuse an upload session that belongs to somebody else.
+     *
+     * Nothing used to check this. `writeMeta` recorded the owner at init and
+     * then no other method read it back: `storeChunk()` took no owner at all,
+     * `completeUpload()` took one and never compared it, and `initUpload()`
+     * resumed any session whose directory existed. An account that came by
+     * another account's uploadId could therefore inject chunks into that
+     * transfer, or finish it and take the resulting asset as its own.
+     *
+     * The id is 128 bits of random_bytes, so this is not a guessing attack —
+     * but an id that reaches the client is an id that reaches proxy logs, a
+     * shared browser and a bug report, and "unguessable" is not the same
+     * property as "authorised".
+     *
+     * A session with NO meta is the one exception, and a narrow one: it was
+     * created by a release that predates the meta file, and refusing it would
+     * strand a transfer across an upgrade. It is adopted, and stamped, so this
+     * check applies to it from the next chunk onward.
+     */
+    private function assertOwner(string $uploadId, int $ownerId): void
+    {
+        $m = $this->readMeta($uploadId);
+        if ($m !== null && (int) $m['owner'] !== $ownerId) {
+            throw new \RuntimeException('Unknown upload');
+        }
+    }
+
     /** Open-session count and declared bytes currently in flight for one user. */
     private function inFlightFor(int $ownerId): array
     {
@@ -221,10 +252,11 @@ class StudioStorage
         return $out;
     }
 
-    public function storeChunk(string $uploadId, int $index, string $tmpFile): int
+    public function storeChunk(int $ownerId, string $uploadId, int $index, string $tmpFile): int
     {
         $dir = $this->tmpDir($uploadId);
         if (!is_dir($dir)) throw new \RuntimeException('Unknown upload');
+        $this->assertOwner($uploadId, $ownerId);
         if ($index < 0 || $index > 100000) throw new \RuntimeException('Chunk index out of range');
 
         $size = @filesize($tmpFile);
@@ -270,6 +302,7 @@ class StudioStorage
     {
         $dir = $this->tmpDir($uploadId);
         if (!is_dir($dir)) throw new \RuntimeException('Unknown upload');
+        $this->assertOwner($uploadId, $ownerId);
         if (!self::isValidSha($sha)) throw new \RuntimeException('Invalid checksum');
 
         $chunks = $this->receivedChunks($uploadId);

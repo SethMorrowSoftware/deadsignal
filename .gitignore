@@ -1,0 +1,39 @@
+# Dead Signal Studio — what never belongs in the repository.
+#
+# The installer writes real credentials and real user data INSIDE the folder,
+# because the folder is the whole tool and has to stay copyable. That makes an
+# accidental `git add .` the most expensive mistake available here, so the
+# secrets are listed first and by exact path.
+
+# ---- secrets and per-install configuration -------------------------------
+# Written by setup.php. Holds the database password and the setup secret.
+/server/env.php
+# Written by setup.php. Per-install settings: quotas, storage path, enabled flag.
+/server/config/
+# Written by setup.php beside index.html. Names this install's API base.
+/studio.config.json
+
+# ---- user data -----------------------------------------------------------
+# Uploaded assets, project blobs and the rate-limit buckets.
+/server/data/
+
+# ---- environments and editors --------------------------------------------
+node_modules/
+.env
+.env.*
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# ---- build and test scratch ----------------------------------------------
+/test-output/
+/coverage/
+*.log
+npm-debug.log*
+playwright-report/
+test-results/

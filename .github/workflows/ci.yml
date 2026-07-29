@@ -1,0 +1,251 @@
+name: gate
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first: the gate takes minutes,
+# and a superseded run proves nothing about the commit that replaced it.
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: ci-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          # The backend unit suite runs without a database, but it loads the
+          # models, and those type-hint PDO.
+          extensions: pdo, pdo_mysql, json, mbstring
+          coverage: none
+
+      # The studio has no package.json and no dependencies. Playwright is the
+      # one thing the four browser suites need, and it is installed here rather
+      # than vendored so the repository stays dependency-free.
+      - name: Install Playwright + Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.49.1
+          npx playwright install --with-deps chromium
+
+      # --no-skip because the browser suites skip rather than fail when
+      # Playwright is missing. That is right on a developer's machine and wrong
+      # here: a CI run that silently skipped four of ten suites would report
+      # green having tested almost nothing.
+      - name: Run the gate
+        run: bash scripts/ci-gate.sh --no-skip
+
+  standalone:
+    name: the folder is the whole tool
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # The studio's central promise is that you can copy the folder anywhere and
+    # it works. That is only true if nothing reads a path outside it, so this
+    # job copies the checkout into a deep subdirectory, deletes everything
+    # around it, and runs the headless suites from there. A '../../' path that
+    # happens to resolve in a normal checkout cannot resolve here.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo, pdo_mysql, json, mbstring
+          coverage: none
+
+      - name: Relocate the folder and cut it off from its surroundings
+        run: |
+          mkdir -p relocated/a/b/c
+          cp -R source relocated/a/b/c/studio
+          rm -rf source
+
+      - name: Run the headless gate from the relocated copy
+        working-directory: relocated/a/b/c/studio
+        run: bash scripts/ci-gate.sh --headless
+
+      - name: The shipped dotfile survived the copy
+        working-directory: relocated/a/b/c/studio
+        run: |
+          test -f api/.htaccess || { echo "::error::api/.htaccess is missing"; exit 1; }
+          grep -q 'RewriteRule \^ index.php' api/.htaccess \
+            || { echo "::error::api/.htaccess has no front-controller rewrite"; exit 1; }
+
+      - name: No tracked file holds a credential
+        working-directory: relocated/a/b/c/studio
+        run: |
+          # env.php is written by the installer and .gitignore'd. If one is ever
+          # committed it takes the database password with it.
+          if [ -f server/env.php ]; then
+            echo "::error::server/env.php is committed — it holds the database password"
+            exit 1
+          fi
+          if [ -d server/config ] || [ -d server/data ]; then
+            echo "::error::per-install state (server/config or server/data) is committed"
+            exit 1
+          fi
+
+  backend:
+    name: live backend (MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The two suites the gate cannot run: they need a live server and a real
+    # database. Everything the backend does — SQL against the real schema, auth
+    # over real HTTP, a multi-megabyte chunked upload, share links — is
+    # otherwise untested by CI, which is the half of the studio where a
+    # regression is a security incident rather than an ugly frame.
+    services:
+      mysql:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root
+          MARIADB_DATABASE: studio_ci
+          MARIADB_USER: studio
+          MARIADB_PASSWORD: ci-studio
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo, pdo_mysql, json, mbstring
+          coverage: none
+
+      - name: Install Playwright + Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.49.1
+          npx playwright install --with-deps chromium
+
+      # env.php and config/studio.php are what setup.php writes. Writing them
+      # here rather than driving the wizard keeps this job about the API; the
+      # installer's own logic is covered by test-studio-units.php.
+      - name: Configure the backend
+        run: |
+          cat > server/env.php <<'PHP'
+          <?php
+          return [
+              'app' => [
+                  'name' => 'Dead Signal Studio', 'debug' => false, 'timezone' => 'UTC',
+                  'session_lifetime' => 604800, 'trust_proxy' => false, 'trust_proxy_hops' => 1,
+              ],
+              'database' => [
+                  'driver' => 'mysql', 'host' => '127.0.0.1', 'port' => 3306,
+                  'database' => 'studio_ci', 'username' => 'studio', 'password' => 'ci-studio',
+                  'charset' => 'utf8mb4',
+              ],
+              'rate_limit' => ['enabled' => true, 'storage_path' => __DIR__ . '/data/rate_limits'],
+              'setup' => ['secret' => 'ci-only-not-a-real-secret'],
+          ];
+          PHP
+          mkdir -p server/config
+          cat > server/config/studio.php <<'PHP'
+          <?php
+          return [
+              'enabled'           => true,
+              'storage_path'      => __DIR__ . '/../data/studio',
+              'user_quota'        => 2147483648,
+              'max_asset_size'    => 536870912,
+              'max_document_size' => 4194304,
+              'chunk_size'        => 2097152,
+          ];
+          PHP
+
+      - name: Apply the schema
+        run: php server/migrate.php
+
+      - name: Create the two accounts the API suite needs
+        run: |
+          php server/account.php add tester1 'Passw0rd!tester1'
+          php server/account.php add tester2 'Passw0rd!tester2'
+
+      - name: Serve it
+        run: |
+          php -S 127.0.0.1:8090 router.php > /tmp/php-server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8090/api/system/health | grep -q '"database":"connected"'; then
+              echo "backend up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the backend never came up"; cat /tmp/php-server.log; exit 1
+
+      - name: API suite
+        run: php test-studio-api.php http://127.0.0.1:8090 tester1:'Passw0rd!tester1' tester2:'Passw0rd!tester2'
+
+      - name: CLOUD client suite
+        run: node test-studio-cloud.mjs http://127.0.0.1:8090
+
+      # The client's API discovery has to survive the studio being moved. Serve
+      # the same folder from a subdirectory and run the CLOUD suite again: an
+      # address derived from the origin root instead of the page would pass the
+      # job above and fail here.
+      - name: CLOUD client suite, from a subdirectory
+        run: |
+          mkdir -p /tmp/site/projects/inner
+          cp -R . /tmp/site/projects/inner/studio
+          (cd /tmp/site && php -S 127.0.0.1:8091 projects/inner/studio/router.php > /tmp/php-sub.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8091/projects/inner/studio/api/system/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          node test-studio-cloud.mjs http://127.0.0.1:8091 /projects/inner/studio/
+
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/php-server.log /tmp/php-sub.log 2>/dev/null || true
+
+  php-lint:
+    name: php -l
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Every PHP file, on the oldest and newest versions the studio claims to
+    # support. StudioPreflight blocks an install below 8.0, so 8.0 is the floor
+    # the syntax has to hold at.
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.0', '8.3']
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: Lint
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            php -l "$f" > /dev/null || { echo "::error file=$f::syntax error"; fail=1; }
+          done < <(find . -name '*.php' -not -path './.git/*')
+          exit $fail

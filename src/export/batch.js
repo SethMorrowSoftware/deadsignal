@@ -32,7 +32,7 @@
 import { log } from '../core/dom.js';
 import { flatPresets, presetRecipe } from '../presets/index.js';
 import { userPresets } from '../core/recipes.js';
-import { readVideoCfg, renderScaled } from '../video/render.js';
+import { _persistCanvas, readVideoCfg, renderScaled } from '../video/render.js';
 import { drawImageTo, readImageCfg } from '../image/render.js';
 import { timeline } from '../video/timeline.js';
 import { addToLibrary } from '../library/library.js';
@@ -152,6 +152,13 @@ async function gather(sourceId, seconds) {
       name, kind: 'videos', prefix: 'preset',
       render: async ({ container, cancelled }) => {
         const cfg = readVideoCfg(presetRecipe('video', 'view-video', rec));
+        /* Start this item's phosphor from black. `_persistCanvas()` is a
+           one-frame accumulator shared by every render path, so without this
+           frame 0 of each batch item opened on a ghost of the LAST frame of the
+           item before it — and of whatever the preview was showing before the
+           batch started. A contact sheet whose items bleed into each other is
+           not a contact sheet. */
+        _persistCanvas().width = cfg.W; _persistCanvas().height = cfg.H;
         const dur = seconds > 0 ? Math.min(seconds, cfg.duration) : cfg.duration;
         const frames = Math.max(1, Math.round(dur * cfg.fps));
         const r = await encodeClip({

@@ -132,7 +132,7 @@ const P = {
   'v-noise':    ['Static', 1, 'Random speckle over the picture — analogue noise. Now animates properly frame to frame.', '%'],
   'v-vig':      ['Vignette', 2, 'Darkens the corners, as a curved tube and a cheap lens both do.', '%'],
   'v-flick':    ['Flicker', 2, 'Random brightness pulses, like an unstable supply or a failing tube.', '%'],
-  'v-glitch':   ['Glitch', 2, 'Periodic tearing and coloured ghosting on the text — digital failure rather than analogue wear.', '%'],
+  'v-glitch':   ['Glitch', 2, 'Periodic coloured ghosting on the TEXT — digital failure rather than analogue wear. It is a type effect, not a picture effect: a scene with no words on it is untouched by this. Chroma and Tracking are the picture-wide equivalents.', '%'],
   'v-chroma':   ['Chroma split', 2, 'Separates red and blue slightly, like a misconverged tube or bad cabling.', '%'],
   'v-bloom':    ['Bloom', 2, 'Bright areas smear light into their surroundings — phosphor glow.', '%'],
   'v-persist':  ['Persistence', 2, 'Each frame leaves a fading afterimage, like a slow phosphor. Turns motion into trails.', '%'],

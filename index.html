@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DEAD SIGNAL STUDIO</title>
+<meta name="description" content="An offline retro-media asset forge — CRT/terminal video, synth audio and Win95/CRT screen stills, rendered in the browser and downloaded to your machine.">
+<meta name="color-scheme" content="dark">
+<!-- Inline, as a data URI: the studio is a folder people copy, and a favicon
+     that lives in a second file is a favicon that gets left behind. Without one
+     every page load 404s on /favicon.ico, which on a subdirectory install is a
+     404 against somebody else's site. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%2305080a'/%3E%3Cg fill='%2339ff9e'%3E%3Crect x='6' y='9' width='20' height='2'/%3E%3Crect x='6' y='15' width='13' height='2'/%3E%3Crect x='6' y='21' width='7' height='2'/%3E%3Crect x='16' y='21' width='3' height='2'/%3E%3C/g%3E%3Cg fill='%2339ff9e' opacity='.28'%3E%3Crect x='0' y='4' width='32' height='1'/%3E%3Crect x='0' y='12' width='32' height='1'/%3E%3Crect x='0' y='20' width='32' height='1'/%3E%3Crect x='0' y='28' width='32' height='1'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles/tokens.css">
 <link rel="stylesheet" href="styles/layout.css">
 <link rel="stylesheet" href="styles/controls.css">
@@ -166,7 +173,10 @@ signal integrity: 100%</textarea>
             <div class="row"><label for="v-lspace">Letterspace</label><input type="range" id="v-lspace" min="-10" max="40" value="0" class="grow" title="letter-spacing, as a percentage of the type size"></div>
           </div>
           <div class="split2">
-            <div class="row"><label for="v-corrupt">Corrupt %</label><input type="range" id="v-corrupt" min="0" max="100" value="0" class="grow" title="glyph corruption on glitch"></div>
+            <div class="row"><label for="v-glitch">Glitch</label><input type="range" id="v-glitch" min="0" max="100" value="12" class="grow" title="periodic tearing and coloured ghosting on the TEXT — it does not touch the rest of the picture"></div>
+            <div class="row"><label for="v-corrupt">Corrupt %</label><input type="range" id="v-corrupt" min="0" max="100" value="0" class="grow" title="glyph corruption, on the same glitch beat"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-fullwidth">ａｅｓｔｈ</label><input type="checkbox" id="v-fullwidth" title="fullwidth vaporwave text"></div>
           </div>
         </fieldset>
@@ -193,23 +203,22 @@ signal integrity: 100%</textarea>
             <div class="row"><label for="v-flick">Flicker</label><input type="range" id="v-flick" min="0" max="100" value="10" class="grow"></div>
           </div>
           <div class="split2">
-            <div class="row"><label for="v-glitch">Glitch</label><input type="range" id="v-glitch" min="0" max="100" value="12" class="grow"></div>
             <div class="row"><label for="v-chroma">Chroma</label><input type="range" id="v-chroma" min="0" max="100" value="14" class="grow" title="chromatic aberration"></div>
-          </div>
-          <div class="split2">
             <div class="row"><label for="v-bloom">Bloom</label><input type="range" id="v-bloom" min="0" max="100" value="18" class="grow"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-persist">Persist</label><input type="range" id="v-persist" min="0" max="100" value="0" class="grow" title="phosphor persistence / ghosting"></div>
-          </div>
-          <div class="split2">
             <div class="row"><label for="v-mask">Mask</label><input type="range" id="v-mask" min="0" max="100" value="0" class="grow" title="shadow-mask / aperture grille"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-hum">Hum bar</label><input type="range" id="v-hum" min="0" max="100" value="0" class="grow" title="rolling brightness bar"></div>
-          </div>
-          <div class="split2">
             <div class="row"><label for="v-track">Tracking</label><input type="range" id="v-track" min="0" max="100" value="0" class="grow" title="VHS tracking tear"></div>
-            <div class="row"><label for="v-shake">Shake</label><input type="range" id="v-shake" min="0" max="100" value="0" class="grow"></div>
           </div>
           <div class="split2">
+            <div class="row"><label for="v-shake">Shake</label><input type="range" id="v-shake" min="0" max="100" value="0" class="grow"></div>
             <div class="row"><label for="v-roll">Roll</label><input type="range" id="v-roll" min="0" max="100" value="0" class="grow" title="vertical hold / rolling picture"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-dither">Dither</label><input type="checkbox" id="v-dither" title="ordered dither to palette"></div>
           </div>
         </fieldset>
@@ -224,12 +233,12 @@ signal integrity: 100%</textarea>
             <div class="row"><label for="v-subframes">Sub frames</label><input type="number" id="v-subframes" value="2" min="1" max="10"></div>
           </div>
         </fieldset>
-        <fieldset data-section="Motion" id="v-layers-fieldset"><legend>LAYERS <span class="tag" id="v-layers-count"></span></legend>
+        <fieldset data-section="Motion" id="v-layers-fieldset" data-doc-reset="layers.video"><legend>LAYERS <span class="tag" id="v-layers-count"></span></legend>
           <p class="hint">Stack more scenes over the one above. Layers are listed top-down the way they sit on screen. Each one can carry its <b>own text, colour and size</b> — open <b>own text / look</b> on a layer to give it a caption the clip underneath does not have — and a <b>variant</b> number re-rolls that layer's randomness, so a second Digital Rain is a different rain rather than the first one twice. Leave a field empty and the layer follows the clip below it.</p>
           <div class="btns"><button class="btn small" id="v-layers-add" title="Add a scene on top of the current one">＋ LAYER</button></div>
           <div id="v-layers-list" data-generated></div>
         </fieldset>
-        <fieldset data-section="Motion" id="v-filters-fieldset"><legend>FILTERS <span class="tag" id="v-filters-count"></span></legend>
+        <fieldset data-section="Motion" id="v-filters-fieldset" data-doc-reset="filters.video"><legend>FILTERS <span class="tag" id="v-filters-count"></span></legend>
           <p class="hint">A chain applied <b>after</b> the CRT look above, top to bottom — so the order is yours: grade it cold and <i>then</i> crush the bit depth is a different picture from the other way round. ◉ bypasses a step without losing its settings.</p>
           <div class="row">
             <select id="v-filters-pick" class="grow" aria-label="filter to add"></select>
@@ -238,7 +247,7 @@ signal integrity: 100%</textarea>
           </div>
           <div id="v-filters-list" data-generated></div>
         </fieldset>
-        <fieldset data-section="Motion" id="v-auto-fieldset"><legend>KEYFRAMES</legend>
+        <fieldset data-section="Motion" id="v-auto-fieldset" data-doc-reset="automation.video"><legend>KEYFRAMES</legend>
           <p class="hint">Make a setting change over the clip. Scrub to a time, set the control, then <b>◆ KEY</b>. Two keys make a ramp; one key holds a value.</p>
           <div class="row"><label for="v-auto-param">Parameter</label><select id="v-auto-param" class="grow"></select></div>
           <div class="btns">
@@ -260,7 +269,7 @@ signal integrity: 100%</textarea>
         <div class="screen" id="a-wavewrap" style="width:100%;position:relative"><canvas id="acanvas" class="stage" width="600" height="150" style="width:100%;touch-action:none;cursor:text"></canvas><div id="a-selection" class="wave-sel" style="display:none"></div></div>
         <p class="hint" id="a-selinfo">Drag on the wave to select a range.</p>
         <div class="row" style="width:100%"><label>Peak</label><div class="meter grow"><div id="a-peak" style="width:0%"></div></div><span id="a-peakv" class="tag">—</span></div>
-        <fieldset><legend>EDITS <span class="tag" id="a-regions-count"></span></legend>
+        <fieldset data-doc-reset="audio.regions"><legend>EDITS <span class="tag" id="a-regions-count"></span></legend>
           <p class="hint">Drag a range on the wave, then apply an edit to it. Edits are part of the project — they undo, they save, and every render replays them, so the same project always produces the same wave.</p>
           <div class="row">
             <select id="a-region-op" class="grow" aria-label="edit to apply"></select>
@@ -384,7 +393,7 @@ signal integrity: 100%</textarea>
              checkbox, so the layer summary, TIDY, collapse/reset and the
              document binding pick them up with no special handling. -->
         <div id="a-extra-layers" data-generated></div>
-        <fieldset data-section="Mix" id="a-fx-fieldset"><legend>FX CHAIN <span class="tag" id="a-fx-count"></span></legend>
+        <fieldset data-section="Mix" id="a-fx-fieldset" data-doc-reset="filters.audio"><legend>FX CHAIN <span class="tag" id="a-fx-count"></span></legend>
           <p class="hint">A chain applied <b>after</b> the master bus below, top to bottom — so the order is yours: gate it and <i>then</i> ping-pong the result is a different sound from the other way round. ◉ bypasses a step without losing its settings.</p>
           <div class="row">
             <select id="a-fx-pick" class="grow" aria-label="effect to add"></select>
@@ -493,7 +502,7 @@ C:\&gt; _</textarea>
           <div class="row"><label for="i-lspace">Letterspace</label><input type="range" id="i-lspace" min="-10" max="40" value="0" class="grow" title="letter-spacing, as a percentage of the type size"></div>
           <div class="row"><label for="i-extra">Extra</label><input type="text" id="i-extra" class="grow" placeholder="template-specific (code / badge / etc.)"></div>
         </fieldset>
-        <fieldset data-section="Marks"><legend>MARKS <span class="tag" id="i-anno-count"></span></legend>
+        <fieldset data-section="Marks" data-doc-reset="image.annotations"><legend>MARKS <span class="tag" id="i-anno-count"></span></legend>
           <div class="split3">
             <div class="row"><label for="i-anno-kind">Mark</label><select id="i-anno-kind" class="grow"></select></div>
             <div class="row"><label for="i-anno-color">Colour</label><input type="color" id="i-anno-color" value="#39ff9e"></div>

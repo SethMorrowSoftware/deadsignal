@@ -238,8 +238,9 @@ export function registerExtraScenes2() {
     ctx.fillStyle = cfg.bg; ctx.fillRect(0, 0, W, H);
     const floors = lines(cfg, '4\n3\n2\n1\nB\nSB').map((s) => s.trim()).filter(Boolean);
     const per = 1.6;
+    const phase = t % per;
     const idx = Math.min(floors.length - 1, Math.floor(t / per));
-    const moving = (t % per) < per * 0.72 && idx < floors.length - 1;
+    const moving = phase < per * 0.72 && idx < floors.length - 1;
     const s = Math.min(W, H);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     setFont(ctx, s * 0.38);
@@ -248,9 +249,22 @@ export function registerExtraScenes2() {
     // The arrow blinks while moving and goes out on arrival, then the chime.
     if (moving && Math.floor(t * 4) % 2 === 0) glowText(ctx, '▼', W / 2, H * 0.2, cfg.fg, 10);
     if (!moving) {
-      ctx.globalAlpha = Math.max(0, 1 - ((t % per) - per * 0.72) * 4);
+      /* The chime's alpha was `1 - (phase - per*0.72) * 4`, which is above 1
+         for three quarters of every cycle. An out-of-range globalAlpha is
+         simply ignored by the canvas, so the ding was drawn at full strength
+         at every t — and once the car reached its last floor (which is every
+         frame, if the author typed a single line of text) NOTHING in the scene
+         changed again. Clamped, and the doors now work the arrival cycle, so a
+         car standing at its floor is still a moving picture. */
+      ctx.globalAlpha = clamp(1 - (phase - per * 0.72) / (per * 0.28), 0, 1);
       glowText(ctx, '● ' + macros('DING'), W / 2, H * 0.82, cfg.fg, 10);
       ctx.globalAlpha = 1;
+      const open = 0.5 - 0.5 * Math.cos((t / per) * Math.PI * 2);
+      const leaf = W * 0.16, gap = leaf * open;
+      ctx.save(); ctx.globalAlpha = 0.5; ctx.fillStyle = cfg.fg;
+      ctx.fillRect(W / 2 - leaf * 1.9 - gap, H * 0.34, leaf * 0.28, H * 0.32);
+      ctx.fillRect(W / 2 + leaf * 1.62 + gap, H * 0.34, leaf * 0.28, H * 0.32);
+      ctx.restore();
     }
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   });
@@ -420,6 +434,21 @@ export function registerExtraScenes2() {
       ctx.fillRect(cx - wW / 2 + (wW / steps) * i, cy + R * 0.42, wW / steps + 1, wH);
     }
     ctx.globalAlpha = 1;
+    /* A sweeping hand around the circle. Without it the card was a still
+       picture for every second except the last — the fade below was the whole
+       of its animation, so a sign-off clip shorter than the fade, or scrubbed
+       anywhere before it, was a freeze-frame. A rotating hand is what a real
+       sign-off card has, and it is the part that says the transmitter is still
+       on. One turn every twelve seconds. */
+    const hand = (t / 12) * Math.PI * 2 - Math.PI / 2;
+    ctx.save();
+    ctx.strokeStyle = cfg.fg; ctx.globalAlpha = 0.9; ctx.lineWidth = Math.max(1, R * 0.035);
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(hand) * R * 0.92, cy + Math.sin(hand) * R * 0.92);
+    ctx.stroke();
+    ctx.fillStyle = cfg.fg; ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1.5, R * 0.05), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
     setFont(ctx, Math.max(12, H * 0.07));
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     glowText(ctx, line1(cfg, 'END OF TRANSMISSION'), cx, H * 0.86, cfg.fg, 8);

@@ -229,7 +229,7 @@ filter('blur', 'Blur', 'Sharpness', [
    at preview sizes and visually the same thing. */
 filter('sharpen', 'Sharpen', 'Sharpness', [
   { key: 'amount', label: 'Amount', min: 0, max: 200, step: 1, def: 80 },
-  { key: 'radius', label: 'Radius px', min: 0.5, max: 8, step: 0.5, def: 1.5 , px: true },
+  { key: 'radius', label: 'Radius px', min: 0.5, max: 9, step: 0.5, def: 1.5 , px: true },
 ], (ctx, W, H, p) => {
   if (p.amount <= 0) return;
   const src = snapshot(ctx, W, H);
@@ -335,7 +335,7 @@ filter('interlace', 'Interlace', 'Analogue', [
 /* Multipath echo — the same picture arriving late and weak, offset sideways.
    Aerial reception, not a blur. */
 filter('ghost', 'Ghosting', 'Analogue', [
-  { key: 'offset', label: 'Offset px', min: -60, max: 60, step: 1, def: 14 , px: true },
+  { key: 'offset', label: 'Offset px', min: -60, max: 85, step: 1, def: 14 , px: true },
   { key: 'strength', label: 'Strength', min: 0, max: 100, step: 1, def: 35 },
   { key: 'count', label: 'Echoes', min: 1, max: 5, step: 1, def: 2 },
 ], (ctx, W, H, p) => {
@@ -355,8 +355,8 @@ filter('ghost', 'Ghosting', 'Analogue', [
 /* The band of noise at the bottom of a VHS frame where the head leaves the
    tape. Instantly reads as "this is a tape". */
 filter('headswitch', 'VHS Head Switch', 'Analogue', [
-  { key: 'height', label: 'Band height px', min: 2, max: 60, step: 1, def: 14 , px: true },
-  { key: 'jitter', label: 'Jitter px', min: 0, max: 40, step: 1, def: 12 , px: true },
+  { key: 'height', label: 'Band height px', min: 2, max: 85, step: 1, def: 14 , px: true },
+  { key: 'jitter', label: 'Jitter px', min: 0, max: 75, step: 1, def: 12 , px: true },
   { key: 'noise', label: 'Noise', min: 0, max: 100, step: 1, def: 60 },
 ], (ctx, W, H, p) => {
   seedStream('headswitch');
@@ -394,8 +394,8 @@ filter('headswitch', 'VHS Head Switch', 'Analogue', [
    always moving. */
 filter('scantear', 'Scan Tear', 'Analogue', [
   { key: 'slices', label: 'Slices', min: 1, max: 24, step: 1, def: 6 },
-  { key: 'shift', label: 'Max shift px', min: 1, max: 120, step: 1, def: 30 , px: true },
-  { key: 'height', label: 'Max slice height px', min: 2, max: 120, step: 1, def: 24 , px: true },
+  { key: 'shift', label: 'Max shift px', min: 1, max: 180, step: 1, def: 30 , px: true },
+  { key: 'height', label: 'Max slice height px', min: 2, max: 150, step: 1, def: 24 , px: true },
   { key: 'rate', label: 'Re-tear per second', min: 0, max: 30, step: 1, def: 6 },
 ], (ctx, W, H, p, t) => {
   // Quantising t to the tear rate holds each tear for a beat instead of
@@ -417,9 +417,9 @@ filter('scantear', 'Scan Tear', 'Analogue', [
 /* Block displacement — the compression artifact you get when a keyframe is
    missing and motion vectors are applied to the wrong picture. */
 filter('datamosh', 'Datamosh', 'Analogue', [
-  { key: 'block', label: 'Block px', min: 4, max: 64, step: 2, def: 16 , px: true },
+  { key: 'block', label: 'Block px', min: 4, max: 100, step: 2, def: 16 , px: true },
   { key: 'amount', label: 'Blocks moved %', min: 0, max: 100, step: 1, def: 18 },
-  { key: 'shift', label: 'Max shift px', min: 1, max: 80, step: 1, def: 20 , px: true },
+  { key: 'shift', label: 'Max shift px', min: 1, max: 120, step: 1, def: 20 , px: true },
   { key: 'rate', label: 'Re-roll per second', min: 0, max: 30, step: 1, def: 4 },
 ], (ctx, W, H, p, t) => {
   if (p.amount <= 0) return;
@@ -522,7 +522,7 @@ filter('filmgrain', 'Film Grain', 'Analogue', [
 /* ------------------------------------------------------------- pattern -- */
 
 filter('halftone', 'Halftone', 'Pattern', [
-  { key: 'cell', label: 'Cell px', min: 2, max: 24, step: 1, def: 5 , px: true },
+  { key: 'cell', label: 'Cell px', min: 2, max: 30, step: 1, def: 5 , px: true },
   { key: 'angle', label: 'Angle°', min: 0, max: 90, step: 1, def: 45 },
   { key: 'ink', label: 'Ink', kind: 'color', def: '#000000' },
   { key: 'paper', label: 'Paper', kind: 'color', def: '#c8d0c4' },
@@ -537,32 +537,53 @@ filter('halftone', 'Halftone', 'Pattern', [
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = `rgb(${ink[0]},${ink[1]},${ink[2]})`;
   const half = cell / 2;
-  for (let y = 0; y < H; y += cell) for (let x = 0; x < W; x += cell) {
+
+  /* Rotating the screen is what makes a halftone read as printed rather than
+     as a pixel grid — but it has to be the SCREEN that turns, not the picture.
+     Walking the pixel grid and drawing each dot at a rotated position turns the
+     whole image: the lattice becomes a diamond, its corners leave the canvas,
+     and the canvas corners get no dots at all. On a flat grey frame at the
+     shipped 45° default that was 16% of the frame as blank paper (20% at 90°),
+     with the content dragged toward the centre.
+
+     So iterate the LATTICE in its own rotated axes (u along the screen, v
+     across it) over a range that covers the canvas whatever the angle, map each
+     lattice point back into the picture, and sample the picture there. Every
+     dot then lands where the tone it measured actually is, and the screen
+     covers the frame edge to edge at every angle. */
+  const cx0 = W / 2, cy0 = H / 2;
+  const uMax = (Math.abs(W * ca) + Math.abs(H * sa)) / 2 + cell;
+  const vMax = (Math.abs(W * sa) + Math.abs(H * ca)) / 2 + cell;
+
+  for (let v = -vMax; v <= vMax; v += cell) for (let u = -uMax; u <= uMax; u += cell) {
+    const px = cx0 + u * ca - v * sa;
+    const py = cy0 + u * sa + v * ca;
+    if (px < -half || py < -half || px > W + half || py > H + half) continue;
+
     // Average the cell rather than point-sampling: a single pixel misses thin
-    // strokes entirely and the dots flicker as the picture moves.
+    // strokes entirely and the dots flicker as the picture moves. The box is
+    // axis-aligned around the dot — a rotated box would be more correct and
+    // costs a per-pixel transform for a difference no one can see at cell size.
+    const x0 = Math.max(0, Math.round(px - half)), x1 = Math.min(W, Math.round(px + half));
+    const y0 = Math.max(0, Math.round(py - half)), y1 = Math.min(H, Math.round(py + half));
     let sum = 0, n = 0;
-    for (let yy = y; yy < Math.min(H, y + cell); yy += 1) for (let xx = x; xx < Math.min(W, x + cell); xx += 1) {
+    for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) {
       const i = (yy * W + xx) * 4;
       sum += d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722;
       n++;
     }
-    const l = n ? sum / n / 255 : 0;
-    const r = (1 - l) * half * 1.34;
+    if (!n) continue;                      // dot centre is off-canvas entirely
+    const r = (1 - sum / n / 255) * half * 1.34;
     if (r < 0.35) continue;
-    const cx = x + half, cy = y + half;
-    // Rotating the sample grid is what makes a halftone read as printed
-    // rather than as a pixel grid.
-    const rx = cx + (cx - W / 2) * (ca - 1) - (cy - H / 2) * sa;
-    const ry = cy + (cx - W / 2) * sa + (cy - H / 2) * (ca - 1);
     ctx.beginPath();
-    ctx.arc(rx, ry, r, 0, Math.PI * 2);
+    ctx.arc(px, py, r, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 });
 
 filter('crosshatch', 'Crosshatch', 'Pattern', [
-  { key: 'spacing', label: 'Spacing px', min: 2, max: 24, step: 1, def: 6 , px: true },
+  { key: 'spacing', label: 'Spacing px', min: 2, max: 40, step: 1, def: 6 , px: true },
   { key: 'amount', label: 'Amount', min: 0, max: 100, step: 1, def: 70 },
   { key: 'colour', label: 'Line colour', kind: 'color', def: '#000000' },
 ], (ctx, W, H, p) => {
@@ -576,18 +597,29 @@ filter('crosshatch', 'Crosshatch', 'Pattern', [
   ctx.lineWidth = 1;
   // Four passes at increasing darkness thresholds: each adds a direction, so
   // the darker the region the more directions cross it.
+  //
+  // Both components of each direction are read. Only the y component used to
+  // be, which made the fourth pass ([0,1], vertical) draw [1,1] all over again:
+  // three directions where the table says four, no vertical hatch anywhere, and
+  // the darkest tone getting a second helping of the diagonal it already had.
   const dirs = [[1, 1], [1, -1], [1, 0], [0, 1]];
   for (let k = 0; k < dirs.length; k++) {
+    const ex = dirs[k][0], ey = dirs[k][1];
     const th = (k + 1) / (dirs.length + 1);
+    // A diagonal family is indexed by its intercept, so its scan has to start
+    // above the frame to reach the lines that enter from the left. An axis
+    // direction has no intercept to chase and starts at the top.
+    const yFrom = (ex === 0 || ey === 0) ? 0 : -H;
+    const yTo = (ex === 0 || ey === 0) ? H : H * 2;
     ctx.beginPath();
-    for (let y = -H; y < H * 2; y += s) for (let x = 0; x < W; x += s) {
-      const py = dirs[k][1] === 0 ? y : y + x * dirs[k][1];
-      if (py < 0 || py >= H || x >= W) continue;
+    for (let y = yFrom; y < yTo; y += s) for (let x = 0; x < W; x += s) {
+      const py = (ex === 0 || ey === 0) ? y : y + x * ey;
+      if (py < 0 || py >= H) continue;
       const i = ((py | 0) * W + x) * 4;
       const l = (d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722) / 255;
       if (l > 1 - th) continue;
       ctx.moveTo(x, py);
-      ctx.lineTo(x + s, py + s * dirs[k][1]);
+      ctx.lineTo(x + s * ex, py + s * ey);
     }
     ctx.stroke();
   }
@@ -598,7 +630,7 @@ filter('crosshatch', 'Crosshatch', 'Pattern', [
 filter('pixelsort', 'Pixel Sort', 'Pattern', [
   { key: 'threshold', label: 'Threshold', min: 0, max: 100, step: 1, def: 45 },
   { key: 'vertical', label: 'Vertical (0/1)', min: 0, max: 1, step: 1, def: 0 },
-  { key: 'maxrun', label: 'Max run px', min: 8, max: 400, step: 4, def: 120 , px: true },
+  { key: 'maxrun', label: 'Max run px', min: 8, max: 750, step: 4, def: 120 , px: true },
 ], (ctx, W, H, p) => {
   const img = ctx.getImageData(0, 0, W, H), d = img.data;
   const th = p.threshold * 2.55;

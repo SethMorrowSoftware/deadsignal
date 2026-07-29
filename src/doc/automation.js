@@ -34,6 +34,8 @@ export const EASE_NAMES = Object.keys(EASES);
 export const DEFAULT_EASE = 'linear';
 
 const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
+/** A name this module actually defines a curve for — inherited names are not. */
+const isEase = (e) => typeof e === 'string' && Object.prototype.hasOwnProperty.call(EASES, e);
 
 /** A key, cleaned. Returns null for anything unusable. */
 export function makeKey(t, v, e = DEFAULT_EASE) {
@@ -43,7 +45,12 @@ export function makeKey(t, v, e = DEFAULT_EASE) {
   if (t == null || t === '' || v == null || v === '') return null;
   const tt = Number(t), vv = Number(v);
   if (!isNum(tt) || !isNum(vv)) return null;
-  return { t: Math.max(0, tt), v: vv, e: EASES[e] ? e : DEFAULT_EASE };
+  /* hasOwnProperty, not a truthiness test on EASES[e]. Every member of
+     Object.prototype is truthy, so `e: "toString"` was accepted as a valid
+     easing name and written into the document — and evalTrack then called
+     Object.prototype.toString as the curve, which returns a string, which makes
+     the interpolation NaN. A NaN reaches the renderer as a parameter. */
+  return { t: Math.max(0, tt), v: vv, e: isEase(e) ? e : DEFAULT_EASE };
 }
 
 /**
@@ -110,7 +117,7 @@ export function evalTrack(track, t) {
   const span = b.t - a.t;
   if (span <= 0) return b.v;
   const u = (t - a.t) / span;
-  const f = EASES[a.e] || EASES[DEFAULT_EASE];
+  const f = (isEase(a.e) ? EASES[a.e] : null) || EASES[DEFAULT_EASE];
   return a.v + (b.v - a.v) * f(u);
 }
 

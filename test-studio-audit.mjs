@@ -1196,15 +1196,23 @@ section('layers');
 
 /* ================================================= campaign file merge ===== */
 /* The whole point is that installing the bundle over a campaign that already
-   has media does not delete any of it. Uses the REPO'S REAL files, because a
-   toy fixture would not catch a format assumption. */
-section('campaign merge (real EREBUS files)');
+   has media does not delete any of it. Uses full-size campaign files in the
+   campaign's own formats — a two-entry toy would not catch a format assumption.
+
+   These used to be read from the EREBUS repository through '../../assets/…'.
+   The studio is a folder you copy anywhere, so that path was wrong everywhere
+   except one checkout, and readFileSync THREW rather than failing a check —
+   taking every section below this one with it. The fixtures are pinned in
+   tests/fixtures/campaign/ instead: a merge test whose input can change under
+   it is a test that fails for reasons that have nothing to do with merging. */
+section('campaign merge (campaign-format files)');
 {
+  const FIX = join(HERE, 'tests', 'fixtures', 'campaign');
   const real = {
-    manifest: readFileSync(join(HERE, '../../assets/media-manifest.json'), 'utf8'),
-    videos: readFileSync(join(HERE, '../../assets/videos/index.json'), 'utf8'),
-    music: readFileSync(join(HERE, '../../assets/music/index.json'), 'utf8'),
-    autoexec: readFileSync(join(HERE, '../../autoexec.retro'), 'utf8'),
+    manifest: readFileSync(join(FIX, 'media-manifest.json'), 'utf8'),
+    videos: readFileSync(join(FIX, 'videos/index.json'), 'utf8'),
+    music: readFileSync(join(FIX, 'music/index.json'), 'utf8'),
+    autoexec: readFileSync(join(FIX, 'autoexec.retro'), 'utf8'),
   };
 
   const r = await page.evaluate(async (real) => {
@@ -1247,8 +1255,13 @@ section('campaign merge (real EREBUS files)');
   }, real);
 
   check('the campaign\'s files are recognised as a merge target', r.wasMerged);
-  check('release lines are read out of the real autoexec.retro', r.releasedFound >= 5,
+  check('release lines are read out of a real autoexec.retro', r.releasedFound >= 5,
         `${r.releasedFound} found`);
+  // The fixture deliberately comments two releases out, with both comment
+  // syntaxes. Counting a commented release would make the studio skip the very
+  // line the author still needs, and the clip would never reach the campaign.
+  check('a commented-out release is not counted as released', r.releasedFound === 10,
+        `${r.releasedFound} found, expected 10`);
   check('every shipped asset survives the merge', r.kept === r.shipped,
         `${r.kept}/${r.shipped} kept`);
   check('the merged manifest keeps the campaign\'s shape', r.manifestShape);
@@ -1792,12 +1805,12 @@ section('a layer is its own signal');
     const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
     set('v-scene', 'terminal'); set('v-text', 'BASE MESSAGE'); set('v-fg', '#39ff9e');
     set('v-wrap', ''); document.getElementById('v-wrap').checked = false;
-    window.__shot = (ls) => {
+    window.__shot = (ls, over) => {
       const S = window.DeadSignalStudio;
       S.store.apply({ op: 'set', path: 'layers.video', value: ls });
       const c = document.createElement('canvas'); c.width = 320; c.height = 240;
       const ctx = c.getContext('2d');
-      S.renderVideoFrame(ctx, 320, 240, S.readVideoCfg(), 1.0);
+      S.renderVideoFrame(ctx, 320, 240, { ...S.readVideoCfg(), ...(over || {}) }, 1.0);
       const d = ctx.getImageData(0, 0, 320, 240).data;
       let sum = 0, r = 0;
       for (let i = 0; i < d.length; i += 4) { sum += d[i] + d[i + 1] + d[i + 2]; r += d[i]; }
@@ -1847,18 +1860,39 @@ section('a layer is its own signal');
   /* A layer draws on black so an additive blend drops its background. That
      made multiply against black BLACK: choosing Multiply crushed the whole
      frame (mean 9 → 1), and Overlay and Hard Light nearly as badly. Three of
-     the six blends on offer were traps. */
+     the six blends on offer were traps.
+
+     Measured against a DELIBERATE base rather than whatever the tab is holding
+     by the time this section runs. That base was a near-black terminal frame
+     with a mean of 10 out of 255, and the assertion was `multiply >= base` — so
+     the whole check was being decided by one unit of rounding in the browser's
+     blend maths, and it duly disagreed between two Chromium builds on the same
+     commit. It also asserted the wrong thing: multiply is SUPPOSED to darken
+     where the layer draws. What it must not do is collapse the picture, which
+     is what the 89% loss above was. So: a bright, flat, quiet base, and a
+     threshold that a crush fails and ordinary darkening passes. */
   const b = await page.evaluate(() => {
-    const base = window.__shot([]);
+    const BASE = { scene: 'terminal', bg: '#6a6a6a', fg: '#e8e8e8', text: 'BLEND BASE',
+                   // Silence everything that would move the mean on its own.
+                   scan: 0, noise: 0, vig: 0, flick: 0, chroma: 0, bloom: 0, persist: 0,
+                   mask: 0, hum: 0, track: 0, shake: 0, roll: 0, dither: false, fade: 0,
+                   hud: '', tc: false, morse: '', blink: '', reveal: '', sub: '', filters: [] };
+    const base = window.__shot([], BASE);
     const out = { base: base.mean };
     for (const blend of ['overlay', 'hard-light', 'multiply', 'screen', 'lighter', 'difference']) {
-      out[blend] = window.__shot([{ scene: 'matrix', blend, opacity: 1, enabled: true }]).mean;
+      out[blend] = window.__shot([{ scene: 'matrix', blend, opacity: 1, enabled: true }], BASE).mean;
     }
     return out;
   });
-  check('multiply no longer crushes the frame to black', b.multiply >= b.base, `${b.base} → ${b.multiply}`);
-  check('…nor overlay', b.overlay >= b.base, `${b.base} → ${b.overlay}`);
-  check('…nor hard-light', b['hard-light'] >= b.base, `${b.base} → ${b['hard-light']}`);
+  check('the blend base is bright enough to measure a crush against', b.base > 80, String(b.base));
+  /* Two thirds: the bug this guards was a 90% collapse, and a keyed multiply
+     over a matrix layer legitimately takes a few percent off. Anything between
+     is a blend that is eating the picture. */
+  const KEEP = 0.66;
+  check('multiply no longer crushes the frame to black', b.multiply >= b.base * KEEP,
+        `${b.base} → ${b.multiply}`);
+  check('…nor overlay', b.overlay >= b.base * KEEP, `${b.base} → ${b.overlay}`);
+  check('…nor hard-light', b['hard-light'] >= b.base * KEEP, `${b.base} → ${b['hard-light']}`);
   check('…and the additive blends still brighten', b.screen > b.base && b.lighter > b.base,
         `screen ${b.screen}, lighter ${b.lighter}`);
 
@@ -2826,11 +2860,25 @@ section('a timeline that is a timeline');
     const rows = () => document.querySelectorAll('#nle-insp-body table.keyframes tbody tr').length;
     const before = { panel: panel(), rows: rows() };
 
+    /* Wait for the CONDITION, not for a number of milliseconds.
+       Both checks below used a flat 60ms and both went red on a loaded CI
+       runner while passing locally — with `entries: 1`, which says the document
+       write landed and only the repaint had not happened yet. A fixed sleep
+       turns "does the panel repaint" into "does the panel repaint faster than
+       this machine's worst moment", which is a different question and not the
+       one being asked. The assertion is unchanged in strength: if the signature
+       guard were missing the row would never appear and this would time out. */
+    const settle = async (pred, ms = 4000) => {
+      const t0 = Date.now();
+      while (!pred() && Date.now() - t0 < ms) await new Promise((r) => requestAnimationFrame(r));
+      return pred();
+    };
+
     const autoBefore = JSON.stringify(S.store.get('automation.video') || {});
     const depth0 = S.store.undoDepth;
     document.getElementById('insp-curve-value').value = '77';
     document.getElementById('insp-curve-key').click();
-    await new Promise((r) => setTimeout(r, 60));
+    const repainted = await settle(() => rows() > before.rows);
 
     const param = document.getElementById('insp-curve-param').value;
     const keyed = S.timeline[mine].rec?.__auto?.[param] || [];
@@ -2841,7 +2889,9 @@ section('a timeline that is a timeline');
     // "Update from VIDEO" must not be a silent delete of what was just drawn.
     const send = document.getElementById('insp-recapture');
     if (send) send.click();
-    await new Promise((r) => setTimeout(r, 60));
+    // Recapture rewrites the clip's recipe; settle on the rewrite having been
+    // applied rather than on a stopwatch, for the reason given above.
+    await settle(() => S.timeline[mine].rec?.__auto?.[param] !== undefined, 2000);
     const survived = (S.timeline[mine].rec?.__auto?.[param] || []).length;
 
     // A still has no automation and must not be offered any.
@@ -2855,7 +2905,8 @@ section('a timeline that is a timeline');
       return (S.timeline[mine].rec?.__auto?.[param] || []).length;
     })();
     return { before, keyed: keyed.length, keyedValue: keyed[0]?.v, neighbour: neighbour.length,
-             after, autoUntouched: autoBefore === autoAfter, survived, stillPanel, cleared, param };
+             after, autoUntouched: autoBefore === autoAfter, survived, stillPanel, cleared, param,
+             repainted };
   });
   check('a video clip gets a keyframe panel of its own', curves.before.panel);
   check('keying writes a curve onto THAT clip', curves.keyed === 1 && curves.keyedValue === 77,
@@ -2867,8 +2918,9 @@ section('a timeline that is a timeline');
   check('…as one undoable command', curves.after.entries === 1, String(curves.after.entries));
   /* The signature guard: rec.__auto changed but no FIELD did, so without
      curvesSignature in the signature the panel would sit frozen. */
-  check('the key list repaints immediately, rather than looking frozen',
-    curves.after.rows > curves.before.rows, JSON.stringify(curves.after));
+  check('the key list repaints on its own, rather than looking frozen',
+    curves.repainted && curves.after.rows > curves.before.rows,
+    JSON.stringify({ ...curves.after, repainted: curves.repainted }));
   check('"Update from VIDEO" keeps the curves the author drew here', curves.survived === 1,
     String(curves.survived));
   check('a still is offered no keyframes, having no automation to give',
@@ -7066,6 +7118,66 @@ section('feature seams');
     reset.afterAudio.banner === 'none', reset.afterAudio.banner);
   check('…and the whole reset is one undo, so a misclick is recoverable',
     reset.undone.solo === 1 && reset.undone.regions === 1, JSON.stringify(reset.undone));
+
+  /* The ↺ beside each legend is a reset too, and it was a much emptier promise
+     than the tab-wide one. It restored inputs from the boot snapshot — so on
+     the six panels whose contents are NOT inputs (FILTERS, FX CHAIN, MARKS,
+     LAYERS, KEYFRAMES, audio EDITS) it toasted "Section reset" over an
+     untouched chain. And on QUICK LOOK it did the opposite: the two macro dials
+     are write-only, so putting them back fired them, and twelve hand-set CRT
+     controls in a DIFFERENT fieldset were overwritten with macro-level-0
+     values by a reset of the section above them. */
+  const section = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const shell = await import('./src/ui/shell.js');
+    const $ = (id) => document.getElementById(id);
+    const FX = ['v-scan', 'v-noise', 'v-vig', 'v-flick', 'v-chroma', 'v-track',
+                'v-glitch', 'v-bloom', 'v-hum', 'v-shake', 'v-persist', 'v-roll'];
+    const setR = (id, v) => { const e = $(id); e.value = String(v);
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true })); };
+    const readFx = () => Object.fromEntries(FX.map((id) => [id, $(id).value]));
+    const byLegend = (t) => [...document.querySelectorAll('.view fieldset')]
+      .find((f) => (f.querySelector('legend')?.textContent || '').toUpperCase().includes(t));
+
+    document.querySelector('.tab[data-view=video]').click();
+    FX.forEach((id, i) => setR(id, 11 + i));
+    const handSet = readFx();
+    shell.resetFieldset(byLegend('QUICK LOOK'));
+    const clobbered = FX.filter((id) => handSet[id] !== readFx()[id]);
+
+    S.store.apply({ op: 'set', path: 'filters.video',
+      value: [{ id: 'blur', params: { radius: 4 }, enabled: true }] });
+    const chainBefore = (S.store.get('filters.video') || []).length;
+    shell.resetFieldset(byLegend('FILTERS'));
+    const chainAfter = (S.store.get('filters.video') || []).length;
+
+    document.querySelector('.tab[data-view=image]').click();
+    S.store.apply({ op: 'set', path: 'image.annotations',
+      value: [{ kind: 'text', x: 0.4, y: 0.4, text: 'HELLO' }] });
+    const marksBefore = (S.store.get('image.annotations') || []).length;
+    shell.resetFieldset(byLegend('MARKS'));
+    const marksAfter = (S.store.get('image.annotations') || []).length;
+
+    // Every panel that owns document state must say so, or its ↺ lies.
+    const owning = ['v-filters-fieldset', 'v-layers-fieldset', 'v-auto-fieldset', 'a-fx-fieldset']
+      .filter((id) => !$(id)?.dataset.docReset);
+    // Leave the tabs as this section found them for whatever runs next.
+    S.clearAnnotations(); S.clearFilters();
+    document.querySelector('.tab[data-view=video]').click();
+    document.getElementById('v-reset').click();
+    return { clobbered, chainBefore, chainAfter, marksBefore, marksAfter, owning };
+  });
+  check('↺ on FILTERS clears the chain that section owns',
+    section.chainBefore === 1 && section.chainAfter === 0,
+    `${section.chainBefore} → ${section.chainAfter}`);
+  check('↺ on MARKS clears the marks that section owns',
+    section.marksBefore === 1 && section.marksAfter === 0,
+    `${section.marksBefore} → ${section.marksAfter}`);
+  check('↺ on QUICK LOOK does not reach into the FX section below it',
+    section.clobbered.length === 0, section.clobbered.join(', ') || 'nothing else touched');
+  check('every panel that owns document state declares which',
+    section.owning.length === 0, section.owning.join(', ') || 'all declared');
 
   /* Loading a preset applies as an ordinary transaction, so the document
      binding's undo/redo/load refresh never sees it — an open gallery went on

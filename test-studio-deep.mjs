@@ -177,6 +177,41 @@ section('every scene, one at a time');
   const frozen = ids.filter((s) => !results[s].animates && !STATIC_OK.has(s));
   check('every scene that is not a placeholder changes over time', frozen.length === 0, frozen.join(', '));
 
+  /* …and it has to be the SCENE that moves, not the stack on top of it.
+     shot() renders the whole pipeline, and the default CRT settings carry
+     animated static and flicker — so a scene whose body never reads `t` scored
+     a pass on the check above purely from the noise laid over it. Two of them
+     were doing exactly that (SMPTE Color Bars and Surveillance Cam: `t` was a
+     declared parameter neither one ever used), and an author who put either on
+     a timeline got a freeze-frame with grain on it.
+     So ask again with every post effect and every overlay silenced. What is
+     left is the scene and nothing else. */
+  const quietFrozen = await page.evaluate((args) => {
+    const D = window.__deep;
+    const [ids, staticOk] = args;
+    const QUIET = {                       // everything the stack could animate
+      scan: 0, noise: 0, vig: 0, flick: 0, glitch: 0, chroma: 0, bloom: 0,
+      persist: 0, mask: 0, hum: 0, track: 0, shake: 0, roll: 0, dither: false,
+      corrupt: 0, fade: 0,
+      hud: '', tc: false, morse: '', blink: '', reveal: '', sub: '',
+      layers: [], filters: [], __auto: null,
+      text: 'DEEP AUDIT', seed: 4242, duration: 6,
+    };
+    const out = [];
+    for (const scene of ids) {
+      if (staticOk.includes(scene)) continue;
+      try {
+        // Three samples, not two: a one-second period would alias against a
+        // single pair and read as frozen when it is merely slow.
+        const h = [0, 1.7, 3.9].map((t) => D.shot({ ...QUIET, scene }, t).h);
+        if (h[0] === h[1] && h[1] === h[2]) out.push(scene);
+      } catch { /* the throw check above already owns this */ }
+    }
+    return out;
+  }, [ids, [...STATIC_OK]]);
+  check('…and it is the scene moving, not the CRT stack over it',
+        quietFrozen.length === 0, quietFrozen.join(', ') || 'all 46 animate on their own');
+
   const unstable = ids.filter((s) => !results[s].stable);
   check('every scene renders the same frame twice from the same seed', unstable.length === 0,
     unstable.join(', '));
@@ -242,9 +277,17 @@ section('every screen template, one at a time');
         const a = D.screen(base);
         const again = D.screen(base);
         const worded = D.screen({ ...base, title: 'SOMETHING ELSE ENTIRELY', body: 'different\ncopy here' });
+        /* Separately, too. Changing both at once means a template that reads
+           only one of them still scores a pass — and nine of them were doing
+           exactly that: an author typing in Title watched nothing happen, with
+           no indication which box that template actually reads. */
+        const titled = D.screen({ ...base, title: 'SOMETHING ELSE ENTIRELY' });
+        const bodied = D.screen({ ...base, body: 'different\ncopy here\nand a third' });
         const swapped = D.screen({ ...base, bg: '#204060', fg: '#ffcc00' });
         r.blank = a.lit === 0;
         r.stable = a.h === again.h;
+        r.honoursTitle = a.h !== titled.h;
+        r.honoursBody = a.h !== bodied.h;
         r.honoursWords = a.h !== worded.h;
         r.honoursColour = a.h !== swapped.h;
         r.colours = a.colours;
@@ -268,6 +311,10 @@ section('every screen template, one at a time');
      image you loaded, and its caption is drawn over that image, so with nothing
      imported there is nothing to caption. */
   const WORDLESS_OK = new Set(['import']);
+  const ignoresTitle = ids.filter((t) => !results[t].honoursTitle && !WORDLESS_OK.has(t));
+  const ignoresBody = ids.filter((t) => !results[t].honoursBody && !WORDLESS_OK.has(t));
+  check('every template reads the Title box', ignoresTitle.length === 0, ignoresTitle.join(', '));
+  check('every template reads the Body box', ignoresBody.length === 0, ignoresBody.join(', '));
   const ignoresWords = ids.filter((t) => !results[t].honoursWords && !WORDLESS_OK.has(t));
   check('every template puts the author’s words on screen', ignoresWords.length === 0,
     ignoresWords.join(', '));
@@ -318,6 +365,48 @@ section('every screen template, one at a time');
   check('every template survives empty, enormous, newline-only and emoji copy',
     edges.filter((b) => /@text/.test(b)).length === 0,
     edges.filter((b) => /@text/.test(b)).slice(0, 3).join(' | '));
+
+  /* A redaction that can be read is not a redaction.
+     Redacted Document wrapped its body as plain text and then looked for
+     [[…]] on each finished line. The line breaker splits on whitespace — and on
+     character, for a token wider than the measure — so a marker could land as
+     `[[Dr. Ellis` / `Webb of LAB-3]]`, neither half matching, both halves drawn
+     as ordinary ink. The author's secret was printed in the clear, brackets
+     included, on the one template in the set whose whole purpose is that it is
+     not. Asserted on the run list rather than on pixels: what is redacted is a
+     property of the span, and this is the only place that says so. */
+  const redaction = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    const c = document.createElement('canvas'); c.width = 400; c.height = 300;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.font = '13px monospace';
+    const secrets = ['Dr. Ellis Webb of LAB-3', 'the second key', 'ARCHIVE-0347-SUBJECT-NAME-VERY-LONG-TOKEN'];
+    const body = `Subject [[${secrets[0]}]] entered at 03:47 with [[${secrets[1]}]].\n`
+               + `Cross-reference [[${secrets[2]}]] before release.`;
+    const out = {};
+    // Every measure from "comfortably wide" down to "narrower than one secret".
+    for (const w of [400, 240, 180, 120, 60, 20]) {
+      const runs = T.redactedLines(ctx, { body, wrap: true, font: 13 }, '', w);
+      const visible = runs.map((l) => l.filter((r) => !r.redact).map((r) => r.text).join('')).join('\n');
+      const hidden = runs.flat().filter((r) => r.redact).map((r) => r.text);
+      out[w] = {
+        leaks: secrets.filter((s) => s.split(/\s+/).some((word) => word.length > 3 && visible.includes(word))),
+        brackets: /\[\[|\]\]/.test(visible),
+        kept: secrets.every((s) => hidden.includes(s)),
+      };
+    }
+    return out;
+  });
+  const widths = Object.keys(redaction);
+  check('a redaction is never split across a wrapped line, at any measure',
+    widths.every((w) => redaction[w].leaks.length === 0),
+    widths.filter((w) => redaction[w].leaks.length).map((w) => `${w}px: ${redaction[w].leaks}`).join(' | ') || 'no leak at any width');
+  check('…and no marker syntax reaches the page either',
+    widths.every((w) => !redaction[w].brackets),
+    widths.filter((w) => redaction[w].brackets).join(', ') || 'clean');
+  check('…while every redacted span is still carried, whole, to the bar that covers it',
+    widths.every((w) => redaction[w].kept),
+    widths.filter((w) => !redaction[w].kept).join(', ') || 'all intact');
 }
 
 /* ============================================================= filters === */
@@ -2655,6 +2744,47 @@ section('the document is wired to itself correctly');
     wiring.danglingAria.length === 0, wiring.danglingAria.slice(0, 8).join(', '));
   check('no <select> is empty by the time boot has finished',
     wiring.emptySelects.length === 0, wiring.emptySelects.slice(0, 8).join(', '));
+
+  /* …and no select is blanked by the document a moment later.
+     "Empty at boot" was checked; "blanked on the first edit" was not, and that
+     is what was happening. index.html declares seven selects with no <option>
+     children — the lists come from the registries at init time, which runs long
+     after startSession seeds the document from the markup — so the value
+     recorded as their boot default was "". renderDocToDom writes the document
+     back to the DOM on EVERY notification, including the author's own edits, so
+     one move of any slider drove all seven to selectedIndex -1: an empty box,
+     ＋ FILTER and ＋ FX answering "Pick one first", and ＋ KEY silently writing
+     onto whatever the first automatable parameter happens to be.
+     Asserted through a real edit rather than by reading the markup, because the
+     markup was never the broken part — the ordering was. */
+  const blanking = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const sels = [...document.querySelectorAll('.view select')].filter((s) => s.id && s.options.length);
+    const before = sels.map((s) => [s.id, s.selectedIndex]);
+    const scan = document.getElementById('v-scan');
+    const was = scan.value;
+    scan.value = String(Math.max(1, (Number(was) + 17) % 100));
+    scan.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 250));
+    const blanked = sels.filter((s) => s.selectedIndex === -1).map((s) => s.id);
+
+    // The consequence, not just the symptom: the two chain pickers must still add.
+    const vBefore = (S.store.get('filters.video') || []).length;
+    document.getElementById('v-filters-add')?.click();
+    const aBefore = (S.store.get('filters.audio') || []).length;
+    document.getElementById('a-fx-add')?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const added = { video: (S.store.get('filters.video') || []).length - vBefore,
+                    audio: (S.store.get('filters.audio') || []).length - aBefore };
+    S.clearFilters(); S.clearChain?.('a-fx');
+    scan.value = was; scan.dispatchEvent(new Event('input', { bubbles: true }));
+    return { count: before.length, blanked, added };
+  });
+  check('no <select> is blanked by the document on the first ordinary edit',
+    blanking.blanked.length === 0,
+    blanking.blanked.join(', ') || `${blanking.count} selects held their selection`);
+  check('…so ＋ FILTER and ＋ FX still add after an edit, rather than saying "Pick one first"',
+    blanking.added.video === 1 && blanking.added.audio === 1, JSON.stringify(blanking.added));
   check('every number and range input declares its own bounds, so the box agrees with the clamp',
     wiring.unbounded.length === 0, wiring.unbounded.slice(0, 8).join(', '));
 }

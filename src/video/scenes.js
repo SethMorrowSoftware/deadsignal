@@ -65,10 +65,34 @@ scene("snow","Signal Loss / Snow",(ctx,W,H,cfg,t)=>{ const img=ctx.createImageDa
   setFont(ctx,Math.max(14,cfg.font)); ctx.textAlign="center"; ctx.textBaseline="middle";
   const plate=cfg.text.split("\n")[0]||"NO SIGNAL"; ctx.fillStyle="#000"; ctx.fillRect(W/2-ctx.measureText(plate).width/2-10,H/2-cfg.font,ctx.measureText(plate).width+20,cfg.font*2);
   glowText(ctx,plate,W/2,H/2,cfg.fg,8); ctx.textAlign="left"; });
+/* A colour-bar card is a still picture by nature, and this one was literally
+   still: `t` was declared and never read, so the only thing moving in an
+   exported clip was the CRT static on top of it. (Which is also why the deep
+   audit's "every scene changes over time" check passed on it — it renders the
+   whole stack, so the noise animated even when the scene did not.)
+   What actually moves on a real card is the *monitor*: the sync bar creeping
+   down a mistuned tube, and the blinking tone ident. Both are period-correct
+   and both leave the bars themselves exactly where they were. */
 scene("bars","SMPTE Color Bars",(ctx,W,H,cfg,t)=>{ const cols=["#c0c0c0","#c0c000","#00c0c0","#00c000","#c000c0","#c00000","#0000c0"]; const bw=W/7;
-  for(let i=0;i<7;i++){ ctx.fillStyle=cols[i]; ctx.fillRect(i*bw,0,bw+1,H*0.72); }
-  ctx.fillStyle="#101820"; ctx.fillRect(0,H*0.72,W,H*0.28);
-  setFont(ctx,cfg.font); ctx.textBaseline="middle"; glowText(ctx,macros(cfg.text.split("\n")[0]||"PLEASE STAND BY"),12,H*0.86,cfg.fg,4); });
+  const top=H*0.72;
+  for(let i=0;i<7;i++){ ctx.fillStyle=cols[i]; ctx.fillRect(i*bw,0,bw+1,top); }
+  // The real card's lower thirds: the castellations in reverse, then PLUGE.
+  const rev=["#0000c0","#101820","#c000c0","#101820","#00c0c0","#101820","#c0c0c0"];
+  const midH=H*0.10;
+  for(let i=0;i<7;i++){ ctx.fillStyle=rev[i]; ctx.fillRect(i*bw,top,bw+1,midH); }
+  ctx.fillStyle="#101820"; ctx.fillRect(0,top+midH,W,H-top-midH);
+  // PLUGE: sub-black / black / super-black, the strip you set brightness with.
+  const pw=W*0.05, py=top+midH;
+  ["#050505","#101010","#1c1c1c"].forEach((c,i)=>{ ctx.fillStyle=c; ctx.fillRect(W-pw*(3-i),py,pw,H-py); });
+  // A sync bar creeping down the tube — one pass every eight seconds.
+  const sy=((t/8)%1)*H, sh=Math.max(2,H*0.02);
+  const g=ctx.createLinearGradient(0,sy-sh,0,sy+sh);
+  g.addColorStop(0,"rgba(255,255,255,0)"); g.addColorStop(0.5,"rgba(255,255,255,.16)"); g.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,sy-sh,W,sh*2);
+  setFont(ctx,cfg.font); ctx.textBaseline="middle"; glowText(ctx,macros(cfg.text.split("\n")[0]||"PLEASE STAND BY"),12,H*0.86,cfg.fg,4);
+  // 1 kHz tone ident, blinking at 1 Hz the way a bars-and-tone feed does.
+  if(Math.floor(t)%2===0){ ctx.save(); ctx.fillStyle="#ff5a5a"; ctx.beginPath();
+    ctx.arc(W-pw*3-14,H*0.86,Math.max(2,cfg.font*0.22),0,7); ctx.fill(); ctx.restore(); } });
 scene("boot","BIOS / Boot POST",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.fillRect(0,0,W,H); setFont(ctx,cfg.font); ctx.textBaseline="top";
   const lines=["EREBUS BIOS v0.47  (C) ARCHIVE SYSTEMS","","Main Processor : Pentium(R) 47MHz"]; const mem=Math.min(1,t/2.2);
   lines.push("Memory Test : "+(Math.floor(mem*16384))+"K OK"); if(t>2.4)lines.push("Detecting IDE drives ...");
@@ -97,14 +121,34 @@ scene("scope","Waveform Scope",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.fill
     else { const ph=x/W*Math.PI*8 + t*4; y=H/2 + Math.sin(ph)*H*0.3*(0.6+0.4*Math.sin(t*1.3)) + (rnd()-0.5)*4; }
     x===0?ctx.moveTo(x,y):ctx.lineTo(x,y); } ctx.stroke(); ctx.lineWidth=1;
   if(reactive){ setFont(ctx,10); glowText(ctx,"● AUDIO-REACTIVE",8,12,cfg.fg,3); } });
+/* Also had `t` unread: a surveillance frame that never changed, which is the
+   one thing surveillance footage is never accused of. The camera itself is what
+   moves — a fixed mount drifts, its AGC breathes, and the recorder blinks. */
 scene("camera","Surveillance Cam",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.fillRect(0,0,W,H);
   const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"rgba(30,70,55,.10)"); g.addColorStop(1,"rgba(0,0,0,0)"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // AGC breathing: the whole frame lifts and settles over about nine seconds.
+  const agc=0.06+0.05*Math.sin(t*0.7);
+  ctx.fillStyle="rgba(255,255,255,"+agc.toFixed(3)+")"; ctx.fillRect(0,0,W,H);
+  // A slow horizontal wipe — the interlace seam a cheap capture card leaves.
+  const wy=((t*0.18)%1)*H;
+  ctx.fillStyle="rgba(255,255,255,.05)"; ctx.fillRect(0,wy,W,Math.max(1,H*0.03));
   setFont(ctx,cfg.font); ctx.textAlign="center"; ctx.globalAlpha=.5; const body=macros(cfg.text||"NO OPERATOR PRESENT").split("\n");
-  body.forEach((l,i)=>glowText(ctx,l,W/2,H/2+i*cfg.font*1.4,cfg.fg,3)); ctx.globalAlpha=1; ctx.textAlign="left"; });
+  // Mount drift: a couple of pixels of sway, so a still is a still and a clip is not.
+  const dx=Math.sin(t*0.43)*Math.max(1,W*0.004), dy=Math.cos(t*0.31)*Math.max(1,H*0.004);
+  body.forEach((l,i)=>glowText(ctx,l,W/2+dx,H/2+dy+i*cfg.font*1.4,cfg.fg,3)); ctx.globalAlpha=1; ctx.textAlign="left";
+  // ● REC, blinking once a second, where every camera OSD puts it.
+  if(Math.floor(t*2)%2===0){ ctx.save(); ctx.fillStyle="#ff4444"; ctx.beginPath();
+    ctx.arc(W-14,26,Math.max(2,Math.min(W,H)*0.012),0,7); ctx.fill(); ctx.restore(); } });
 scene("ekg","EKG / Flatline",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.fillRect(0,0,W,H); ctx.strokeStyle="rgba(80,180,140,.2)";
   for(let x=0;x<W;x+=16){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();} for(let y=0;y<H;y+=16){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
   ctx.strokeStyle=cfg.fg; ctx.lineWidth=2; ctx.beginPath(); const bpm=70, mid=H*0.55; const flat=t>cfg.duration*0.75;
-  for(let x=0;x<W;x++){ const beat=((x/W*cfg.duration - t)*bpm/60)%1; let y=mid; if(!flat&&beat>0.45&&beat<0.5)y=mid-H*0.3; else if(!flat&&beat>0.5&&beat<0.53)y=mid+H*0.15;
+  /* JavaScript's % keeps the sign of the dividend, and this dividend is
+     negative for every x left of the current time — so `beat` landed in
+     (-1, 0], the two QRS windows below never matched, and the trace went
+     progressively flat from the left as the clip ran. A patient monitor whose
+     line dies on its own is not the effect anybody asked for. */
+  const wrap1=(v)=>((v%1)+1)%1;
+  for(let x=0;x<W;x++){ const beat=wrap1((x/W*cfg.duration - t)*bpm/60); let y=mid; if(!flat&&beat>0.45&&beat<0.5)y=mid-H*0.3; else if(!flat&&beat>0.5&&beat<0.53)y=mid+H*0.15;
     x===0?ctx.moveTo(x,y):ctx.lineTo(x,y); } ctx.stroke(); ctx.lineWidth=1;
   setFont(ctx,cfg.font); glowText(ctx,flat?"-- FLATLINE --":Math.round(bpm)+" BPM",12,16,flat?"#ff5a5a":cfg.fg,4); });
 scene("radar","Radar Sweep",(ctx,W,H,cfg,t)=>{ ctx.fillStyle=cfg.bg; ctx.fillRect(0,0,W,H); const cx=W/2,cy=H/2,R=Math.min(W,H)*0.45;

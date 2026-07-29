@@ -238,8 +238,11 @@ export function initFilters(onChange) {
     resolve: resolveParams,
     ids: { list: 'v-filters-list', pick: 'v-filters-pick', add: 'v-filters-add',
            clear: 'v-filters-clear', count: 'v-filters-count' },
+    // "drag the order" described a gesture this panel does not have — the
+    // reorder is the ↑ ↓ buttons on each step. A hint that names a control that
+    // is not there is worse than no hint: it reads as something being broken.
     empty: 'No filters — the clip is just the CRT look above. '
-      + 'Add one to grade, distort or break it, and drag the order to change what runs first.',
+      + 'Add one to grade, distort or break it, then use ↑ ↓ on a step to change what runs first.',
     onChange,
   });
 }
