@@ -168,14 +168,33 @@ export async function renderAudio(){
      ~2×fade seconds of silence, which is exactly the artifact loop mode exists
      to remove. So fades apply only to a non-looping render. */
   if(!cfg.loop){
-    const fade=Math.min(cfg.fade, (len/cfg.sr)/2); const nf=Math.floor(fade*cfg.sr);
-    for(const d of channels) for(let i=0;i<nf;i++){ const g=i/nf; d[i]*=g; d[len-1-i]*=g; }
+    applyEdgeFades(channels,cfg.sr,cfg.fade);
   } else if(cfg.fade>0) log("Loop xf on: edge fades skipped so the loop stays seamless.","info");
   // `data` stays the first channel so the audio-reactive scene and the waveform
   // keep working unchanged; it is the same Float32Array, not a copy, so
   // normalising in place updates both.
   return {sr:cfg.sr, bits:cfg.bits, channels, data:channels[0],
           duration:len/cfg.sr};
+}
+/**
+ * Ramp the first and last `fade` seconds of every channel, in place.
+ *
+ * Extracted so it can be applied AGAIN after a region edit changes the length.
+ * "Crop to" throws away the buffer's original ends — including the fade that
+ * was ramped onto them — and what is left starts and stops mid-signal, so every
+ * cropped render came out with a click at both edges and the Fade control the
+ * author had set was silently not honoured. Capped at half the buffer, so a
+ * fade longer than the material ramps up to the middle and straight back down
+ * rather than overlapping itself.
+ */
+export function applyEdgeFades(channels,sr,fadeSec){
+  if(!(fadeSec>0) || !channels?.length) return channels;
+  const len=channels[0].length;
+  if(!len) return channels;
+  const nf=Math.floor(Math.min(fadeSec,(len/sr)/2)*sr);
+  if(nf<1) return channels;
+  for(const d of channels) for(let i=0;i<nf;i++){ const g=i/nf; d[i]*=g; d[len-1-i]*=g; }
+  return channels;
 }
 /**
  * Mid/side width.
@@ -190,6 +209,22 @@ export function midSideWidth(ctx,node,width){
   const split=ctx.createChannelSplitter(2);
   const merge=ctx.createChannelMerger(2);
   const g=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+  /* A ChannelSplitterNode is `explicit`/`discrete` by specification, so a MONO
+     input arrives at it with channel 1 as SILENCE rather than as a copy of
+     channel 0. The maths below then gets side = 0.5·L, and
+     outR = mid − width·side = 0.5·L·(1 − width) — which at the shipped default
+     of width 1 is exactly zero. A mix with nothing panned came out of the right
+     speaker as nothing at all, and at width 0 (the "collapse to mono" setting)
+     came out 6 dB quiet in both.
+     So up-mix first, with `speakers` interpretation: mono arrives as L = R = the
+     signal, side is zero, and width correctly does nothing to a centred source
+     instead of deleting half of it. */
+  const stereoIn=ctx.createGain();
+  stereoIn.channelCount=2;
+  stereoIn.channelCountMode="explicit";
+  stereoIn.channelInterpretation="speakers";
+  node.connect(stereoIn);
+  node=stereoIn;
   node.connect(split);
   const mid=g(1), side=g(1);
   const lM=g(0.5), rM=g(0.5), lS=g(0.5), rS=g(-0.5);

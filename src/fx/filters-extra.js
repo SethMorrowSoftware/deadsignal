@@ -453,24 +453,46 @@ export function registerExtraFilters() {
     { key: 'density', label: 'Rows affected %', min: 0, max: 100, step: 1, def: 60 },
   ], (ctx, W, H, p, t) => {
     if (p.amount <= 0 || p.density <= 0) return;
-    const src = snap(ctx, W, H);
     const band = Math.max(1, Math.round(p.rows));
     seedStream('rowshift:' + (p.rate > 0 ? Math.floor(t * p.rate) : 0));
-    ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(src, 0, 0);
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
+
+    /* This used to draw two whole-colour copies of each band, offset either
+       way, under `lighter` — which is not a channel shift at all. On a flat
+       grey frame the result came out flat grey (max channel spread: 0) with a
+       third of it blown to pure white by the additive stack. It read as a
+       ghost, and the one thing the filter is named for was the one thing it did
+       not do. The `ctx.filter = 'url(#none)'` line was reaching for a channel
+       mask that no SVG in this document defines.
+
+       Shifting the channels means moving R and B by different amounts, which is
+       a pixel operation. Doing it on the ImageData is both the honest version
+       and the cheap one: one read, one write, no offscreen canvas per band. */
+    const img = ctx.getImageData(0, 0, W, H);
+    const s = img.data;
+    const out = new Uint8ClampedArray(s);        // green + alpha pass through
+
     for (let y = 0; y < H; y += band) {
       if (rnd() * 100 > p.density) continue;
-      const dx = rrange(-1, 1) * p.amount;
-      const h = Math.min(band, H - y);
-      // Red one way, blue the other, and the untouched original still under
-      // both — separation rather than a coloured copy sliding over the frame.
-      ctx.globalAlpha = 0.5;
-      ctx.filter = 'url(#none)';
-      ctx.drawImage(src, 0, y, W, h, dx, y, W, h);
-      ctx.drawImage(src, 0, y, W, h, -dx, y, W, h);
+      const dx = Math.round(rrange(-1, 1) * p.amount);
+      if (!dx) continue;
+      const yEnd = Math.min(H, y + band);
+      for (let yy = y; yy < yEnd; yy++) {
+        const row = yy * W;
+        for (let x = 0; x < W; x++) {
+          // Clamp at the edges rather than wrapping: a fringe that reappears on
+          // the far side of the frame reads as a seam, not as a mistracked tape.
+          const xr = x - dx < 0 ? 0 : (x - dx >= W ? W - 1 : x - dx);
+          const xb = x + dx < 0 ? 0 : (x + dx >= W ? W - 1 : x + dx);
+          const i = (row + x) * 4;
+          out[i]     = s[(row + xr) * 4];        // red one way
+          out[i + 2] = s[(row + xb) * 4 + 2];    // blue the other
+        }
+      }
     }
+    img.data.set(out);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.putImageData(img, 0, 0);
     ctx.restore();
   });
 

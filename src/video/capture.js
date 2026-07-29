@@ -6,7 +6,7 @@ import { $, clamp, log, num, setVal, toast, val } from '../core/dom.js';
 import { applyPalette } from '../core/palettes.js';
 import { saveUserPreset } from '../core/recipes.js';
 import { addToLibrary, slug } from '../library/library.js';
-import { _importedVideo, hasImportedVideo, loadImageFile, loadVideoFile, seekVideo } from '../media/import.js';
+import { footageFor, hasFootageFor, loadImageFile, loadVideoFile, seekVideo } from '../media/import.js';
 import { loadPreset } from '../presets/index.js';
 import { prepareBed } from '../audio/bed.js';
 import { initAudioBed } from '../ui/audiobed.js';
@@ -15,6 +15,7 @@ import { initSizing, scaleNumControl, syncFormat } from '../ui/sizing.js';
 import { scaleFilterChainPx } from './filters.js';
 import { exportGif, exportAPNG, exportAnimWebP } from './gif.js';
 import { _persistCanvas, readVideoCfg, renderScaled, renderVideoFrame } from './render.js';
+import { ensureVideoSource } from './sources.js';
 
 export let vPreviewRAF=null, vPlaying=true, vScrubT=0, vRecording=false;
 /* Held separately from vPreviewRAF because the throttle schedules with
@@ -120,7 +121,7 @@ export function updateVideoEst(cfg, throttled){ const est=$("v-est"); if(!est)re
   // usable here, so say which one the button will actually take. The cheap
   // synchronous check is enough for a label — the export itself re-checks
   // properly and falls back on its own.
-  const offline = typeof VideoEncoder!=="undefined" && !(cfg.scene==="videoin" && hasImportedVideo());
+  const offline = typeof VideoEncoder!=="undefined" && !(cfg.scene==="videoin" && hasFootageFor(cfg.srcKey));
   /* "faster than real time" was true of every size the tool could produce when
      the ceiling was 1280×1024. It is not true of 1080×1920, where a frame with
      a filter chain costs a quarter of a second — so the label promised a
@@ -178,9 +179,16 @@ export function cancelStillExport(){ _stillCancel=true; }
 
    The imported-video scene is deliberately excluded: it plays a <video>
    element, which only advances in wall-clock time, so encoding it faster than
-   real time would sample the same frame repeatedly. */
+   real time would sample the same frame repeatedly.
+
+   That exclusion asks about the clip's OWN footage, not just the active import
+   slot. It used to ask `hasImportedVideo()`, so a clip whose Footage names a
+   library row — the ordinary case after a reload, when the row is restored from
+   IndexedDB and no file has been dropped this session — sailed past the guard
+   and encoded the whole clip from one never-advanced frame. A frozen export
+   that reports success is the worst failure this tool has. */
 async function recordVideoFast(cfg){
-  if(cfg.scene==="videoin" && hasImportedVideo()) return false;
+  if(cfg.scene==="videoin" && hasFootageFor(cfg.srcKey)) return false;
   const frames=Math.max(1, Math.round(cfg.duration*cfg.fps));
   /* Gate on the container the author picked, not a hardcoded webm — an
      H.264-only WebCodecs build was bounced to the real-time recorder for an
@@ -193,6 +201,13 @@ async function recordVideoFast(cfg){
   if(!support.available){ log("Fast export unavailable: "+support.reason+" — using real-time capture.","warn"); return false; }
 
   stopVideoPreview(); vRecording=true;
+  /* Start the phosphor from black. `_persistCanvas()` is a one-frame
+     accumulator, and stopping the preview leaves the last frame it drew sitting
+     in it — so with Persist above zero the first frames of the export carried a
+     ghost of wherever the scrubber happened to be, and exporting the same
+     project twice produced different files. The real-time path and
+     collectFrames() both reset it by resizing; this one never did. */
+  _persistCanvas().width=cfg.W; _persistCanvas().height=cfg.H;
   $("v-record").disabled=true; $("v-stop").disabled=false; $("v-progress-wrap").style.display="block";
   log("Exporting "+cfg.duration+"s @ "+cfg.fps+"fps "+cfg.W+"×"+cfg.H+" via WebCodecs ("+support.label+")…","info");
 
@@ -253,6 +268,15 @@ async function recordVideoFast(cfg){
   return true;
 }
 
+/* Make sure this clip's own footage is decoded and in the pool.
+   `videoSource()` is a synchronous lookup that returns null and starts a load,
+   which is right for a render loop and wrong for an exporter: the exporter asks
+   once and then commits to an answer for the whole clip. */
+async function primeFootage(cfg){
+  if(cfg.scene!=="videoin" || !cfg.srcKey) return;
+  try{ await ensureVideoSource(cfg.srcKey); }catch(e){ /* absent footage is an ordinary state */ }
+}
+
 export async function recordVideo(){
   if(vRecording)return;
   if(!claimExport("Recording"))return;
@@ -269,6 +293,11 @@ export async function recordVideo(){
   let armed=false;   // once the recorder is live, finish() owns the flag + token
   try{
   let cfg=readVideoCfg();
+  // Decode this clip's footage BEFORE the offline path decides. The pool loads
+  // asynchronously, so a clip whose Footage names a library row that the
+  // preview has not drawn yet would answer "no footage" to the guard below and
+  // be encoded frozen.
+  await primeFootage(cfg);
   if(await recordVideoFast(cfg)) return;
   vRecording=true;   // the fast path's failure exit cleared it
   if(!recorderSupported()){ log("Video capture unavailable (MediaRecorder/captureStream missing).","err"); toast("Video capture not supported here","err"); return; }
@@ -320,7 +349,10 @@ export async function recordVideo(){
     startVideoPreview(); };
   rec.onstop=finish; rec.onerror=(e)=>{ endReason=(e&&e.error&&e.error.message)||"MediaRecorder error"; finish(); }; rec.start();
   armed=true;
-  if(cfg.scene==="videoin" && hasImportedVideo()){ try{ _importedVideo.currentTime=0; _importedVideo.play().catch(()=>{}); }catch(e){} }
+  // The clip's own footage, not just the active slot — otherwise a library-keyed
+  // clip records whatever frame its pooled decoder happened to be paused on.
+  if(cfg.scene==="videoin"){ const fv=footageFor(cfg.srcKey);
+    if(fv){ try{ fv.currentTime=0; fv.play().catch(()=>{}); }catch(e){} } }
   log("Recording "+cfg.duration+"s @ "+cfg.fps+"fps "+cfg.W+"×"+cfg.H+(cfg.ss?" (2×SS)":"")+"...","info");
   const start=performance.now();
   // `done` bail: an onerror-driven finish() can land between two frames, and
@@ -345,12 +377,20 @@ export function fitWithin(W,H,maxDim){
   return s>=1 ? {w:W,h:H} : {w:Math.max(2,Math.round(W*s)), h:Math.max(2,Math.round(H*s))};
 }
 export async function collectFrames(cfg,count,{maxDim=0,cancelled=null,onProgress=null}={}){ const c=document.createElement("canvas"); c.width=cfg.W; c.height=cfg.H; const ctx=c.getContext("2d");
+  await primeFootage(cfg);
   _persistCanvas().width=cfg.W; _persistCanvas().height=cfg.H; const out=[];
   const {w:ow,h:oh}=fitWithin(cfg.W,cfg.H,maxDim);
-  const isVid = cfg.scene==="videoin" && hasImportedVideo(); const vdur = isVid ? (isFinite(_importedVideo.duration)&&_importedVideo.duration>0?_importedVideo.duration:cfg.duration) : 0;
+  /* Seek the footage this clip actually draws. Asking `hasImportedVideo()` and
+     seeking `_importedVideo` meant a clip playing a library row was never
+     seeked at all: every frame of the .gif / .apng / .webp / strip came out of
+     whatever the pooled decoder was showing, so the "animation" was one frame
+     repeated. */
+  const fvid = cfg.scene==="videoin" ? footageFor(cfg.srcKey) : null;
+  const isVid = !!(fvid && fvid.videoWidth);
+  const vdur = isVid ? (isFinite(fvid.duration)&&fvid.duration>0?fvid.duration:cfg.duration) : 0;
   for(let i=0;i<count;i++){ if(cancelled&&cancelled())break;
     const frac=(count<2?0:(i/(count-1))*0.999); const t=frac*cfg.duration;
-    if(isVid) await seekVideo(_importedVideo, frac*vdur);
+    if(isVid) await seekVideo(fvid, frac*vdur);
     renderVideoFrame(ctx,cfg.W,cfg.H,cfg,t);
     const f=document.createElement("canvas"); f.width=ow; f.height=oh; f.getContext("2d").drawImage(c,0,0,ow,oh); out.push(f);
     if(onProgress)onProgress((i+1)/count);
@@ -359,7 +399,7 @@ export async function collectFrames(cfg,count,{maxDim=0,cancelled=null,onProgres
     // ■ STOP can land between them. Callers stop the preview first, so the
     // gap does not let the preview loop redraw over the shared scratches.
     if(i%3===2) await new Promise(r=>setTimeout(r,0)); }
-  if(isVid){ try{ _importedVideo.play().catch(()=>{}); }catch(e){} }
+  if(isVid){ try{ fvid.play().catch(()=>{}); }catch(e){} }
   return out; }
 export async function exportFrameStrip(){ if(!claimExport("Frame strip"))return;
   armStillExportCancel(); stopVideoPreview();

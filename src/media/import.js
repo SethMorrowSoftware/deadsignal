@@ -50,4 +50,17 @@ export function seekVideo(v,time){ return new Promise((resolve)=>{ if(!v||!isFin
 export function hasImportedVideo(){ return !!(_importedVideo && _importedVideo.videoWidth); }
 /** True when this clip has footage to draw — its own, or the active slot. */
 export function hasFootageFor(srcKey){ return hasVideoSource(srcKey) || hasImportedVideo(); }
+/**
+ * The element `drawVideoFit` will actually draw for this clip.
+ *
+ * Exported because the exporters have to do more than draw it: the offline
+ * WebCodecs path has to REFUSE it (a <video> only advances in wall-clock time),
+ * the real-time recorder has to start it, and the still exporters have to seek
+ * it per frame. Each of those used to ask `hasImportedVideo()` — the active
+ * slot and nothing else — so a clip playing footage chosen from the library
+ * exported as a single frozen frame, with no warning, in every one of those
+ * paths. Resolution has to match what the scene draws, so it lives here beside
+ * `drawVideoFit` rather than being re-derived at each call site.
+ */
+export function footageFor(srcKey){ return (srcKey ? videoSource(srcKey) : null) || _importedVideo; }
 /* ---------- palettes ---------- */

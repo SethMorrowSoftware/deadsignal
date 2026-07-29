@@ -177,6 +177,41 @@ section('every scene, one at a time');
   const frozen = ids.filter((s) => !results[s].animates && !STATIC_OK.has(s));
   check('every scene that is not a placeholder changes over time', frozen.length === 0, frozen.join(', '));
 
+  /* …and it has to be the SCENE that moves, not the stack on top of it.
+     shot() renders the whole pipeline, and the default CRT settings carry
+     animated static and flicker — so a scene whose body never reads `t` scored
+     a pass on the check above purely from the noise laid over it. Two of them
+     were doing exactly that (SMPTE Color Bars and Surveillance Cam: `t` was a
+     declared parameter neither one ever used), and an author who put either on
+     a timeline got a freeze-frame with grain on it.
+     So ask again with every post effect and every overlay silenced. What is
+     left is the scene and nothing else. */
+  const quietFrozen = await page.evaluate((args) => {
+    const D = window.__deep;
+    const [ids, staticOk] = args;
+    const QUIET = {                       // everything the stack could animate
+      scan: 0, noise: 0, vig: 0, flick: 0, glitch: 0, chroma: 0, bloom: 0,
+      persist: 0, mask: 0, hum: 0, track: 0, shake: 0, roll: 0, dither: false,
+      corrupt: 0, fade: 0,
+      hud: '', tc: false, morse: '', blink: '', reveal: '', sub: '',
+      layers: [], filters: [], __auto: null,
+      text: 'DEEP AUDIT', seed: 4242, duration: 6,
+    };
+    const out = [];
+    for (const scene of ids) {
+      if (staticOk.includes(scene)) continue;
+      try {
+        // Three samples, not two: a one-second period would alias against a
+        // single pair and read as frozen when it is merely slow.
+        const h = [0, 1.7, 3.9].map((t) => D.shot({ ...QUIET, scene }, t).h);
+        if (h[0] === h[1] && h[1] === h[2]) out.push(scene);
+      } catch { /* the throw check above already owns this */ }
+    }
+    return out;
+  }, [ids, [...STATIC_OK]]);
+  check('…and it is the scene moving, not the CRT stack over it',
+        quietFrozen.length === 0, quietFrozen.join(', ') || 'all 46 animate on their own');
+
   const unstable = ids.filter((s) => !results[s].stable);
   check('every scene renders the same frame twice from the same seed', unstable.length === 0,
     unstable.join(', '));

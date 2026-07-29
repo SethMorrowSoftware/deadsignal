@@ -166,7 +166,10 @@ signal integrity: 100%</textarea>
             <div class="row"><label for="v-lspace">Letterspace</label><input type="range" id="v-lspace" min="-10" max="40" value="0" class="grow" title="letter-spacing, as a percentage of the type size"></div>
           </div>
           <div class="split2">
-            <div class="row"><label for="v-corrupt">Corrupt %</label><input type="range" id="v-corrupt" min="0" max="100" value="0" class="grow" title="glyph corruption on glitch"></div>
+            <div class="row"><label for="v-glitch">Glitch</label><input type="range" id="v-glitch" min="0" max="100" value="12" class="grow" title="periodic tearing and coloured ghosting on the TEXT — it does not touch the rest of the picture"></div>
+            <div class="row"><label for="v-corrupt">Corrupt %</label><input type="range" id="v-corrupt" min="0" max="100" value="0" class="grow" title="glyph corruption, on the same glitch beat"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-fullwidth">ａｅｓｔｈ</label><input type="checkbox" id="v-fullwidth" title="fullwidth vaporwave text"></div>
           </div>
         </fieldset>
@@ -193,23 +196,22 @@ signal integrity: 100%</textarea>
             <div class="row"><label for="v-flick">Flicker</label><input type="range" id="v-flick" min="0" max="100" value="10" class="grow"></div>
           </div>
           <div class="split2">
-            <div class="row"><label for="v-glitch">Glitch</label><input type="range" id="v-glitch" min="0" max="100" value="12" class="grow"></div>
             <div class="row"><label for="v-chroma">Chroma</label><input type="range" id="v-chroma" min="0" max="100" value="14" class="grow" title="chromatic aberration"></div>
-          </div>
-          <div class="split2">
             <div class="row"><label for="v-bloom">Bloom</label><input type="range" id="v-bloom" min="0" max="100" value="18" class="grow"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-persist">Persist</label><input type="range" id="v-persist" min="0" max="100" value="0" class="grow" title="phosphor persistence / ghosting"></div>
-          </div>
-          <div class="split2">
             <div class="row"><label for="v-mask">Mask</label><input type="range" id="v-mask" min="0" max="100" value="0" class="grow" title="shadow-mask / aperture grille"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-hum">Hum bar</label><input type="range" id="v-hum" min="0" max="100" value="0" class="grow" title="rolling brightness bar"></div>
-          </div>
-          <div class="split2">
             <div class="row"><label for="v-track">Tracking</label><input type="range" id="v-track" min="0" max="100" value="0" class="grow" title="VHS tracking tear"></div>
-            <div class="row"><label for="v-shake">Shake</label><input type="range" id="v-shake" min="0" max="100" value="0" class="grow"></div>
           </div>
           <div class="split2">
+            <div class="row"><label for="v-shake">Shake</label><input type="range" id="v-shake" min="0" max="100" value="0" class="grow"></div>
             <div class="row"><label for="v-roll">Roll</label><input type="range" id="v-roll" min="0" max="100" value="0" class="grow" title="vertical hold / rolling picture"></div>
+          </div>
+          <div class="split2">
             <div class="row"><label for="v-dither">Dither</label><input type="checkbox" id="v-dither" title="ordered dither to palette"></div>
           </div>
         </fieldset>
