@@ -2860,11 +2860,25 @@ section('a timeline that is a timeline');
     const rows = () => document.querySelectorAll('#nle-insp-body table.keyframes tbody tr').length;
     const before = { panel: panel(), rows: rows() };
 
+    /* Wait for the CONDITION, not for a number of milliseconds.
+       Both checks below used a flat 60ms and both went red on a loaded CI
+       runner while passing locally — with `entries: 1`, which says the document
+       write landed and only the repaint had not happened yet. A fixed sleep
+       turns "does the panel repaint" into "does the panel repaint faster than
+       this machine's worst moment", which is a different question and not the
+       one being asked. The assertion is unchanged in strength: if the signature
+       guard were missing the row would never appear and this would time out. */
+    const settle = async (pred, ms = 4000) => {
+      const t0 = Date.now();
+      while (!pred() && Date.now() - t0 < ms) await new Promise((r) => requestAnimationFrame(r));
+      return pred();
+    };
+
     const autoBefore = JSON.stringify(S.store.get('automation.video') || {});
     const depth0 = S.store.undoDepth;
     document.getElementById('insp-curve-value').value = '77';
     document.getElementById('insp-curve-key').click();
-    await new Promise((r) => setTimeout(r, 60));
+    const repainted = await settle(() => rows() > before.rows);
 
     const param = document.getElementById('insp-curve-param').value;
     const keyed = S.timeline[mine].rec?.__auto?.[param] || [];
@@ -2875,7 +2889,9 @@ section('a timeline that is a timeline');
     // "Update from VIDEO" must not be a silent delete of what was just drawn.
     const send = document.getElementById('insp-recapture');
     if (send) send.click();
-    await new Promise((r) => setTimeout(r, 60));
+    // Recapture rewrites the clip's recipe; settle on the rewrite having been
+    // applied rather than on a stopwatch, for the reason given above.
+    await settle(() => S.timeline[mine].rec?.__auto?.[param] !== undefined, 2000);
     const survived = (S.timeline[mine].rec?.__auto?.[param] || []).length;
 
     // A still has no automation and must not be offered any.
@@ -2889,7 +2905,8 @@ section('a timeline that is a timeline');
       return (S.timeline[mine].rec?.__auto?.[param] || []).length;
     })();
     return { before, keyed: keyed.length, keyedValue: keyed[0]?.v, neighbour: neighbour.length,
-             after, autoUntouched: autoBefore === autoAfter, survived, stillPanel, cleared, param };
+             after, autoUntouched: autoBefore === autoAfter, survived, stillPanel, cleared, param,
+             repainted };
   });
   check('a video clip gets a keyframe panel of its own', curves.before.panel);
   check('keying writes a curve onto THAT clip', curves.keyed === 1 && curves.keyedValue === 77,
@@ -2901,8 +2918,9 @@ section('a timeline that is a timeline');
   check('…as one undoable command', curves.after.entries === 1, String(curves.after.entries));
   /* The signature guard: rec.__auto changed but no FIELD did, so without
      curvesSignature in the signature the panel would sit frozen. */
-  check('the key list repaints immediately, rather than looking frozen',
-    curves.after.rows > curves.before.rows, JSON.stringify(curves.after));
+  check('the key list repaints on its own, rather than looking frozen',
+    curves.repainted && curves.after.rows > curves.before.rows,
+    JSON.stringify({ ...curves.after, repainted: curves.repainted }));
   check('"Update from VIDEO" keeps the curves the author drew here', curves.survived === 1,
     String(curves.survived));
   check('a still is offered no keyframes, having no automation to give',
