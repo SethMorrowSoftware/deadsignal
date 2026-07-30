@@ -69,7 +69,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 
 await page.goto(PAGE, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => !!window.DeadSignalStudio, null, { timeout: 30000 });
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready', null, { timeout: 30000 });
 
 /* The probe. Installed once and reused by every section below: rendering a
    scene off-screen at a known (seed, t) and reducing the pixels to numbers that
@@ -2816,6 +2816,87 @@ section('the document is wired to itself correctly');
     blanking.blanked.join(', ') || `${blanking.count} selects held their selection`);
   check('…so ＋ FILTER and ＋ FX still add after an edit, rather than saying "Pick one first"',
     blanking.added.video === 1 && blanking.added.audio === 1, JSON.stringify(blanking.added));
+  /* ONE ACTION, ONE UNDO — AND NO EDITS THE AUTHOR DID NOT MAKE.
+     v-format and v-aspect were the last selects filled at tab-init rather than
+     before the document snapshot, so their recorded boot default was "" — and
+     the first ordinary edit anywhere in the view ran wireLive → syncFormat,
+     which derived a Format from W and H and wrote it, whose own change handler
+     then wrote an Aspect. Measured on a stock build: ONE nudge of the Scanlines
+     slider cost THREE undo entries, and the first two undid a Format and an
+     Aspect nobody had chosen; adding a single filter cost three, and one undo
+     left the filter in place. Every comparable action is one entry.
+
+     This one has to run on a page that has JUST BOOTED. The shared page above
+     has already made its first edit many checks ago, which — on a build with
+     the defect — is precisely the edit that fills Format and Aspect in, so
+     measuring here would find them populated and pass against broken code. So:
+     a fresh context, its own page, closed again immediately after — and one
+     each for the two actions, because there is only ever one first edit. */
+  const onFreshPage = async (fn) => {
+    const ctx = await browser.newContext();
+    try {
+      const p2 = await ctx.newPage();
+      await p2.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p2.waitForFunction(() => document.documentElement.dataset.studio === 'ready', null, { timeout: 30000 });
+      return await p2.evaluate(fn);
+    } finally { await ctx.close(); }
+  };
+  const firstEdit = await onFreshPage(async () => {
+    const S = window.DeadSignalStudio;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const size = () => ({ format: S.store.get('tabs.video.v-format'),
+                          aspect: S.store.get('tabs.video.v-aspect'),
+                          w: S.store.get('tabs.video.v-w'), h: S.store.get('tabs.video.v-h') });
+    document.getElementById('welcome-close')?.click();
+    document.querySelector('.tab[data-view=video]').click();
+    await sleep(200);
+    const seeded = size();
+
+    const scan = document.getElementById('v-scan');
+    const was = scan.value;
+    const d0 = S.store.undoDepth;
+    scan.value = String(Number(was) + 5);
+    scan.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(320);
+    const nudge = { entries: S.store.undoDepth - d0, size: size() };
+    return { seeded, nudge };
+  });
+  /* The same again, on its own fresh page, for adding a filter — the action
+     this was first noticed on, where one undo used to leave the filter in. */
+  const firstFilter = await onFreshPage(async () => {
+    const S = window.DeadSignalStudio;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    document.getElementById('welcome-close')?.click();
+    document.querySelector('.tab[data-view=video]').click();
+    await sleep(200);
+    const d1 = S.store.undoDepth;
+    const pick = document.getElementById('v-filters-pick');
+    pick.value = 'blur';
+    pick.dispatchEvent(new Event('input', { bubbles: true }));
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('v-filters-add').click();
+    await sleep(320);
+    const added = (S.store.get('filters.video') || []).length;
+    const entries = S.store.undoDepth - d1;
+    S.undo();
+    await sleep(220);
+    return { entries, added, afterOneUndo: (S.store.get('filters.video') || []).length };
+  });
+  check('Format and Aspect are seeded from the size, not left empty for the first edit to fill',
+    firstEdit.seeded.format !== '' && firstEdit.seeded.aspect !== '',
+    JSON.stringify(firstEdit.seeded));
+  check('…so one slider nudge is ONE undo entry, not three',
+    firstEdit.nudge.entries === 1, `${firstEdit.nudge.entries} entries`);
+  check('…and it does not rewrite the frame size on the way',
+    firstEdit.nudge.size.format === firstEdit.seeded.format
+    && firstEdit.nudge.size.aspect === firstEdit.seeded.aspect,
+    JSON.stringify(firstEdit.nudge.size));
+  check('…adding a filter is one undo entry too, when that is the first edit',
+    firstFilter.entries === 1 && firstFilter.added === 1,
+    `${firstFilter.entries} entries, ${firstFilter.added} added`);
+  check('…and one undo takes that filter back off',
+    firstFilter.afterOneUndo === 0, String(firstFilter.afterOneUndo));
+
   check('every number and range input declares its own bounds, so the box agrees with the clamp',
     wiring.unbounded.length === 0, wiring.unbounded.slice(0, 8).join(', '));
 
@@ -2891,6 +2972,171 @@ section('the document is wired to itself correctly');
     held.cleared === '', JSON.stringify(held.cleared));
   check('…and an in-range value passes through untouched and unremarked',
     held.inRange.kept === '480' && held.inRange.silent === true, JSON.stringify(held.inRange));
+
+  /* A GREYED-OUT BUTTON THAT SAYS NOTHING IS A REFUSAL WITHOUT A REASON.
+     Measured on a stock build: eight buttons are off the moment the page opens
+     and not one carried a title, an aria-description or anything else naming
+     what would switch it on. Worst was the Audio panel — ▶ PLAY, ⤓ .wav and
+     NORMALIZE are all dead until ◆ RENDER has been pressed once, and nothing
+     on screen connected the four. See src/ui/whyoff.js. */
+  const greyed = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const reason = (b) => (b.title || b.getAttribute('aria-description')
+      || document.getElementById(b.getAttribute('aria-describedby') || '')?.textContent || '').trim();
+    const silent = []; let counted = 0;
+    for (const v of ['video', 'audio', 'image', 'timeline', 'library', 'batch', 'cloud']) {
+      document.querySelector(`.tab[data-view=${v}]`)?.click();
+      await sleep(220);
+      for (const b of document.querySelectorAll('button[disabled], button[aria-disabled=true]')) {
+        if (!b.getClientRects().length) continue;
+        counted++;
+        if (!reason(b)) silent.push(`${v}/${b.id || b.textContent.trim().slice(0, 16)}`);
+      }
+    }
+    /* And the reason has to go away again when the button comes back on, or
+       ▶ PLAY would still be telling the author to render after they have. */
+    document.querySelector('.tab[data-view=audio]').click();
+    await sleep(200);
+    const play = document.getElementById('a-play');
+    const whileOff = play.title;
+    document.getElementById('a-render').click();
+    for (let i = 0; i < 80 && play.disabled; i++) await sleep(250);
+    await sleep(300);
+    return { counted, silent, whileOff, whileOn: play.title, cameOn: !play.disabled };
+  });
+  check('every greyed-out button says what would turn it back on',
+    greyed.silent.length === 0,
+    greyed.silent.join(', ') || `${greyed.counted} disabled buttons, all explained`);
+  check('…and the audio buttons name ◆ RENDER as the thing that is missing',
+    /RENDER/.test(greyed.whileOff), JSON.stringify(greyed.whileOff));
+  check('…and once it has been rendered the tooltip describes the action instead',
+    greyed.cameOn && greyed.whileOn !== greyed.whileOff && !/RENDER/.test(greyed.whileOn),
+    JSON.stringify({ on: greyed.cameOn, title: greyed.whileOn }));
+}
+
+/* ------------------------------------- refusing work, out loud -- */
+section('when the tool cannot use what it was given, it says so where you can see it');
+{
+  /* THREE IMPORT FAILURES THAT SAID NOTHING AN AUTHOR WOULD SEE.
+     A bad image logged one line to a console panel that is collapsed by default
+     and raised no toast at all — its video sibling has always toasted — so
+     dropping a .txt on the SCREEN tab looked exactly like dropping nothing.
+     FileReader's own error was not handled, so a file the browser cannot read
+     failed in total silence. And a file with no picture in it (an .mp3, an
+     audio-only .mp4) reaches onloadedmetadata rather than onerror: it was
+     ACCEPTED, logged "Imported video 0×0", toasted "Video imported", rewrote
+     v-dur to the clip's length, and left the canvas showing "DROP or LOAD a
+     video clip". */
+  const refused = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const con = () => document.getElementById('console').textContent;
+    const toasts = () => document.getElementById('toasts').textContent;
+    const { loadImageFile, loadVideoFile, hasImportedVideo } = await import('./src/media/import.js');
+    const trial = async (name, fn) => {
+      const c = con().length; const t = toasts();
+      try { fn(); } catch (e) { return { name, threw: String(e.message).slice(0, 60) }; }
+      await sleep(700);
+      return { name,
+        logged: con().slice(c).replace(/\s+/g, ' ').trim(),
+        toasted: toasts() !== t };
+    };
+    const out = {};
+    out.notAnImage = await trial('text as image', () =>
+      loadImageFile(new File(['hello'], 'notes.txt', { type: 'text/plain' })));
+    out.brokenPng = await trial('truncated png', () =>
+      loadImageFile(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0])],
+        'cut.png', { type: 'image/png' })));
+
+    /* A real, playable file with a sound track and no picture — recorded here
+       so the check does not depend on a fixture committed to the repo. */
+    const ac = new AudioContext();
+    const dest = ac.createMediaStreamDestination();
+    const osc = ac.createOscillator(); osc.connect(dest); osc.start();
+    const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+    const parts = []; rec.ondataavailable = (e) => parts.push(e.data);
+    const stopped = new Promise((r) => { rec.onstop = r; });
+    rec.start(); await sleep(700); rec.stop(); await stopped;
+    osc.stop(); await ac.close();
+
+    const durBefore = document.getElementById('v-dur').value;
+    out.soundOnly = await trial('audio-only file as video', () =>
+      loadVideoFile(new File(parts, 'sound-only.webm', { type: 'audio/webm' })));
+    out.soundOnly.durBefore = durBefore;
+    out.soundOnly.durAfter = document.getElementById('v-dur').value;
+    out.soundOnly.registeredAsVideo = hasImportedVideo();
+    return out;
+  });
+  check('a file that is not an image is refused where the author can see it',
+    refused.notAnImage.toasted === true && /notes\.txt/.test(refused.notAnImage.logged || ''),
+    `toast ${refused.notAnImage.toasted} · ${(refused.notAnImage.logged || '').slice(0, 80)}`);
+  check('…and the message names what this tool can actually open',
+    /PNG/.test(refused.notAnImage.logged || '') && /JPEG/.test(refused.notAnImage.logged || ''),
+    (refused.notAnImage.logged || '').slice(0, 90));
+  check('…and a damaged file of the right type is refused the same way',
+    refused.brokenPng.toasted === true && /cut\.png/.test(refused.brokenPng.logged || ''),
+    (refused.brokenPng.logged || '').slice(0, 80));
+  /* Stated as "the log says it was refused", not "a toast appeared". With the
+     guard removed the file IS still absent from hasImportedVideo() — videoWidth
+     is 0 — and a toast DOES appear, saying "Video imported". Both halves of the
+     weaker claim were satisfied by the broken build. */
+  check('a sound file offered as footage is refused, not accepted as 0×0 video',
+    /no picture in it/.test(refused.soundOnly.logged || '')
+    && !/Imported video/.test(refused.soundOnly.logged || '')
+    && refused.soundOnly.registeredAsVideo === false,
+    `${(refused.soundOnly.logged || '').slice(0, 80)} · registered ${refused.soundOnly.registeredAsVideo}`);
+  check('…and it does not rewrite the frame duration on its way out',
+    refused.soundOnly.durBefore === refused.soundOnly.durAfter,
+    `${refused.soundOnly.durBefore} -> ${refused.soundOnly.durAfter}`);
+
+  /* THE SAFETY NET UNDER THE ONE IRREVERSIBLE CLICK, SILENTLY OFF.
+     Loading a project replaces the document and clears the undo stacks;
+     stashPreviousProject keeps the outgoing one in localStorage so a misclick is
+     recoverable. That write can fail — full storage, a private window, a
+     document over the quota — and it returned false into a caller that ignored
+     it, saying so only in a line of the closed console. Its own context, because
+     filling localStorage is not a state to leave behind for later checks. */
+  const stash = await (async () => {
+    const ctx = await browser.newContext();
+    try {
+      const p3 = await ctx.newPage();
+      await p3.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p3.waitForFunction(() => document.documentElement.dataset.studio === 'ready',
+        null, { timeout: 30000 });
+      return await p3.evaluate(async () => {
+        const S = window.DeadSignalStudio;
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const R = await import('./src/core/recipes.js');
+        // Something worth keeping, or the stash declines for a different reason.
+        S.store.apply({ op: 'set', path: 'tabs.video.v-hud', value: 'BEFORE LOAD' });
+        await sleep(200);
+        /* Genuinely full, not stubbed: big chunks first, then smaller ones to
+           top off the last few kB so what is left cannot hold a document. */
+        let filled = 0;
+        for (const size of [64 * 1024, 4 * 1024, 256, 16]) {
+          const chunk = 'q'.repeat(size);
+          try { for (let i = 0; i < 5000; i++) { localStorage.setItem('full-' + filled, chunk); filled++; } }
+          catch { /* this size no longer fits; try a smaller one */ }
+        }
+        let reallyFull = false;
+        try { localStorage.setItem('full-check', 'x'.repeat(4096)); localStorage.removeItem('full-check'); }
+        catch { reallyFull = true; }
+        const c0 = document.getElementById('console').textContent.length;
+        const t0 = document.getElementById('toasts').textContent;
+        const kept = R.stashPreviousProject(S.store);
+        await sleep(250);
+        return { reallyFull, filled, kept,
+          logged: document.getElementById('console').textContent.slice(c0).replace(/\s+/g, ' ').trim(),
+          toasted: document.getElementById('toasts').textContent !== t0 };
+      });
+    } finally { await ctx.close(); }
+  })();
+  check('localStorage can actually be filled, so the next check means something',
+    stash.reallyFull === true, `${stash.filled} keys written`);
+  check('a backup copy that could not be kept is announced, not swallowed',
+    stash.kept === false && stash.toasted === true,
+    `kept ${stash.kept} · toast ${stash.toasted}`);
+  check('…and the message says what to do instead',
+    /save it to a file/i.test(stash.logged || ''), (stash.logged || '').slice(-90));
 }
 
 console.log('-'.repeat(64));

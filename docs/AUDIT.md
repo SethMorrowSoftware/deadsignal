@@ -287,12 +287,20 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-One item, and it is not a code defect.
+Two items. Neither blocks the beta.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
   should make, and it is deliberately left out. Nothing else here is blocked on
   it, but a beta without one is a beta nobody can legally build on.
+
+**Accessibility**
+- **Disabled buttons are unreachable by keyboard.** `disabled` removes an
+  element from the tab order, so a keyboard-only or screen-reader author never
+  lands on ▶ PLAY and never hears the tooltip added in round four explaining
+  that ◆ RENDER comes first — they simply do not learn the button exists.
+  Fixing it means `aria-disabled` plus a refusal in every affected handler, and
+  the handlers are spread across five files. Recorded rather than rushed.
 
 Every other finding this audit raised has been either fixed above or recorded
 under *Investigated and found NOT to be defects*. Two caveats on that, because
@@ -367,8 +375,130 @@ Two halves:
 Same hysteresis discipline as the flash meter: a state worth interrupting for is
 worth interrupting for **once**.
 
+### One nudge, three undo entries
+
+The two Format/Aspect pairs per panel were the last selects still filled at
+*tab-init* rather than before the document was seeded from the markup, so their
+recorded boot default was `""`. The first ordinary edit anywhere in the video
+view therefore ran `wireLive → syncFormat`, which derived a Format from W and H
+and wrote it, whose own change handler then wrote an Aspect.
+
+Measured on a stock build: **one nudge of the Scanlines slider cost three undo
+entries**, and the first two undid a Format and an Aspect nobody had chosen.
+Adding a single filter cost three as well — and *one* undo left the filter in
+place, which is the version an author actually notices.
+
+`primeSizing()` now seeds all three pairs from the frame size before
+`startSession`, alongside the container pickers that were fixed for the same
+reason earlier in this audit. Afterwards: one nudge, one entry; one filter, one
+entry; one undo takes the filter back off.
+
+Worth recording how the test for this went wrong first. Written inline in the
+deep suite it passed *with the fix reverted*, because by the time it ran the
+suite had already made its first edit two hundred checks earlier — which on a
+broken build is precisely the edit that fills Format and Aspect in. There is
+only ever one first edit per page, so the measurement now opens its own fresh
+context, and the filter half opens a second one. Reverted, all five checks go
+red; restored, all five pass.
+
+### A modal dialog that flashed at everyone
+
+`#welcome` was visible in the markup so that a cold start would show it at the
+first paint rather than waiting for sixty modules to load. But the same wait
+applied to *hiding* it: `initWelcome()` — the thing that closes it for a
+returning author — runs two hundred lines into `boot()`. So an author who
+dismissed the card months ago got a flash of a modal dialog on every single
+load, **and every click during that flash landed on the dialog instead of the
+tool**. Measured: visible for **16 of the 17 frames** boot takes.
+
+This is also the answer to the intermittent CI failure recorded further down —
+a tab click "intercepted by `#welcome`" that no amount of re-running would
+reproduce reliably.
+
+The card now starts closed and a cold start *opens* it, which puts the cost on
+the case that wants a dialog: a first-run visitor sees it a moment after the
+tool paints. Measured after: **0 of 20 frames**.
+
+### A readiness signal that meant nothing
+
+The four browser suites all waited on `window.DeadSignalStudio && #v-scene has
+options` before touching the page. `window.DeadSignalStudio` is assigned at
+*module-evaluation* time — before `DOMContentLoaded`, so before `boot()` has run
+a line — and the scene picker is filled in boot's first dozen. A boot that threw
+anywhere after that still satisfied the gate, and the suite went on clicking at
+a half-wired page.
+
+`boot()` now sets `document.documentElement.dataset.studio = "ready"` on its last
+line and fires a `deadsignal:ready` event; every suite waits on that instead.
+
+Proven rather than asserted: the suite serves one module as a stub whose
+`initSections()` throws, and checks both gates against that page. The old one is
+satisfied. The new one is not. The check that would have been the "run it
+backwards" step is a passing check in its own right.
+
+### Import failures that said nothing an author would see
+
+Three, all the same shape — the tool refusing work and keeping the reason to
+itself:
+
+- **A bad image logged to a closed console and raised no toast.** Its video
+  sibling has always toasted. So dropping a `.txt` on the SCREEN tab looked
+  exactly like dropping nothing: the old image stayed on the canvas, and the one
+  line of explanation went to a panel that is collapsed by default.
+- **`FileReader`'s own error was not handled at all**, so a file the browser
+  cannot read — removed drive, permissions — failed in complete silence.
+- **A file with no picture in it was accepted.** An `.mp3`, an audio-only
+  `.mp4`, or a container whose video track this build cannot decode reaches
+  `onloadedmetadata`, not `onerror`. The log read `Imported video 0×0`, the toast
+  read "Video imported", **`v-dur` was rewritten to the clip's length**, and the
+  canvas went on showing "DROP or LOAD a video clip". Now refused where it
+  arrives, leaving the previous clip and the duration alone.
+
+Each now names what failed, on which file, and what the tool can actually open.
+
+### The safety net under the one irreversible click, silently off
+
+Loading a project replaces the document and clears the undo stacks.
+`stashPreviousProject()` is the net: it keeps the outgoing document in
+localStorage so a misclick is recoverable. Its write can fail — a full
+localStorage, a private window, a document over the 5 MB quota — and it returned
+`false` into a caller that **ignored the return value**, mentioning it only in a
+line of the closed console.
+
+Reproduced by genuinely filling localStorage (104 chunks, then topping off in
+smaller sizes until a 4 KB write throws) rather than stubbing it: the stash
+failed, the load proceeded, and the project was gone. It still cannot refuse the
+load — every programmatic caller would break — but it now says so on the same
+channel that announces the load itself.
+
+### Greyed-out buttons that would not say why
+
+Eight buttons are disabled the moment the page opens and not one carried a
+`title`, an `aria-description`, or anything else naming what would switch it on.
+The worst is the Audio panel: **▶ PLAY, ⤓ .wav and NORMALIZE are all dead until
+◆ RENDER has been pressed once**, and nothing on screen connected the four.
+
+`src/ui/whyoff.js` keeps the tooltip honest in both directions — while a button
+is off it names the thing that turns it on, and when it comes on it goes back to
+describing what it does. One `MutationObserver` on the `disabled` attribute,
+which changes a handful of times per session. Not a state machine: the panels
+still own their own enable/disable logic.
+
+Left undone deliberately: a `disabled` button is out of the tab order entirely,
+so a keyboard-only reader never lands on it and hears neither title. Fixing that
+means moving these to `aria-disabled` and making every handler refuse for
+itself — a larger change than this round, and recorded under *Still open*.
+
 ### Investigated and found NOT to be defects
 
+- **Layout at every width from 375 to 1440.** No sideways scroll at any of them,
+  nothing pushed out of clicking range, and a 400-character variable value, a
+  400-character library name and a 400-character text overlay all stayed inside
+  the page. The dense control panel holds up.
+- **A project file that is not a project file.** Six malformed inputs — not
+  JSON, an array, `{}`, `{"tabs":"nope"}`, nulls throughout, a 4000-character
+  seed. Each is refused by `assertProject` before anything is touched, and the
+  load handler catches it and says "Not a project file — nothing changed".
 - **Every button, pressed from a cold empty project.** All 116 of them, with no
   clips, no library, no chains and nothing selected: **nothing threw** — no page
   errors, no console errors. The empty state is genuinely handled.

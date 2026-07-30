@@ -78,7 +78,17 @@
   <div class="tab" data-view="help" role="tab" id="tab-help" aria-controls="view-help" aria-selected="false" tabindex="-1">HELP</div>
 </div>
 
-<div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-h" tabindex="-1">
+<!-- Hidden until initWelcome() decides. It used to start visible, so that a cold
+     start showed it at the first paint rather than waiting for sixty modules to
+     load and evaluate — but the same wait applied to hiding it, so an author who
+     dismissed it months ago got a flash of a modal dialog on every single load,
+     and every click landed on the dialog instead of the tool for as long as it
+     was up (measured: 16 of the 17 frames boot takes). Starting closed inverts
+     the cost onto the case that WANTS a dialog: a first-run visitor sees the
+     card a moment after the tool paints, which is if anything the better
+     introduction. Inline rather than a stylesheet rule because openWelcome()
+     clears el.style.display, and a rule would survive that. -->
+<div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-h" tabindex="-1" style="display:none">
   <div class="welcome-card">
     <h2 id="welcome-h">▓ WELCOME</h2>
     <p>This is an offline forge for analogue-horror, cyberpunk and vaporwave media. Everything renders in your browser and downloads to your machine — nothing is uploaded.</p>

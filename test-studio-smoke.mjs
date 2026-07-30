@@ -100,7 +100,7 @@ await page.addInitScript(() => {
 
 await page.goto(PAGE);
 // <option> elements are never "visible" to Playwright — wait on the DOM instead.
-await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
 /* Is a canvas actually drawn on? Counts distinct pixels so a flat fill and an
    all-transparent canvas both read as "blank". */
@@ -364,7 +364,7 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   await setControl('v-hud', 'SURVIVES RELOAD');
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   // Restore is async (it opens the database first).
   await page.waitForFunction(
     () => document.getElementById('v-hud').value === 'SURVIVES RELOAD',
@@ -430,7 +430,7 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
 
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   await page.waitForFunction(
     () => (window.DeadSignalStudio.store?.get('timeline.clips') || []).length === 2,
     null, { timeout: 8000 },
@@ -768,7 +768,7 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   await setControl('v-hud', 'AFTER IMPORT');
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   const restored = await page.waitForFunction(
     () => document.getElementById('v-hud').value === 'AFTER IMPORT',
     null, { timeout: 8000 },
@@ -1354,8 +1354,7 @@ console.log('\n[first run]');
   const first = await browser.newPage();
   first.on('pageerror', (e) => errors.push('first-run: ' + String(e)));
   await first.goto(PAGE);
-  await first.waitForFunction(() => window.DeadSignalStudio
-    && document.querySelectorAll('#v-scene option').length > 0);
+  await first.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
   const shown = await first.evaluate(() => {
     const el = document.getElementById('welcome');
@@ -1366,6 +1365,96 @@ console.log('\n[first run]');
   check('the welcome card appears on a cold start', shown.visible);
   check('…with the primary action focused', shown.focused === 'welcome-sample', shown.focused);
   check('…and declares itself modal', shown.modal === 'true', shown.modal);
+
+  /* AND IT DOES NOT FLASH AT SOMEONE WHO HAS ALREADY DISMISSED IT.
+     The card is visible in the markup so a cold start shows it without waiting
+     for the module graph; initWelcome(), which hides it again for a returning
+     author, used to run two hundred lines into boot, after every panel was
+     built. So a returning author got a flash of a modal dialog on every load —
+     and every click during that flash landed on the dialog rather than the
+     tool, which is how this was found: an intermittent CI failure where a tab
+     click was intercepted by #welcome. Sampled from the first paint. */
+  {
+    const returning = await browser.newPage();
+    returning.on('pageerror', (e) => errors.push('returning: ' + String(e)));
+    await returning.addInitScript(() => {
+      try { localStorage.setItem('deadsignal.studio.welcomed', 'true'); } catch { /* ignore */ }
+      // Sample #welcome on every frame from the very first one, so a card that
+      // is up for two frames is still caught.
+      window.__welcomeFrames = { seen: 0, visible: 0, builtAtReady: null };
+      const tick = () => {
+        const el = document.getElementById('welcome');
+        if (el) {
+          window.__welcomeFrames.seen++;
+          if (getComputedStyle(el).display !== 'none') window.__welcomeFrames.visible++;
+        }
+        if (document.documentElement.dataset.studio === 'ready') {
+          // What was actually on the page the first frame the flag was up.
+          window.__welcomeFrames.builtAtReady = {
+            scenes: document.querySelectorAll('#v-scene option').length,
+            templates: document.querySelectorAll('#i-tpl option').length,
+            containers: document.querySelectorAll('#v-container option').length,
+            sections: document.querySelectorAll('.sec-strip').length,
+            said: /DEAD SIGNAL STUDIO ready/.test(document.getElementById('console')?.textContent || ''),
+          };
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await returning.goto(PAGE);
+    await returning.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
+    const flash = await returning.evaluate(() => ({
+      ...window.__welcomeFrames,
+      displayNow: getComputedStyle(document.getElementById('welcome')).display,
+    }));
+    check('…and never flashes at an author who has already dismissed it',
+      flash.visible === 0, `${flash.visible} of ${flash.seen} frames during boot`);
+    const built = flash.builtAtReady || {};
+    check('…and by the time it is up, every picker boot fills is filled',
+      built.scenes > 40 && built.templates > 40 && built.containers > 0 && built.sections > 0,
+      JSON.stringify(built));
+    await returning.close();
+  }
+
+  /* THE READY FLAG HAS TO BE WORTH WAITING ON.
+     Every suite here waits on data-studio="ready" before it touches anything.
+     What it replaced — "the global exists and #v-scene has options" — was true
+     a dozen lines into a boot() that is two hundred and fifty long, so a boot
+     that threw part way still satisfied it and the suite went on clicking at a
+     half-wired page. That is not a hypothetical: it is how the intermittent
+     failure above presented, as a tab click swallowed by a #welcome that
+     initWelcome() never got to close.
+
+     Proven by breaking boot on purpose. One module is served as a stub whose
+     initSections() throws; everything before it still runs, so the old gate
+     would still be satisfied. The flag must not be. */
+  {
+    const broken = await browser.newPage();
+    const raised = [];
+    broken.on('pageerror', (e) => raised.push(String(e.message).slice(0, 60)));
+    await broken.route('**/src/ui/sections.js', (route) => route.fulfill({
+      status: 200, contentType: 'text/javascript',
+      body: `export function initSections(){ throw new Error('deliberate boot failure'); }
+             export function activeSection(){ return null; }
+             export function sectionsOf(){ return []; }
+             export function showSection(){}
+             export function revealSectionFor(){}`,
+    }));
+    await broken.goto(PAGE);
+    // The gate the suites used to use, and the one they use now.
+    const oldGate = await broken.waitForFunction(
+      () => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0,
+      null, { timeout: 8000 }).then(() => true).catch(() => false);
+    const newGate = await broken.waitForFunction(
+      () => document.documentElement.dataset.studio === 'ready',
+      null, { timeout: 4000 }).then(() => true).catch(() => false);
+    check('a boot that throws part way still satisfies the OLD readiness test', oldGate);
+    check('…but never raises the ready flag the suites wait on now', newGate === false,
+      raised[0] || '(boot did not throw — the stub is no longer reached)');
+    await broken.close();
+  }
 
   await first.click('#welcome-sample');
   const after = await first.evaluate(() => {
@@ -1532,7 +1621,7 @@ console.log('\n[first run]');
 
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   await page.waitForFunction(() => (window.DeadSignalStudio.store?.get('filters.video') || []).length > 0,
                              null, { timeout: 8000 }).catch(() => {});
   check('the chain survives a reload', (await chain()).length >= 2, (await chain()).join(','));

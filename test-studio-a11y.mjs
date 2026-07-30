@@ -55,7 +55,7 @@ await page.addInitScript(() => {
 });
 
 await page.goto(PAGE);
-await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
 /* Helpers injected once; used by several checks below. */
 await page.addScriptTag({ content: `
@@ -283,7 +283,7 @@ section('reduced motion');
   const ctx = await browser.newContext({ reducedMotion: 'reduce' });
   const p2 = await ctx.newPage();
   await p2.goto(PAGE);
-  await p2.waitForFunction(() => document.querySelectorAll('#v-scene option').length > 0);
+  await p2.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   const r = await p2.evaluate(() => {
     const cs = getComputedStyle(document.body, '::after');
     return { opacity: parseFloat(cs.opacity), anim: cs.animationName };

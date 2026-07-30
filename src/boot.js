@@ -1,6 +1,7 @@
 /* Dead Signal Studio — boot.js */
 import { doRenderAudio, initAudioTab, markAudioStale } from './audio/ui.js';
 import { fillContainerSelect } from './export/encoder.js';
+import { primeSizing } from './ui/sizing.js';
 import { download } from './core/blobs.js';
 import { $, log, setVal, toast } from './core/dom.js';
 import { applyAesthetic, applyPack, fillPaletteSelect } from './core/palettes.js';
@@ -20,6 +21,7 @@ import { loadImageFile, loadVideoFile } from './media/import.js';
 import { PRESETS, rebuildPresetSelect } from './presets/index.js';
 import { initPalette } from './ui/palette.js';
 import { explainCoverage, initExplain, setArmed } from './ui/explain.js';
+import { initWhyOff } from './ui/whyoff.js';
 import { applyLevel, getLevel, initComplexity } from './ui/complexity.js';
 import { getContrast, initContrast, setContrast } from './ui/contrast.js';
 import { MACROS, applyMacro, initMacros } from './ui/macros.js';
@@ -86,6 +88,13 @@ export function boot(){
      long after the document was seeded from the markup, so their recorded boot
      default was the empty string and every document→DOM write blanked them. */
   fillContainerSelect($("v-container")); fillContainerSelect($("tl-container"));
+  /* And the four Format / Aspect pairs, for exactly the same reason — they were
+     the last two selects per panel still filled at tab-init, so their recorded
+     boot default was "" and the first ordinary edit in the view silently wrote a
+     Format and an Aspect the author never chose. See primeSizing. */
+  primeSizing({ format:"v-format",  aspect:"v-aspect",  w:"v-w",  h:"v-h"  });
+  primeSizing({ format:"i-format",  aspect:"i-aspect",  w:"i-w",  h:"i-h"  });
+  primeSizing({ format:"tl-format", aspect:"tl-aspect", w:"tl-w", h:"tl-h" });
   // The document becomes authoritative here. Selects must already be filled,
   // or their .value would not yet be the real default the markup implies.
   /* Every panel that is a PROJECTION of the document rather than a control.
@@ -145,6 +154,9 @@ export function boot(){
   initContrast();
   initMacros((tab)=>{ if(tab==='video') startVideoPreview(); else markAudioStale(); });
   initExplain();
+  /* Keeps the tooltip on every button that can be greyed out saying what would
+     turn it back on. After the panels above, so the ids all exist. */
+  initWhyOff();
   // One action list, shared by the palette and the workspace Browser so the
   // two cannot drift apart.
   const studioActions=[
@@ -300,6 +312,16 @@ export function boot(){
   log("DEAD SIGNAL STUDIO ready — "+Object.keys(SCENES).length+" scenes, "+Object.keys(TEMPLATES).length+" screen templates.","ok");
   // Asked before initCloud() has had a chance to clear the fragment.
   initPersistence(session, { arrivedByShareLink });
+  /* BOOT IS OVER — said once, out loud.
+     window.DeadSignalStudio is assigned at module scope, which is before boot()
+     has run a single line, and the scene picker is filled in boot()'s first
+     dozen. So "the global exists and the pickers have options" — the readiness
+     test the suites were using — was true for most of boot, including the whole
+     stretch where the first-run card may still be up and swallowing clicks.
+     Anything waiting on the studio (a suite, an embedder, a bookmarklet) wants
+     THIS instead: set last, after the final panel and the persistence layer. */
+  document.documentElement.dataset.studio="ready";
+  dispatchEvent(new CustomEvent("deadsignal:ready"));
 }
 
 /* Storage is best-effort and must never block or break boot: a private window

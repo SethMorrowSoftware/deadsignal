@@ -88,7 +88,7 @@ await page.addInitScript(() => {
 });
 
 await page.goto(PAGE);
-await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
 /* ==================================================== every control wired == */
 section('wiring');
