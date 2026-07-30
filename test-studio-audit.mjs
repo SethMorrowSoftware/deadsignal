@@ -1795,6 +1795,86 @@ section('preset manager');
   check('the manager overlay opens, lists and closes', r.rows === 3 && r.closed, `${r.rows} rows`);
 }
 
+/* SAVE used to destroy a preset of the same name without asking, on a name typed
+   into a prompt() — while the MANAGER refused the same collision on rename. The
+   two paths disagreed about the same rule. */
+{
+  const r = await page.evaluate(async () => {
+    const rec = await import('./src/core/recipes.js');
+    const p = await import('./src/presets/index.js');
+    const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
+    const scanOf = (n) => (rec.userPresets('video')[n] || {})['v-scan'];
+    const seed = () => { localStorage.setItem(rec.PKEY('video'), JSON.stringify({ Keeper: { 'v-scan': '11' } })); p.rebuildPresetSelect('video'); };
+    const realPrompt = window.prompt, realConfirm = window.confirm;
+
+    seed(); set('v-scan', '77');
+    window.prompt = () => 'Keeper'; window.confirm = () => false;
+    rec.saveUserPreset('video', 'view-video');
+    const declined = scanOf('Keeper');                       // must still be the seeded look
+
+    window.confirm = () => true;
+    rec.saveUserPreset('video', 'view-video');
+    const accepted = scanOf('Keeper');                       // now the controls on screen
+
+    /* " Keeper " and "Keeper" are the same name to a person. */
+    seed();
+    window.prompt = () => '   Keeper   '; window.confirm = () => true;
+    rec.saveUserPreset('video', 'view-video');
+    const names = Object.keys(rec.userPresets('video'));
+
+    /* An empty or all-whitespace name is not a preset name. */
+    window.prompt = () => '   ';
+    rec.saveUserPreset('video', 'view-video');
+    const afterBlank = Object.keys(rec.userPresets('video')).length;
+
+    window.prompt = realPrompt; window.confirm = realConfirm;
+    return { declined, accepted, names, afterBlank };
+  });
+  check('saving over a preset asks before replacing it', r.declined === '11', String(r.declined));
+  check('…and replaces it when that is confirmed', r.accepted === '77', String(r.accepted));
+  check('…and a padded name is the same name', r.names.length === 1 && r.names[0] === 'Keeper',
+        r.names.join(', '));
+  check('…and a blank name saves nothing', r.afterBlank === 1, String(r.afterBlank));
+}
+
+/* Deleting or renaming the SELECTED preset rebuilds the picker without that
+   option, which left selectedIndex at -1: a blank control whose whole job is to
+   say which look is loaded. */
+{
+  const r = await page.evaluate(async () => {
+    const rec = await import('./src/core/recipes.js');
+    const p = await import('./src/presets/index.js');
+    const pm = await import('./src/ui/presetman.js');
+    const sel = () => document.getElementById('v-preset');
+    const seat = (name) => {
+      localStorage.setItem(rec.PKEY('video'), JSON.stringify({ [name]: { 'v-scan': '13' } }));
+      p.rebuildPresetSelect('video');
+      sel().value = `user:${name}`;
+    };
+    const read = () => ({ value: sel().value, index: sel().selectedIndex,
+                          text: sel().selectedOptions[0]?.textContent ?? null });
+
+    seat('Doomed');
+    const seated = read();
+    rec.deleteUserPreset('video', 'Doomed');
+    const afterDelete = read();
+
+    seat('Renamed');
+    pm.renamePreset('video', 'Renamed', 'New Name');
+    const afterRename = read();
+
+    localStorage.removeItem(rec.PKEY('video'));
+    p.rebuildPresetSelect('video');
+    return { seated, afterDelete, afterRename };
+  });
+  check('a saved preset can be selected', r.seated.value === 'user:Doomed', JSON.stringify(r.seated));
+  check('…deleting the selected preset leaves the picker naming something',
+        r.afterDelete.index >= 0 && r.afterDelete.value === '— custom —', JSON.stringify(r.afterDelete));
+  check('…and renaming it carries the selection to the new name',
+        r.afterRename.value === 'user:New Name' && r.afterRename.text === 'New Name',
+        JSON.stringify(r.afterRename));
+}
+
 /* ======================================================== layer overrides == */
 /* A layer used to inherit the base clip's ENTIRE recipe, so every layer drew
    the same words in the same colour at the same size — which is why the panel

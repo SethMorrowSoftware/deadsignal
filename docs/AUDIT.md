@@ -212,6 +212,25 @@ page load 404s — on a subdirectory install, against somebody else's site.
   removed. It now reads the document with nothing in between, and is verified in
   both directions.
 
+- **The preset picker and the SAVE button disagreed about the same rule.**
+  `renamePreset` refuses to rename onto an occupied name (*"X already exists"*),
+  while `saveUserPreset` wrote `all[name] = readRecipe(...)` straight over
+  whatever was there — silently, on a name typed into a `prompt()`, where a typo
+  or a half-remembered name is the ordinary case and the thing destroyed is a
+  look somebody built by hand and cannot get back. Overwriting is legitimate (it
+  is how you iterate on a preset), so this now confirms rather than refuses.
+  Names are trimmed too: `" Mine"` and `"Mine"` are one name to a person and
+  were two entries here.
+
+- **Renaming or deleting the selected preset blanked the picker.**
+  `rebuildPresetSelect` restored the previous selection without checking that it
+  still existed, so writing a name the rebuilt list no longer held left
+  `selectedIndex` at `-1` — a blank control whose entire job is to say which look
+  is loaded. Measured: `{value: "", index: -1}` after deleting the selected
+  preset, and the same after renaming it. Delete now falls back to
+  `— custom —` (honest: the loaded preset is gone, and what is on screen is
+  nobody's preset), and rename carries the selection to the new name.
+
 ---
 
 ## Investigated and found NOT to be defects
@@ -276,8 +295,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 - The install does not lock itself when the account step is skipped.
 
 **Client and UI**
-- Renaming or deleting the selected user preset leaves the picker blank.
-- Saving a preset over an existing name destroys it without asking.
 - The command palette's catalogue is frozen at boot, so saved presets are never
   findable.
 - `#v-flash` is a permanently-live region that rewrites four times a second.

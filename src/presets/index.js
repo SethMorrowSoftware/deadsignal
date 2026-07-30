@@ -90,10 +90,19 @@ export function rebuildPresetSelect(tab){ const sel=$({video:"v-preset",audio:"a
   const custom=document.createElement("option"); custom.value="— custom —"; custom.textContent="— custom —"; sel.appendChild(custom);
   const groups=PRESETS[tab]||{}; for(const grp in groups){ const og=document.createElement("optgroup"); og.label=grp; for(const n in groups[grp]){ const o=document.createElement("option"); o.value=n; o.textContent=n; og.appendChild(o); } sel.appendChild(og); }
   const up=userPresets(tab); const names=Object.keys(up); if(names.length){ const og=document.createElement("optgroup"); og.label="My Presets"; names.forEach(n=>{ const o=document.createElement("option"); o.value="user:"+n; o.textContent=n; og.appendChild(o); }); sel.appendChild(og); }
-  // Restoring the selection after rebuilding the options must NOT dispatch:
-  // the change handler is loadPreset(), so echoing would re-apply the preset
-  // (and stamp an undo entry) every time the list is rebuilt.
-  if(cur)sel.value=cur;   /* dom-only: dispatching here would re-run loadPreset */ }
+  /* Restoring the selection after rebuilding the options must NOT dispatch:
+     the change handler is loadPreset(), so echoing would re-apply the preset
+     (and stamp an undo entry) every time the list is rebuilt.
+     And it must only restore a selection that still EXISTS. Renaming or deleting
+     the currently-selected user preset rebuilds this list without it, and
+     writing a name the list no longer holds leaves selectedIndex at -1 — a blank
+     picker that names nothing, on a control whose whole job is to say which look
+     is loaded.
+     Measured: selecting a saved preset and deleting it left value "" at index -1.
+     "— custom —" is the honest fallback: the preset that was loaded is gone, and
+     what is on screen is now nobody's preset. */
+  const has=cur && Array.from(sel.options).some(o=>o.value===cur);
+  sel.value=has?cur:"— custom —";   /* dom-only: dispatching here would re-run loadPreset */ }
 /* A preset is a LOOK, so loading one has to land on the same look every time.
  *
  * The built-in presets name only the dozen controls their look depends on, and

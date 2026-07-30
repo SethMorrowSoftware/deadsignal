@@ -38,7 +38,17 @@ export function renamePreset(tab, from, to) {
   const out = {};
   // Rebuilt in order so renaming does not send the entry to the end of the list.
   for (const k of Object.keys(all)) out[k === from ? name : k] = all[k];
-  return write(tab, out);
+  /* Carry the PICKER to the new name. rebuildPresetSelect now falls back to
+     "— custom —" rather than blanking itself when the selected option has gone,
+     which is right for a delete and wrong for a rename: the same look is still
+     loaded, it just answers to something else now. */
+  const sel = $(SELECT_ID[tab]);
+  const wasSelected = sel && sel.value === `user:${from}`;
+  const ok = write(tab, out);
+  if (ok && wasSelected && sel) {
+    sel.value = `user:${name}`;   /* dom-only: dispatching would re-run loadPreset on a look already loaded */
+  }
+  return ok;
 }
 
 export function duplicatePreset(tab, from) {
