@@ -366,10 +366,39 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
      failure put the fragment back, a revoked token disabled autosave and session
      restore for that URL on every load, forever, for a reader whose work was
      never anyone else's project. A share that FAILED is an ordinary visit. */
+  /* THE READOUT, AND THE ONE MOMENT WORTH INTERRUPTING FOR.
+     This tool's promise is that the session comes back. Nothing on screen said
+     whether that was true: a failing autosave wrote one line into the CONSOLE
+     panel per edit — ten ordinary edits, ten identical lines — and was otherwise
+     invisible, so the author's work could stop being kept without a word they
+     would notice. The readout is glanceable and quiet; the transition INTO
+     failure is a toast, because that is the moment to stop and save a file.
+     Reported on the transition rather than per write, so a broken backend does
+     not turn into a stream of toasts. */
+  const paintSaveState=(kind,at)=>{
+    const el=$("save-state"); if(!el) return;
+    el.classList.toggle("ok",kind==="ok");
+    el.classList.toggle("failing",kind==="failing");
+    if(kind==="failing"){ el.textContent="⚠ NOT SAVING";
+      el.title="This session is NOT being saved to your browser. Save a project file (Ctrl+S) to keep your work."; return; }
+    const t=at?new Date(at):null;
+    el.textContent="✓ saved"+(t?" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"):"");
+    el.title="This session is saved in your browser and is restored automatically when you come back.";
+  };
   const startAutosave=()=>{
     if(studioAutosave) return;
     studioAutosave=autosave(session.store, backend, {
-      onError:(e)=>log("Autosave failed: "+e.message,"warn"),
+      onSave:(at,{recovered}={})=>{
+        paintSaveState("ok",at);
+        if(recovered){ log("Autosave is working again — this session is being kept.","ok"); toast("Saving again"); }
+      },
+      onError:(e,{first}={})=>{
+        paintSaveState("failing");
+        if(first){
+          log("Autosave failed ("+e.message+"). This session is NOT being kept — save a project file (Ctrl+S) to be safe.","err");
+          toast("Not saving — save a project file","err");
+        }
+      },
     });
   };
   if(arrivedByShareLink){

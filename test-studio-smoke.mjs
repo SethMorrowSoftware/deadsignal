@@ -1723,6 +1723,62 @@ console.log('\n[first run]');
   await page.waitForTimeout(300);
 }
 
+/* ------------------------------------------------------------- autosave --- */
+/* The tool's promise is that the session comes back. Nothing on screen said
+   whether that was true, and a failing autosave wrote one CONSOLE line per edit
+   — ten ordinary edits, ten identical lines — and was otherwise invisible. So
+   the author's work could stop being kept without a word they would notice. */
+{
+  const state = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const el = () => document.getElementById('save-state');
+    S.store.apply({ op: 'set', path: 'tabs.video.v-text', value: 'autosave probe', label: 'probe' });
+    await new Promise((r) => setTimeout(r, 1500));
+    const healthy = { text: el()?.textContent || '', cls: el()?.className || '',
+                      role: el()?.getAttribute('role') };
+
+    /* A backend that has stopped accepting writes: a full quota, a closed
+       database, a private window that revoked it mid-session. */
+    const St = await import('./src/platform/storage.js');
+    let fail = true, writes = 0;
+    const firsts = [], recovers = [];
+    const flaky = { async putDoc() { writes++; if (fail) throw new Error('QuotaExceededError'); },
+                    async getDoc() { return null; } };
+    const a = St.autosave(S.store, flaky, { delay: 30,
+      onError: (e, o) => firsts.push(!!(o && o.first)),
+      onSave: (at, o) => recovers.push(!!(o && o.recovered)) });
+    for (let i = 0; i < 10; i++) {
+      S.store.apply({ op: 'set', path: 'tabs.video.v-text', value: 'e' + i, label: 'probe' });
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    await new Promise((r) => setTimeout(r, 150));
+    const failing = { writes, errors: firsts.length, announced: firsts.filter(Boolean).length,
+                      reportsFailing: a.failing === true };
+    fail = false;
+    S.store.apply({ op: 'set', path: 'tabs.video.v-text', value: 'back', label: 'probe' });
+    await new Promise((r) => setTimeout(r, 200));
+    const recovery = { saves: recovers.length, announced: recovers.filter(Boolean).length,
+                       reportsFailing: a.failing };
+    a.stop();
+    return { healthy, failing, recovery };
+  });
+  check('the header says whether this session is being saved',
+        /saved/i.test(state.healthy.text) && /\bok\b/.test(state.healthy.cls),
+        `${state.healthy.text} · ${state.healthy.cls}`);
+  check('…as a status, not a live region reciting every save',
+        state.healthy.role === 'status', String(state.healthy.role));
+  /* The point of the transition flags: a broken backend fails on EVERY edit, and
+     what the author needs is not that the eighth one failed — it is that saving
+     stopped working, once, loudly. */
+  check('a failing autosave is announced once, not once per edit',
+        state.failing.errors === 10 && state.failing.announced === 1,
+        `${state.failing.errors} failures, ${state.failing.announced} announced`);
+  check('…and it knows it is failing while it is', state.failing.reportsFailing === true);
+  check('…and recovery is announced once too',
+        state.recovery.announced === 1 && state.recovery.reportsFailing === false,
+        JSON.stringify(state.recovery));
+}
+
 /* --------------------------------------------------------------- reflow --- */
 /* WCAG 1.4.10: content must not need scrolling in TWO directions. The page
    scrolls vertically, so nothing may force a horizontal scroll down to 320 CSS

@@ -38,6 +38,14 @@
   <span class="ctl">seed <input type="number" id="seed" value="1947" min="0" max="4294967295" step="1" style="width:80px" title="deterministic seed for all randomness">
     <button class="btn small" id="seed-roll" title="new random seed">⟳</button></span>
   <span class="ctl">CRT <input type="range" id="crt-intensity" min="0" max="100" value="50" style="width:70px" title="tool chrome CRT intensity (does not affect output)"></span>
+  <!-- Whether the session is being kept. The tool autosaves to IndexedDB and
+       restores on reload, and nothing on screen said whether that was working:
+       a failing autosave wrote a line into the CONSOLE panel and was otherwise
+       invisible, so "my work comes back" was a promise with no way to check it.
+       role=status, not a live region that recites every save — it is polled by
+       eye, and the one moment worth announcing (saving stopped) is a toast. -->
+  <span class="ctl"><span id="save-state" class="tag save-state" role="status"
+    title="Whether this session is being saved to your browser. It is restored automatically when you come back.">·</span></span>
   <span class="ctl"><label for="contrast">contrast</label>
     <select id="contrast" title="High contrast turns off the CRT overlay and phosphor glow in the tool's own interface. Rendered media is unaffected.">
       <option value="normal">Normal</option><option value="high">High</option>

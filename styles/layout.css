@@ -50,6 +50,11 @@ header.top{padding:12px 18px 8px; border-bottom:1px solid var(--edge2); display:
   @media(max-width:460px){
     .split2,.split3{grid-template-columns:minmax(0,1fr)}
   }
+  /* The save-state readout. Quiet when all is well — it is there to be glanced
+     at, not to draw the eye — and unmistakable when it is not. */
+  .save-state{font-size:11px; letter-spacing:.06em; white-space:nowrap; color:var(--muted)}
+  .save-state.ok{color:var(--phos)}
+  .save-state.failing{color:#ff5a5a; font-weight:600}
   .foot{color:var(--muted); font-size:12px; text-align:center; padding:16px 10px 26px; letter-spacing:1px}
 
 /* Two even columns that stack on a narrow screen. Used where a panel holds

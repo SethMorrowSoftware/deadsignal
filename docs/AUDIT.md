@@ -342,8 +342,36 @@ the 1599 the box would accept is twenty hours of encoding), and
 advertised bound is a property of the field, not of whether it happens to be
 project state.
 
+**Autosave could stop working without a word the author would notice.**
+
+The tool's promise is that the session comes back after a reload, and *nothing on
+screen said whether that was true*. A failing autosave — a full IndexedDB quota,
+a closed database, a private window that revoked storage mid-session — called
+`onError` on every write, and boot's handler wrote one line into the CONSOLE
+panel each time. Measured: **ten ordinary edits produced ten identical
+"Autosave failed" lines, no toast, and no indicator anywhere.** Work could stop
+being kept and the only trace was in a scrolling panel nobody watches.
+
+Two halves:
+
+- **A readout in the header.** `✓ saved 16:49` when the session is being kept,
+  `⚠ NOT SAVING` when it is not. `role="status"` rather than a live region — it
+  is there to be glanced at, not recited on every save.
+- **The transition is what gets announced, not the event.** `autosave()` now
+  tracks whether the previous write failed and tells the caller which write is
+  the *first* failure of a run and which is the *recovery*. So a broken backend
+  produces one toast — "Not saving — save a project file" — instead of a stream
+  of them, and one line when it starts working again. Verified: 10 consecutive
+  failures, 1 announcement.
+
+Same hysteresis discipline as the flash meter: a state worth interrupting for is
+worth interrupting for **once**.
+
 ### Investigated and found NOT to be defects
 
+- **Every button, pressed from a cold empty project.** All 116 of them, with no
+  clips, no library, no chains and nothing selected: **nothing threw** — no page
+  errors, no console errors. The empty state is genuinely handled.
 - **"The welcome card ignores Escape."** The first probe dispatched the key on
   `document`; the listener is on the dialog element. Focus is moved inside on
   open, so a real key press bubbles to it and closes the card. The palette and
