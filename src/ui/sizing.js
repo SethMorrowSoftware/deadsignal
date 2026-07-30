@@ -23,6 +23,44 @@ import { ASPECTS, FORMATS, MAX_DIM, fillSelect, fitRatio, formatById, formatFor 
  * @param {(factor:number) => void} [o.onResize] the frame was deliberately
  *   re-scaled by this linear factor — see the note below.
  */
+/**
+ * Fill the Format and Aspect pickers and put them where the size already says,
+ * BEFORE the document is seeded from the markup.
+ *
+ * These two are the last selects that broke the invariant `startSession` states:
+ * *"Selects must already be filled, or their .value would not yet be the real
+ * default the markup implies."* They are filled by initSizing(), which runs at
+ * tab-init — long after the document snapshot — so the boot default recorded for
+ * both was the **empty string**, and a project saved before the first edit
+ * carried `""` for Format and Aspect.
+ *
+ * Worse, they did not stay empty: the first ordinary edit anywhere in the view
+ * runs wireLive → syncFormat, which derives the format from W and H and writes
+ * it; that write fires the picker's own change handler, which writes the aspect.
+ * Measured on a stock build: **one nudge of the Scanlines slider cost three undo
+ * entries**, and the first two undid a Format and an Aspect the author had never
+ * set. Every comparable action — add a clip, add a layer, add a mark — is one.
+ *
+ * Priming here makes the seeded document hold what the size already implies, so
+ * the first edit is one edit. The same three-part fix as the seven blanked
+ * selects: filled before the seed, real state kept as real state, and nothing
+ * left to be corrected later.
+ */
+export function primeSizing({ format, aspect, w, h }) {
+  const fmt = format ? $(format) : null;
+  const asp = aspect ? $(aspect) : null;
+  if (fmt) fillSelect(fmt, FORMATS);
+  if (asp) fillSelect(asp, ASPECTS);
+  if (!fmt) return false;
+  const want = formatFor(num(w, 0), num(h, 0));
+  if ([...fmt.options].some((o) => o.value === want)) fmt.value = want;   /* dom-only: before any session exists, this IS the markup's default */
+  const f = formatById(fmt.value);
+  if (asp && f && f.ratio && [...asp.options].some((o) => o.value === f.ratio)) {
+    asp.value = f.ratio;   /* dom-only: same — seeding the default, not editing it */
+  }
+  return true;
+}
+
 export function initSizing({ format, aspect, w, h, maxW = MAX_DIM, maxH = MAX_DIM, after, onResize }) {
   const fmt = format ? $(format) : null;
   const asp = aspect ? $(aspect) : null;

@@ -7,7 +7,7 @@
  * on undo / redo / load — never in response to the user's own keystroke, which
  * would fight the caret in a text field.
  */
-import { $ } from '../core/dom.js';
+import { $, log, toast } from '../core/dom.js';
 import { Store, set } from './store.js';
 import { setSession, pathFor } from './session.js';
 
@@ -226,6 +226,43 @@ export function renderDocToDom(store, index, skipId = null) {
  *        app can refresh previews.
  * @returns {() => void} detach
  */
+/**
+ * Hold a number field to the bounds it advertises.
+ *
+ * `<input type="number">` clamps only its own steppers. Type a number and the
+ * box keeps it, however far outside min/max it is — and every reader here goes
+ * through `clamp()`, so the picture was right while the CONTROL, THE DOCUMENT
+ * AND THE SAVED PROJECT FILE all said something else. Measured on a stock
+ * build: typing 1299 into FPS (max 30) rendered at 30, stored "1299", and wrote
+ * "1299" into the project file — a value no build of this tool will ever
+ * honour, travelling with the project forever, silently. Same for duration
+ * (9999 → 60) and width (−50 → 64). 53 number inputs behaved this way.
+ *
+ * Clamped on `change`, never on `input`: correcting mid-keystroke would make
+ * typing "50" into a field with a minimum of 10 snap to 10 after the "5".
+ *
+ * A blank or unparseable box is left alone — that is a field being cleared, and
+ * every reader already defaults it. And the correction is announced, because a
+ * number that changes under your hands without a word is its own bug report.
+ */
+export function clampToBounds(el) {
+  if (!el || (el.type !== 'number' && el.type !== 'range')) return null;
+  const v = parseFloat(el.value);
+  if (!Number.isFinite(v)) return null;
+  const min = el.min === '' ? -Infinity : parseFloat(el.min);
+  const max = el.max === '' ? Infinity : parseFloat(el.max);
+  if (!Number.isFinite(min) && !Number.isFinite(max)) return null;
+  const c = Math.min(Number.isFinite(max) ? max : Infinity,
+                     Math.max(Number.isFinite(min) ? min : -Infinity, v));
+  if (c === v) return null;
+  el.value = String(c);   /* dom-only: correcting the box the author is committing, before it is read */
+  const name = el.labels?.[0]?.textContent?.trim() || el.id;
+  const bound = c === max ? `most is ${max}` : `least is ${min}`;
+  log(`${name}: ${v} is outside the allowed range — using ${c} (${bound}).`, 'warn');
+  toast(`${name} clamped to ${c}`, 'warn');
+  return c;
+}
+
 export function bindControls(store, index, opts = {}) {
   const offs = [];
   let editingId = null;
@@ -259,6 +296,21 @@ export function bindControls(store, index, opts = {}) {
    * handler can react to it, which is the order the rest of the app already
    * assumes when it reads val()/num()/chk(). */
   const CAPTURE = true;
+
+  /* THE CLAMP IS PAGE-WIDE, not document-wide.
+     Hung on `document` in the capture phase, so it lands before onEdit reads the
+     control — and so it reaches fields the DOCUMENT never sees. Two of the
+     fifty-three live outside it: `bx-seconds`, which caps how long each item in
+     a batch runs (a 45-item batch at the 1599 the box would accept is twenty
+     hours of encoding), and `cloud-share-days`, whose number is sent to the
+     server. Both advertise bounds; neither was held to them, because the
+     document binding returns early for a panel-local control and that is where
+     the clamp first lived. "A field is held to the bounds it advertises" is a
+     property of the field, not of whether it happens to be project state. */
+  const onCommit = (e) => { if (e.target) clampToBounds(e.target); };
+  document.addEventListener('change', onCommit, CAPTURE);
+  offs.push(() => document.removeEventListener('change', onCommit, CAPTURE));
+
   for (const viewId of Object.keys(VIEW_TABS)) {
     const root = $(viewId);
     if (!root) continue;

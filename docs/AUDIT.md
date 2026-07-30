@@ -287,12 +287,28 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-One item, and it is not a code defect.
+Three items. None blocks the beta.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
   should make, and it is deliberately left out. Nothing else here is blocked on
   it, but a beta without one is a beta nobody can legally build on.
+
+**Verification**
+- **Everything is verified in Chromium only.** All four browser suites drive
+  Chromium; Firefox and WebKit are untested. Specific known risk points in this
+  codebase: canvas `letterSpacing` (Firefox does not implement it — guarded, so
+  type *renders differently* rather than crashing), WebCodecs, `captureStream`,
+  IndexedDB in Safari private mode, and H.264/MP4. `⎘ COPY DIAGNOSTICS` reports
+  each of these, so a beta tester on another engine can say which are missing.
+
+**Interface**
+- **`grade` and `levels` do nothing at their default parameters.** They are
+  adjustment filters and identity defaults are the defensible choice, but an
+  author who adds one and sees no change cannot tell that from a filter that is
+  broken. Every other filter in the set changes the picture on sight. Either a
+  non-identity default or a word in the row would fix it; both are product
+  decisions rather than audit findings.
 
 Every other finding this audit raised has been either fixed above or recorded
 under *Investigated and found NOT to be defects*. Two caveats on that, because
@@ -306,6 +322,399 @@ under *Investigated and found NOT to be defects*. Two caveats on that, because
   measured rather than as filed: the MP4 ceiling is around 66 minutes rather than
   14, and the editor's reflow broke at about 600 px rather than 500. A finding
   worth fixing can still be wrong about its own detail.
+
+---
+
+## Round four: a field that lied about its own value
+
+**Every number field kept a value it would never honour, and saved it.**
+`<input type="number">` clamps only its own steppers, so a *typed* number stayed
+in the box however far outside its declared min/max it was — while every reader
+in the tool goes through `clamp()`. The picture was therefore right and the
+control, the document and the project file all said something else.
+
+Measured on a stock build: typing **1299 into FPS (max 30)** rendered at 30,
+stored `"1299"` in the document, and wrote `"1299"` into the saved project — a
+number no build of this tool will ever honour, travelling with that project
+forever, with nothing said. Duration `9999 → 60`; width `−50 → 64`. **All 53
+bounded number inputs behaved this way.**
+
+The deep suite already asserted that every field *declares* min and max. It
+turns out declaring a bound and enforcing one are different claims, and only the
+first was being made.
+
+Now clamped on `change` — the commit point, never on `input`, because correcting
+mid-keystroke would make typing "50" into a field with a minimum of 10 snap to 10
+after the "5". A blank box is left blank (that is a field being cleared, and
+every reader already defaults it), an in-range value passes through untouched and
+unremarked, and a correction is announced, because a number that changes under
+your hands without a word is its own bug report.
+
+The clamp hangs on `document` in the capture phase rather than on the document
+binding, and that matters: two of the fifty-three live outside project state —
+`bx-seconds`, which caps how long each item in a batch runs (a 45-item batch at
+the 1599 the box would accept is twenty hours of encoding), and
+`cloud-share-days`, whose number is sent to the server. Being held to an
+advertised bound is a property of the field, not of whether it happens to be
+project state.
+
+**Autosave could stop working without a word the author would notice.**
+
+The tool's promise is that the session comes back after a reload, and *nothing on
+screen said whether that was true*. A failing autosave — a full IndexedDB quota,
+a closed database, a private window that revoked storage mid-session — called
+`onError` on every write, and boot's handler wrote one line into the CONSOLE
+panel each time. Measured: **ten ordinary edits produced ten identical
+"Autosave failed" lines, no toast, and no indicator anywhere.** Work could stop
+being kept and the only trace was in a scrolling panel nobody watches.
+
+Two halves:
+
+- **A readout in the header.** `✓ saved 16:49` when the session is being kept,
+  `⚠ NOT SAVING` when it is not. `role="status"` rather than a live region — it
+  is there to be glanced at, not recited on every save.
+- **The transition is what gets announced, not the event.** `autosave()` now
+  tracks whether the previous write failed and tells the caller which write is
+  the *first* failure of a run and which is the *recovery*. So a broken backend
+  produces one toast — "Not saving — save a project file" — instead of a stream
+  of them, and one line when it starts working again. Verified: 10 consecutive
+  failures, 1 announcement.
+
+Same hysteresis discipline as the flash meter: a state worth interrupting for is
+worth interrupting for **once**.
+
+### One nudge, three undo entries
+
+The two Format/Aspect pairs per panel were the last selects still filled at
+*tab-init* rather than before the document was seeded from the markup, so their
+recorded boot default was `""`. The first ordinary edit anywhere in the video
+view therefore ran `wireLive → syncFormat`, which derived a Format from W and H
+and wrote it, whose own change handler then wrote an Aspect.
+
+Measured on a stock build: **one nudge of the Scanlines slider cost three undo
+entries**, and the first two undid a Format and an Aspect nobody had chosen.
+Adding a single filter cost three as well — and *one* undo left the filter in
+place, which is the version an author actually notices.
+
+`primeSizing()` now seeds all three pairs from the frame size before
+`startSession`, alongside the container pickers that were fixed for the same
+reason earlier in this audit. Afterwards: one nudge, one entry; one filter, one
+entry; one undo takes the filter back off.
+
+Worth recording how the test for this went wrong first. Written inline in the
+deep suite it passed *with the fix reverted*, because by the time it ran the
+suite had already made its first edit two hundred checks earlier — which on a
+broken build is precisely the edit that fills Format and Aspect in. There is
+only ever one first edit per page, so the measurement now opens its own fresh
+context, and the filter half opens a second one. Reverted, all five checks go
+red; restored, all five pass.
+
+### A modal dialog that flashed at everyone
+
+`#welcome` was visible in the markup so that a cold start would show it at the
+first paint rather than waiting for sixty modules to load. But the same wait
+applied to *hiding* it: `initWelcome()` — the thing that closes it for a
+returning author — runs two hundred lines into `boot()`. So an author who
+dismissed the card months ago got a flash of a modal dialog on every single
+load, **and every click during that flash landed on the dialog instead of the
+tool**. Measured: visible for **16 of the 17 frames** boot takes.
+
+This is also the answer to the intermittent CI failure recorded further down —
+a tab click "intercepted by `#welcome`" that no amount of re-running would
+reproduce reliably.
+
+The card now starts closed and a cold start *opens* it, which puts the cost on
+the case that wants a dialog: a first-run visitor sees it a moment after the
+tool paints. Measured after: **0 of 20 frames**.
+
+### A readiness signal that meant nothing
+
+The four browser suites all waited on `window.DeadSignalStudio && #v-scene has
+options` before touching the page. `window.DeadSignalStudio` is assigned at
+*module-evaluation* time — before `DOMContentLoaded`, so before `boot()` has run
+a line — and the scene picker is filled in boot's first dozen. A boot that threw
+anywhere after that still satisfied the gate, and the suite went on clicking at
+a half-wired page.
+
+`boot()` now sets `document.documentElement.dataset.studio = "ready"` on its last
+line and fires a `deadsignal:ready` event; every suite waits on that instead.
+
+Proven rather than asserted: the suite serves one module as a stub whose
+`initSections()` throws, and checks both gates against that page. The old one is
+satisfied. The new one is not. The check that would have been the "run it
+backwards" step is a passing check in its own right.
+
+### Import failures that said nothing an author would see
+
+Three, all the same shape — the tool refusing work and keeping the reason to
+itself:
+
+- **A bad image logged to a closed console and raised no toast.** Its video
+  sibling has always toasted. So dropping a `.txt` on the SCREEN tab looked
+  exactly like dropping nothing: the old image stayed on the canvas, and the one
+  line of explanation went to a panel that is collapsed by default.
+- **`FileReader`'s own error was not handled at all**, so a file the browser
+  cannot read — removed drive, permissions — failed in complete silence.
+- **A file with no picture in it was accepted.** An `.mp3`, an audio-only
+  `.mp4`, or a container whose video track this build cannot decode reaches
+  `onloadedmetadata`, not `onerror`. The log read `Imported video 0×0`, the toast
+  read "Video imported", **`v-dur` was rewritten to the clip's length**, and the
+  canvas went on showing "DROP or LOAD a video clip". Now refused where it
+  arrives, leaving the previous clip and the duration alone.
+
+Each now names what failed, on which file, and what the tool can actually open.
+
+### The safety net under the one irreversible click, silently off
+
+Loading a project replaces the document and clears the undo stacks.
+`stashPreviousProject()` is the net: it keeps the outgoing document in
+localStorage so a misclick is recoverable. Its write can fail — a full
+localStorage, a private window, a document over the 5 MB quota — and it returned
+`false` into a caller that **ignored the return value**, mentioning it only in a
+line of the closed console.
+
+Reproduced by genuinely filling localStorage (104 chunks, then topping off in
+smaller sizes until a 4 KB write throws) rather than stubbing it: the stash
+failed, the load proceeded, and the project was gone. It still cannot refuse the
+load — every programmatic caller would break — but it now says so on the same
+channel that announces the load itself.
+
+### Greyed-out buttons that would not say why
+
+Eight buttons are disabled the moment the page opens and not one carried a
+`title`, an `aria-description`, or anything else naming what would switch it on.
+The worst is the Audio panel: **▶ PLAY, ⤓ .wav and NORMALIZE are all dead until
+◆ RENDER has been pressed once**, and nothing on screen connected the four.
+
+`src/ui/whyoff.js` keeps the tooltip honest in both directions — while a button
+is off it names the thing that turns it on, and when it comes on it goes back to
+describing what it does. One `MutationObserver` on the `disabled` attribute,
+which changes a handful of times per session. Not a state machine: the panels
+still own their own enable/disable logic.
+
+Left undone deliberately: a `disabled` button is out of the tab order entirely,
+so a keyboard-only reader never lands on it and hears neither title. Fixing that
+means moving these to `aria-disabled` and making every handler refuse for
+itself — a larger change than this round, and recorded under *Still open*.
+
+### A sweep for the rest of the silent failures
+
+Every finding above is the same shape — the tool doing something the author
+would want to know about and keeping it to a `log()` line in a console panel
+that is collapsed by default. So the last pass of this round was a sweep for
+the rest of that shape: **22 fully-swallowing `catch` blocks, 26 that log
+without a toast, 8 `.catch(() => {})`**.
+
+Most are correct. The swallowing ones are almost entirely feature detection
+(`ctx.letterSpacing`, `ctx.filter`, media-element teardown) where there is
+genuinely nothing to say. Three were not:
+
+- **An export that loses its sound.** Four sites — offline and real-time, video
+  and sequence — where `prepareBed` throwing means the file is written *silent*
+  and the only trace is `Audio bed failed … — exporting silent` in the console.
+  The artefact is wrong in the way the author is least likely to notice: it
+  looks right and plays back mute somewhere else, later. Now toasted. The
+  export still completes, which is the correct behaviour — a clip without its
+  bed beats no clip.
+- **RECORD failing at `MediaRecorder`.** Both `new MediaRecorder(stream, opts)`
+  and the bare-options retry can throw, and the handler logged and returned. The
+  button un-greyed and nothing happened. Two lines above it, the "capture not
+  supported" branch has always toasted; these two now agree.
+- **A library row whose bytes never reached disk.** `setAssetPersister`'s
+  failure path logged one `warn`. A browser out of room showed the row, showed
+  the thumbnail, and lost the file on the next reload — first noticed as a
+  bundle export missing half its media. Announced once per run of failures
+  rather than once per asset, the same hysteresis as the autosave readout.
+
+The export check is made by serving `audio/bed.js` as a module that re-exports
+the real one and shadows `prepareBed` alone, so boot is untouched and only the
+bed fails; the asset check rejects `backend.putAsset` for four writes and counts
+the announcements.
+
+### The fault nobody anticipated, and what build it happened on
+
+Two things a beta needs that this repository did not have.
+
+**There was no global error handler.** No `window.onerror`, no
+`unhandledrejection` listener, anywhere. Every *individual* failure path in the
+tool now says what went wrong — that is most of this round — but the one that
+was never anticipated had nowhere to go. A throw on a path these suites do not
+walk left the interface half-wedged and completely quiet: a button that stopped
+working, and nothing to report about it. The deep suite's "no uncaught page
+errors" check proves it for the paths it walks; finding the others is what a
+beta *is*, and a tester can only report what the tool tells them.
+
+`src/platform/errors.js` now catches both. Three properties, each measured:
+
+- **Announced once per distinct fault, not once per occurrence.** A handler that
+  throws on every animation frame is one problem, not sixty. Verified: 21 throws
+  of the same error, 1 announcement.
+- **Collapsed in the report, too.** The first version appended one line per
+  occurrence, so twenty-one identical entries filled the twenty-slot list and
+  pushed out the earlier, *different* fault that was the useful part. Now one
+  line with a count and a last-seen time.
+- **A missing image is not an exception.** Element `error` events do not bubble,
+  so a non-capturing window listener never sees them — the guard in the handler
+  is for the day someone adds `true` to that listener, which would deliver every
+  broken image as an unexplained "something went wrong".
+
+Nothing suppresses the default handling: the error still reaches the browser
+console and still reaches Playwright's `pageerror`, so every suite that asserts
+on uncaught errors goes on working unchanged.
+
+**And there was no version anywhere.** No `package.json`, no build step, nothing
+in the interface, and a boot line that read `DEAD SIGNAL STUDIO ready` with no
+stamp. A bug report against a tool with no version in it is a report about an
+unknown program. `src/core/version.js` holds one hand-maintained constant — a
+generated stamp needs a build step, and not having one is a commitment this
+repository makes everywhere else — shown in the header, in the boot line, and in
+**⎘ COPY DIAGNOSTICS** on the HELP tab, which puts the build, the browser, which
+platform features are actually present (WebCodecs, OffscreenCanvas, IndexedDB,
+MediaRecorder, AudioContext, canvas `letterSpacing`), the secure-context state
+and the session's faults on the clipboard. Clipboard only: nothing is sent
+anywhere, which is the premise of the tool and has to stay true of its bug
+reports.
+
+One correction worth recording. The missing-image check originally measured the
+*toast rail* and passed against a reporter that was recording the image error —
+every announcement carries the same text and the rail collapses repeats into
+`×N`, so "no new toast text" cannot tell absence from collapse. Two neighbouring
+checks caught what it missed. It measures the fault list now, and goes red when
+the listener is made capturing.
+
+### The preview box did not show every frame the export writes
+
+Reported from use: *"some FX are not being applied to the preview, but show in
+the exported videos."*
+
+Not the filter chain, and not any individual effect — both paths call the same
+`renderScaled`. It was the **playhead**. Quantising the preview to the clip's
+frame grid (recorded earlier in this audit) fixed the frame *grid*, but the
+position was still read from the wall clock: `t = (now − start) / 1000`. So the
+moment a frame cost more than `1/fps` to draw — a real output size with any
+chain on it — the next read had already moved past one or more frame indices,
+and those frames were never drawn.
+
+Measured on `main`, 1280×720 at 10fps with six filters: the export writes 30
+frames, the preview drew 14, stepping **14→17→20→22→25→29→2→5→8**. Sixteen
+frames the author never saw.
+
+That is not a cosmetic loss, because of *which* frames it eats. The effects that
+live on particular frames are exactly the vulnerable ones: the subliminal insert
+(one or two frames by definition), a blink code, the reveal, a one-frame glitch,
+the fade at each end. Set one, watch the preview, see nothing — then find it in
+the exported file. Which is the report.
+
+The throttle itself was right and is untouched: a heavy chain must slow the
+picture, not the interface. What changed is *how* it gives way. The playhead now
+advances by **at most one frame per drawn frame**, so keeping up is real-time
+playback and nothing changes, and falling behind plays slower than real time
+instead of dropping content — which is what an editor does when it cannot keep
+up, and the right way round for a tool whose whole job is "what will my file
+look like". The estimate's note changed with it, because the old wording
+described the old behaviour: *preview slower than real time, every frame shown
+(export unaffected)*.
+
+Verified on the STEP between consecutive drawn frames rather than on a count, so
+it holds however slowly the preview is running. Reverted to the wall-clock
+playhead it reads `8→15→23→30→37→45`; with the fix every step is +1.
+
+Two measurement mistakes on the way to this, both worth recording because both
+produced a confident wrong answer:
+
+- **The first sweep found nothing.** It compared the preview against
+  `renderVideoFrame`, but the exporter calls `renderScaled` — so 2×SS showed as
+  a divergence that was the probe's, and phosphor persistence shares a
+  module-level canvas that every export path resets and the probe did not. Both
+  "findings" were artifacts; all 45 filters and all 48 scenes actually agree.
+- **`MutationObserver` batches.** Reading `el.textContent` once per callback
+  rather than once per record collapses two fast frames into one and reports a
+  skip the loop never made. And `#v-time` is written as `toFixed(1)`, so the
+  frame index is only recoverable from it at 10fps — at 12fps, 0.1667 and 0.25
+  land in neighbouring tenths and the reconstruction invents a `2→4`. Both made
+  a *correct* build look broken.
+
+Recorded separately: **`grade` and `levels` have no visible effect at their
+default parameters.** That is defensible — they are adjustment filters and their
+defaults are identity — but an author who adds one and sees nothing has no way
+to tell that from a broken filter. Listed under *Still open*.
+
+### A control that is off, and out of reach
+
+Recorded as *Still open* at the end of round four and now closed, because the
+tooltips that round added turned out to be unreachable by exactly the people who
+cannot see a greyed-out button and guess.
+
+`disabled` takes an element **out of the tab order**. That is the right answer
+for a control nobody needs to know about, and the wrong one for a control whose
+whole problem is that the author does not know what would switch it on.
+
+Measured on a stock build: on the AUDIO panel, Tab from ◆ RENDER walks
+`a-savepreset` → the section strip → `a-tidy` → `a-reset` → the macros →
+`a-preset` → `a-gallery-btn` → `a-preset-manage` → `a-dur`. It never lands on
+**▶ PLAY, ⤓ .wav or NORMALIZE at all** — so a keyboard or screen-reader author
+does not learn those buttons exist, let alone that ◆ RENDER is what turns them
+on.
+
+Seven controls now carry `aria-disabled` instead: announced as unavailable,
+still focusable, still able to explain themselves. Two pieces make that safe:
+
+- **`setEnabled()`** in `core/dom.js` is the one place that knows the reachable
+  spelling, so the five panels that switch these controls say what they mean
+  rather than each choosing an attribute.
+- **`guardDisabled()`** is a single capture-phase listener that makes the
+  refusal real. `aria-disabled` carries no behaviour of its own — without this
+  the button would look off and fire anyway, which is worse than where this
+  started. `stopImmediatePropagation` is what stops the control's own handler,
+  which is registered on the control itself. Pressing it is a question, so it
+  answers with the title `whyoff.js` keeps current, through a toast rather than
+  only the console: someone driving by keyboard is not reading the console.
+
+Both spellings are styled identically, or switching a button to the reachable
+form would silently un-grey it; and the reachable one gets a focus style,
+because it can now be focused.
+
+Measured after: Tab from ◆ RENDER lands on `a-play` → `a-dl` → `a-norm`
+immediately. Pressing one refuses — label unchanged, still off — and says *"No
+sound has been rendered yet — press ◆ RENDER first."* After ◆ RENDER the
+attribute is gone and the tooltip reads *"Play the rendered sound"*.
+
+Verified in both directions, and the second half needed its own backwards case:
+reverting the three audio buttons to `disabled` turns four of the five checks
+red, but *"comes back on cleanly"* passes there for the wrong reason — its real
+failure is a broken re-enable, so it was checked against a `setEnabled()` that
+forgets to clear the attribute.
+
+One existing check had to change with it. The behaviour audit asserted
+`a-region-add.disabled === true`, which now reads "live" for a button that is
+plainly off. Restated as the intent — unavailable in *either* spelling — plus a
+second check that it is reachable, so the pair says what the panel actually
+promises.
+
+### Investigated and found NOT to be defects
+
+- **Layout at every width from 375 to 1440.** No sideways scroll at any of them,
+  nothing pushed out of clicking range, and a 400-character variable value, a
+  400-character library name and a 400-character text overlay all stayed inside
+  the page. The dense control panel holds up.
+- **A project file that is not a project file.** Six malformed inputs — not
+  JSON, an array, `{}`, `{"tabs":"nope"}`, nulls throughout, a 4000-character
+  seed. Each is refused by `assertProject` before anything is touched, and the
+  load handler catches it and says "Not a project file — nothing changed".
+- **Every button, pressed from a cold empty project.** All 116 of them, with no
+  clips, no library, no chains and nothing selected: **nothing threw** — no page
+  errors, no console errors. The empty state is genuinely handled.
+- **"The welcome card ignores Escape."** The first probe dispatched the key on
+  `document`; the listener is on the dialog element. Focus is moved inside on
+  open, so a real key press bubbles to it and closes the card. The palette and
+  preset manager behave identically, and all three also close on a backdrop
+  click. The probe was wrong, not the code — the same mistake as the synthetic
+  `change` event earlier in this audit, and worth recording twice for that
+  reason.
+- **"CLEAR ALL wipes the library without confirming."** It does not confirm, and
+  does not need to: it is a single undo entry, and undo restores the rows *and
+  their bytes* — checked by reading the blob back after the undo, 128 bytes in
+  and 128 bytes out. Recoverable beats interrogated.
 
 ---
 

@@ -69,7 +69,7 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 
 await page.goto(PAGE, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => !!window.DeadSignalStudio, null, { timeout: 30000 });
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready', null, { timeout: 30000 });
 
 /* The probe. Installed once and reused by every section below: rendering a
    scene off-screen at a known (seed, t) and reducing the pixels to numbers that
@@ -2816,8 +2816,525 @@ section('the document is wired to itself correctly');
     blanking.blanked.join(', ') || `${blanking.count} selects held their selection`);
   check('…so ＋ FILTER and ＋ FX still add after an edit, rather than saying "Pick one first"',
     blanking.added.video === 1 && blanking.added.audio === 1, JSON.stringify(blanking.added));
+  /* ONE ACTION, ONE UNDO — AND NO EDITS THE AUTHOR DID NOT MAKE.
+     v-format and v-aspect were the last selects filled at tab-init rather than
+     before the document snapshot, so their recorded boot default was "" — and
+     the first ordinary edit anywhere in the view ran wireLive → syncFormat,
+     which derived a Format from W and H and wrote it, whose own change handler
+     then wrote an Aspect. Measured on a stock build: ONE nudge of the Scanlines
+     slider cost THREE undo entries, and the first two undid a Format and an
+     Aspect nobody had chosen; adding a single filter cost three, and one undo
+     left the filter in place. Every comparable action is one entry.
+
+     This one has to run on a page that has JUST BOOTED. The shared page above
+     has already made its first edit many checks ago, which — on a build with
+     the defect — is precisely the edit that fills Format and Aspect in, so
+     measuring here would find them populated and pass against broken code. So:
+     a fresh context, its own page, closed again immediately after — and one
+     each for the two actions, because there is only ever one first edit. */
+  const onFreshPage = async (fn) => {
+    const ctx = await browser.newContext();
+    try {
+      const p2 = await ctx.newPage();
+      await p2.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p2.waitForFunction(() => document.documentElement.dataset.studio === 'ready', null, { timeout: 30000 });
+      return await p2.evaluate(fn);
+    } finally { await ctx.close(); }
+  };
+  const firstEdit = await onFreshPage(async () => {
+    const S = window.DeadSignalStudio;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const size = () => ({ format: S.store.get('tabs.video.v-format'),
+                          aspect: S.store.get('tabs.video.v-aspect'),
+                          w: S.store.get('tabs.video.v-w'), h: S.store.get('tabs.video.v-h') });
+    document.getElementById('welcome-close')?.click();
+    document.querySelector('.tab[data-view=video]').click();
+    await sleep(200);
+    const seeded = size();
+
+    const scan = document.getElementById('v-scan');
+    const was = scan.value;
+    const d0 = S.store.undoDepth;
+    scan.value = String(Number(was) + 5);
+    scan.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(320);
+    const nudge = { entries: S.store.undoDepth - d0, size: size() };
+    return { seeded, nudge };
+  });
+  /* The same again, on its own fresh page, for adding a filter — the action
+     this was first noticed on, where one undo used to leave the filter in. */
+  const firstFilter = await onFreshPage(async () => {
+    const S = window.DeadSignalStudio;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    document.getElementById('welcome-close')?.click();
+    document.querySelector('.tab[data-view=video]').click();
+    await sleep(200);
+    const d1 = S.store.undoDepth;
+    const pick = document.getElementById('v-filters-pick');
+    pick.value = 'blur';
+    pick.dispatchEvent(new Event('input', { bubbles: true }));
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('v-filters-add').click();
+    await sleep(320);
+    const added = (S.store.get('filters.video') || []).length;
+    const entries = S.store.undoDepth - d1;
+    S.undo();
+    await sleep(220);
+    return { entries, added, afterOneUndo: (S.store.get('filters.video') || []).length };
+  });
+  check('Format and Aspect are seeded from the size, not left empty for the first edit to fill',
+    firstEdit.seeded.format !== '' && firstEdit.seeded.aspect !== '',
+    JSON.stringify(firstEdit.seeded));
+  check('…so one slider nudge is ONE undo entry, not three',
+    firstEdit.nudge.entries === 1, `${firstEdit.nudge.entries} entries`);
+  check('…and it does not rewrite the frame size on the way',
+    firstEdit.nudge.size.format === firstEdit.seeded.format
+    && firstEdit.nudge.size.aspect === firstEdit.seeded.aspect,
+    JSON.stringify(firstEdit.nudge.size));
+  check('…adding a filter is one undo entry too, when that is the first edit',
+    firstFilter.entries === 1 && firstFilter.added === 1,
+    `${firstFilter.entries} entries, ${firstFilter.added} added`);
+  check('…and one undo takes that filter back off',
+    firstFilter.afterOneUndo === 0, String(firstFilter.afterOneUndo));
+
   check('every number and range input declares its own bounds, so the box agrees with the clamp',
     wiring.unbounded.length === 0, wiring.unbounded.slice(0, 8).join(', '));
+
+  /* DECLARING A BOUND IS NOT ENFORCING ONE.
+     The check above proves each field advertises min/max. `<input type=number>`
+     clamps only its own steppers, so a TYPED number was kept however far
+     outside them it was — and every reader here goes through clamp(), so the
+     picture was right while the control, the document AND THE SAVED PROJECT
+     FILE all said something else. Measured on a stock build: 1299 into FPS
+     (max 30) rendered at 30, stored "1299", and wrote "1299" into the project
+     file — a number no build of this tool will ever honour, travelling with the
+     project forever. Duration 9999 → 60, width −50 → 64. All 53 behaved so. */
+  const held = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const nums = [...document.querySelectorAll('input[type=number][min][max]')]
+      .filter((e) => e.id && !e.disabled);
+    const commit = (el, v) => { el.value = String(v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true })); };
+    const over = [], under = [];
+    for (const el of nums) {
+      const min = Number(el.min), max = Number(el.max), orig = el.value;
+      commit(el, max * 10 + 999);
+      if (Number(el.value) > max) over.push(`${el.id}>${max}:${el.value}`);
+      commit(el, min - 999);
+      if (Number(el.value) < min) under.push(`${el.id}<${min}:${el.value}`);
+      commit(el, orig);
+    }
+
+    /* And the document must agree with the box, or the project file carries the
+       number the tool refused. */
+    document.querySelector('.tab[data-view=video]').click();
+    const fps = document.getElementById('v-fps');
+    commit(fps, 1299);
+    const doc = S.store.get('tabs.video.v-fps');
+    const saved = JSON.parse(JSON.stringify(S.readProject())).tabs?.video?.['v-fps'];
+    const rendered = S.readVideoCfg().fps;
+    commit(fps, 12);
+
+    /* Typing is NOT corrected mid-keystroke: an `input` alone leaves the box, so
+       typing "50" into a field whose minimum is 10 survives the "5". */
+    fps.value = '3';
+    fps.dispatchEvent(new Event('input', { bubbles: true }));
+    const midTyping = fps.value;
+    commit(fps, 12);
+
+    /* A cleared box is a box being cleared, not a value of zero. */
+    const dur = document.getElementById('v-dur');
+    const durWas = dur.value;
+    commit(dur, '');
+    const cleared = dur.value;
+    commit(dur, durWas);
+
+    /* An in-range value passes through untouched and without a word. */
+    const toastsBefore = document.getElementById('toasts').textContent;
+    const w = document.getElementById('v-w');
+    const wWas = w.value;
+    commit(w, 480);
+    const inRange = { kept: w.value, silent: document.getElementById('toasts').textContent === toastsBefore };
+    commit(w, wWas);
+
+    return { checked: nums.length, over, under, doc, saved, rendered, midTyping, cleared, inRange };
+  });
+  check('…and every one of them is HELD to those bounds when a value is typed',
+    held.over.length === 0 && held.under.length === 0,
+    `${held.checked} fields · over: ${held.over.join(',') || 'none'} · under: ${held.under.join(',') || 'none'}`);
+  check('…so the document and the saved project carry what will actually render',
+    held.doc === '30' && held.saved === '30' && held.rendered === 30,
+    `doc ${held.doc}, saved ${held.saved}, rendered ${held.rendered}`);
+  check('…while typing is left alone until it is committed',
+    held.midTyping === '3', held.midTyping);
+  check('…a cleared box stays cleared rather than snapping to a minimum',
+    held.cleared === '', JSON.stringify(held.cleared));
+  check('…and an in-range value passes through untouched and unremarked',
+    held.inRange.kept === '480' && held.inRange.silent === true, JSON.stringify(held.inRange));
+
+  /* A GREYED-OUT BUTTON THAT SAYS NOTHING IS A REFUSAL WITHOUT A REASON.
+     Measured on a stock build: eight buttons are off the moment the page opens
+     and not one carried a title, an aria-description or anything else naming
+     what would switch it on. Worst was the Audio panel — ▶ PLAY, ⤓ .wav and
+     NORMALIZE are all dead until ◆ RENDER has been pressed once, and nothing
+     on screen connected the four. See src/ui/whyoff.js. */
+  const greyed = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const reason = (b) => (b.title || b.getAttribute('aria-description')
+      || document.getElementById(b.getAttribute('aria-describedby') || '')?.textContent || '').trim();
+    const silent = []; let counted = 0;
+    for (const v of ['video', 'audio', 'image', 'timeline', 'library', 'batch', 'cloud']) {
+      document.querySelector(`.tab[data-view=${v}]`)?.click();
+      await sleep(220);
+      for (const b of document.querySelectorAll('button[disabled], button[aria-disabled=true]')) {
+        if (!b.getClientRects().length) continue;
+        counted++;
+        if (!reason(b)) silent.push(`${v}/${b.id || b.textContent.trim().slice(0, 16)}`);
+      }
+    }
+    /* And the reason has to go away again when the button comes back on, or
+       ▶ PLAY would still be telling the author to render after they have. */
+    document.querySelector('.tab[data-view=audio]').click();
+    await sleep(200);
+    const play = document.getElementById('a-play');
+    const whileOff = play.title;
+    document.getElementById('a-render').click();
+    for (let i = 0; i < 80 && play.disabled; i++) await sleep(250);
+    await sleep(300);
+    return { counted, silent, whileOff, whileOn: play.title, cameOn: !play.disabled };
+  });
+  check('every greyed-out button says what would turn it back on',
+    greyed.silent.length === 0,
+    greyed.silent.join(', ') || `${greyed.counted} disabled buttons, all explained`);
+  check('…and the audio buttons name ◆ RENDER as the thing that is missing',
+    /RENDER/.test(greyed.whileOff), JSON.stringify(greyed.whileOff));
+  check('…and once it has been rendered the tooltip describes the action instead',
+    greyed.cameOn && greyed.whileOn !== greyed.whileOff && !/RENDER/.test(greyed.whileOn),
+    JSON.stringify({ on: greyed.cameOn, title: greyed.whileOn }));
+}
+
+/* ------------------------------------- refusing work, out loud -- */
+section('when the tool cannot use what it was given, it says so where you can see it');
+{
+  /* THREE IMPORT FAILURES THAT SAID NOTHING AN AUTHOR WOULD SEE.
+     A bad image logged one line to a console panel that is collapsed by default
+     and raised no toast at all — its video sibling has always toasted — so
+     dropping a .txt on the SCREEN tab looked exactly like dropping nothing.
+     FileReader's own error was not handled, so a file the browser cannot read
+     failed in total silence. And a file with no picture in it (an .mp3, an
+     audio-only .mp4) reaches onloadedmetadata rather than onerror: it was
+     ACCEPTED, logged "Imported video 0×0", toasted "Video imported", rewrote
+     v-dur to the clip's length, and left the canvas showing "DROP or LOAD a
+     video clip". */
+  const refused = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const con = () => document.getElementById('console').textContent;
+    const toasts = () => document.getElementById('toasts').textContent;
+    const { loadImageFile, loadVideoFile, hasImportedVideo } = await import('./src/media/import.js');
+    const trial = async (name, fn) => {
+      const c = con().length; const t = toasts();
+      try { fn(); } catch (e) { return { name, threw: String(e.message).slice(0, 60) }; }
+      await sleep(700);
+      return { name,
+        logged: con().slice(c).replace(/\s+/g, ' ').trim(),
+        toasted: toasts() !== t };
+    };
+    const out = {};
+    out.notAnImage = await trial('text as image', () =>
+      loadImageFile(new File(['hello'], 'notes.txt', { type: 'text/plain' })));
+    out.brokenPng = await trial('truncated png', () =>
+      loadImageFile(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0])],
+        'cut.png', { type: 'image/png' })));
+
+    /* A real, playable file with a sound track and no picture — recorded here
+       so the check does not depend on a fixture committed to the repo. */
+    const ac = new AudioContext();
+    const dest = ac.createMediaStreamDestination();
+    const osc = ac.createOscillator(); osc.connect(dest); osc.start();
+    const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+    const parts = []; rec.ondataavailable = (e) => parts.push(e.data);
+    const stopped = new Promise((r) => { rec.onstop = r; });
+    rec.start(); await sleep(700); rec.stop(); await stopped;
+    osc.stop(); await ac.close();
+
+    const durBefore = document.getElementById('v-dur').value;
+    out.soundOnly = await trial('audio-only file as video', () =>
+      loadVideoFile(new File(parts, 'sound-only.webm', { type: 'audio/webm' })));
+    out.soundOnly.durBefore = durBefore;
+    out.soundOnly.durAfter = document.getElementById('v-dur').value;
+    out.soundOnly.registeredAsVideo = hasImportedVideo();
+    return out;
+  });
+  check('a file that is not an image is refused where the author can see it',
+    refused.notAnImage.toasted === true && /notes\.txt/.test(refused.notAnImage.logged || ''),
+    `toast ${refused.notAnImage.toasted} · ${(refused.notAnImage.logged || '').slice(0, 80)}`);
+  check('…and the message names what this tool can actually open',
+    /PNG/.test(refused.notAnImage.logged || '') && /JPEG/.test(refused.notAnImage.logged || ''),
+    (refused.notAnImage.logged || '').slice(0, 90));
+  check('…and a damaged file of the right type is refused the same way',
+    refused.brokenPng.toasted === true && /cut\.png/.test(refused.brokenPng.logged || ''),
+    (refused.brokenPng.logged || '').slice(0, 80));
+  /* Stated as "the log says it was refused", not "a toast appeared". With the
+     guard removed the file IS still absent from hasImportedVideo() — videoWidth
+     is 0 — and a toast DOES appear, saying "Video imported". Both halves of the
+     weaker claim were satisfied by the broken build. */
+  check('a sound file offered as footage is refused, not accepted as 0×0 video',
+    /no picture in it/.test(refused.soundOnly.logged || '')
+    && !/Imported video/.test(refused.soundOnly.logged || '')
+    && refused.soundOnly.registeredAsVideo === false,
+    `${(refused.soundOnly.logged || '').slice(0, 80)} · registered ${refused.soundOnly.registeredAsVideo}`);
+  check('…and it does not rewrite the frame duration on its way out',
+    refused.soundOnly.durBefore === refused.soundOnly.durAfter,
+    `${refused.soundOnly.durBefore} -> ${refused.soundOnly.durAfter}`);
+
+  /* THE SAFETY NET UNDER THE ONE IRREVERSIBLE CLICK, SILENTLY OFF.
+     Loading a project replaces the document and clears the undo stacks;
+     stashPreviousProject keeps the outgoing one in localStorage so a misclick is
+     recoverable. That write can fail — full storage, a private window, a
+     document over the quota — and it returned false into a caller that ignored
+     it, saying so only in a line of the closed console. Its own context, because
+     filling localStorage is not a state to leave behind for later checks. */
+  const stash = await (async () => {
+    const ctx = await browser.newContext();
+    try {
+      const p3 = await ctx.newPage();
+      await p3.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p3.waitForFunction(() => document.documentElement.dataset.studio === 'ready',
+        null, { timeout: 30000 });
+      return await p3.evaluate(async () => {
+        const S = window.DeadSignalStudio;
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const R = await import('./src/core/recipes.js');
+        // Something worth keeping, or the stash declines for a different reason.
+        S.store.apply({ op: 'set', path: 'tabs.video.v-hud', value: 'BEFORE LOAD' });
+        await sleep(200);
+        /* Genuinely full, not stubbed: big chunks first, then smaller ones to
+           top off the last few kB so what is left cannot hold a document. */
+        let filled = 0;
+        for (const size of [64 * 1024, 4 * 1024, 256, 16]) {
+          const chunk = 'q'.repeat(size);
+          try { for (let i = 0; i < 5000; i++) { localStorage.setItem('full-' + filled, chunk); filled++; } }
+          catch { /* this size no longer fits; try a smaller one */ }
+        }
+        let reallyFull = false;
+        try { localStorage.setItem('full-check', 'x'.repeat(4096)); localStorage.removeItem('full-check'); }
+        catch { reallyFull = true; }
+        const c0 = document.getElementById('console').textContent.length;
+        const t0 = document.getElementById('toasts').textContent;
+        const kept = R.stashPreviousProject(S.store);
+        await sleep(250);
+        return { reallyFull, filled, kept,
+          logged: document.getElementById('console').textContent.slice(c0).replace(/\s+/g, ' ').trim(),
+          toasted: document.getElementById('toasts').textContent !== t0 };
+      });
+    } finally { await ctx.close(); }
+  })();
+  check('localStorage can actually be filled, so the next check means something',
+    stash.reallyFull === true, `${stash.filled} keys written`);
+  check('a backup copy that could not be kept is announced, not swallowed',
+    stash.kept === false && stash.toasted === true,
+    `kept ${stash.kept} · toast ${stash.toasted}`);
+  check('…and the message says what to do instead',
+    /save it to a file/i.test(stash.logged || ''), (stash.logged || '').slice(-90));
+
+  /* AN EXPORT THAT LOSES ITS SOUND SAID SO ONLY IN THE CLOSED CONSOLE.
+     Four sites, all `log(..., 'warn')` and nothing else: the author asks for a
+     clip with an audio bed, prepareBed throws, and they get a silent file with
+     no indication anywhere they are looking. The artefact is wrong in a way
+     they will not notice until they play it back somewhere else.
+
+     prepareBed is made to throw by serving audio/bed.js as a module that
+     re-exports the real one and shadows that single name — everything else in
+     the module keeps working, so boot is untouched and only the bed fails. */
+  const silentExport = await (async () => {
+    const ctx = await browser.newContext();
+    try {
+      const p4 = await ctx.newPage();
+      await p4.route(
+        (url) => url.pathname.endsWith('/src/audio/bed.js') && !url.search,
+        (route) => route.fulfill({ status: 200, contentType: 'text/javascript',
+          body: `export * from './bed.js?real=1';
+                 export async function prepareBed(){ throw new Error('deliberate bed failure'); }` }));
+      await p4.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p4.waitForFunction(() => document.documentElement.dataset.studio === 'ready',
+        null, { timeout: 30000 });
+      return await p4.evaluate(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const toasts = () => document.getElementById('toasts').textContent;
+        const set = (id, v) => { const e = document.getElementById(id); if (!e) return;
+          e.value = String(v);
+          e.dispatchEvent(new Event('input', { bubbles: true }));
+          e.dispatchEvent(new Event('change', { bubbles: true })); };
+        document.querySelector('.tab[data-view=video]').click();
+        await sleep(200);
+        set('v-dur', 1); set('v-fps', 8); set('v-w', 160); set('v-h', 120);
+        await sleep(300);
+        const t0 = toasts().length;
+        document.getElementById('v-record').click();
+        for (let i = 0; i < 90; i++) {
+          await sleep(300);
+          if (/audio bed failed/i.test(toasts())) break;
+        }
+        await sleep(400);
+        return { toasted: toasts().slice(t0).replace(/\s+/g, ' ').trim(),
+                 logged: document.getElementById('console').textContent.replace(/\s+/g, ' ') };
+      });
+    } finally { await ctx.close(); }
+  })();
+  check('an export whose audio bed failed says so where the author is looking',
+    /audio bed failed/i.test(silentExport.toasted || ''),
+    (silentExport.toasted || '(no toast)').slice(0, 90));
+  check('…and the file is still produced rather than the export being abandoned',
+    /Exported \d+ frames/.test(silentExport.logged || ''),
+    (silentExport.logged || '').slice(-70));
+
+  /* A LIBRARY ROW WHOSE BYTES NEVER REACHED DISK.
+     setAssetPersister's failure path logged one warn line. So a browser out of
+     room showed the row, showed the thumbnail, and lost the file on reload —
+     first noticed as a bundle export missing half its media. Announced once per
+     run of failures, not once per asset. */
+  const assetWrite = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const toasts = () => document.getElementById('toasts').textContent;
+    const real = S.backend.putAsset.bind(S.backend);
+    S.backend.putAsset = () => Promise.reject(new Error('deliberate quota failure'));
+    const t0 = toasts().length;
+    const c0 = document.getElementById('console').textContent.length;
+    for (let i = 0; i < 4; i++) {
+      S.addToLibrary(new Blob(['x'.repeat(32)], { type: 'image/png' }), 'png', 'image', 'persist-probe-' + i);
+      await sleep(150);
+    }
+    await sleep(500);
+    const said = toasts().slice(t0).replace(/\s+/g, ' ').trim();
+    S.backend.putAsset = real;
+    S.clearLibrary();
+    return { said,
+      announcements: (said.match(/not being saved/g) || []).length,
+      logged: document.getElementById('console').textContent.slice(c0).replace(/\s+/g, ' ') };
+  });
+  check('an asset that could not be stored is announced, not left as a row that vanishes',
+    /not being saved/.test(assetWrite.said || ''), (assetWrite.said || '(no toast)').slice(0, 70));
+  check('…once for the run of failures, not once per file',
+    assetWrite.announcements === 1, `${assetWrite.announcements} announcements for 4 failed writes`);
+  check('…and the log says the rows will not survive a reload',
+    /will not survive a reload/.test(assetWrite.logged || ''),
+    (assetWrite.logged || '').slice(0, 90));
+}
+
+/* ------------------------------------ the fault nobody anticipated -- */
+section('an uncaught fault says so, once, and leaves something to report');
+{
+  /* THE LAST SILENT FAILURE. Every individual failure path in this tool now
+     says what went wrong. What none of them covered is the one that was never
+     anticipated: an uncaught exception, or a promise nobody caught. There was
+     no window.onerror and no unhandledrejection listener anywhere, so a throw
+     on a path these suites do not walk left the interface half-wedged and
+     completely quiet — a button that stopped working, and nothing to report
+     about it. Finding those paths is what a beta is for, and a tester can only
+     report what the tool tells them.
+
+     Its own context: this section deliberately raises uncaught errors, and the
+     shared page ends on a check that there have been none. */
+  const errs = await (async () => {
+    const c = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    try {
+      const p5 = await c.newPage();
+      await p5.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p5.waitForFunction(() => document.documentElement.dataset.studio === 'ready',
+        null, { timeout: 30000 });
+      return await p5.evaluate(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const toasts = () => document.getElementById('toasts').textContent;
+        const con = () => document.getElementById('console').textContent;
+        const E = await import('./src/platform/errors.js');
+        const out = {};
+        out.buildTag = document.getElementById('build-tag').textContent;
+        out.bootLineNamesBuild = /Dead Signal Studio \d+\.\d+/.test(con());
+
+        E._resetFaults();
+        const t0 = toasts().length; const c0 = con().length;
+        // The way an uncaught error really arrives: out of a callback.
+        setTimeout(() => { throw new Error('deep-suite probe fault'); }, 0);
+        await sleep(350);
+        out.thrown = { toast: toasts().slice(t0).replace(/\s+/g, ' ').trim(),
+                       log: con().slice(c0).replace(/\s+/g, ' ').trim() };
+
+        // Twenty more of the SAME fault. One problem, not twenty-one.
+        for (let i = 0; i < 20; i++) setTimeout(() => { throw new Error('deep-suite probe fault'); }, 0);
+        await sleep(600);
+        out.announcements = (toasts().match(/Something went wrong/g) || []).length;
+
+        // A promise nobody caught.
+        Promise.reject(new Error('deep-suite probe rejection'));
+        await sleep(350);
+        out.rejectionLogged = /probe rejection/.test(con());
+
+        /* A missing image is not an exception and must not be reported as one.
+           Measured on the FAULT LIST, not on the toast rail: every announcement
+           carries the same text and the rail collapses repeats into "×N", so
+           "no new toast text" cannot tell absence from collapse — an earlier
+           version of this check passed against a reporter that was recording
+           the image error, and two neighbouring checks caught it instead. */
+        const beforeImg = E.faults().length;
+        const img = document.createElement('img');
+        img.src = './definitely-not-here-' + Math.random().toString(36).slice(2) + '.png';
+        document.body.appendChild(img);
+        await sleep(450); img.remove();
+        out.resourceFaults = E.faults().length - beforeImg;
+        out.resourceNames = E.faults().map((f) => f.message).filter((m) => /not-here/.test(m));
+
+        out.diag = E.diagnostics({ view: 'probe' });
+        out.distinct = E.faults().length;
+
+        // And the button an author is told to press.
+        document.querySelector('.tab[data-view=help]')?.click();
+        await sleep(250);
+        const t3 = toasts().length;
+        document.getElementById('help-diagnostics').click();
+        await sleep(700);
+        out.buttonToast = toasts().slice(t3).replace(/\s+/g, ' ').trim();
+        out.clipboard = await navigator.clipboard.readText().catch(() => '');
+        E._resetFaults();
+        return out;
+      });
+    } finally { await c.close(); }
+  })();
+
+  check('an uncaught error is announced where the author can see it',
+    /Something went wrong/.test(errs.thrown.toast || ''),
+    (errs.thrown.toast || '(no toast)').slice(0, 60));
+  check('…with the message and a stack written down to read afterwards',
+    /probe fault/.test(errs.thrown.log || '') && /at /.test(errs.thrown.log || ''),
+    (errs.thrown.log || '').slice(0, 100));
+  check('…and the author is told how to report it',
+    /COPY DIAGNOSTICS/.test(errs.thrown.log || ''), (errs.thrown.log || '').slice(-70));
+  check('twenty-one throws of the same fault are ONE announcement, not twenty-one',
+    errs.announcements === 1, `${errs.announcements} announcements`);
+  check('…and the report collapses them to one line with a count, not twenty-one lines',
+    errs.distinct === 2 && /×21/.test(errs.diag || ''),
+    `${errs.distinct} distinct · ${(errs.diag || '').split('\n').filter((l) => /probe fault/.test(l))[0] || ''}`);
+  check('a promise nobody caught is reported too',
+    errs.rejectionLogged === true);
+  check('…but a missing image is not — that is not an exception',
+    errs.resourceFaults === 0 && (errs.resourceNames || []).length === 0,
+    errs.resourceFaults === 0 ? 'not recorded, as it should be'
+      : `${errs.resourceFaults} recorded: ${(errs.resourceNames || []).join(', ').slice(0, 60)}`);
+
+  check('the interface says which build this is',
+    /^\d+\.\d+\.\d+/.test(errs.buildTag || ''), errs.buildTag || '(empty)');
+  check('…and the boot line names it too, so a saved console log carries it',
+    errs.bootLineNamesBuild === true);
+  check('⎘ COPY DIAGNOSTICS puts a usable report on the clipboard',
+    /Diagnostics copied/.test(errs.buttonToast || '')
+    && /Dead Signal Studio \d+\.\d+/.test(errs.clipboard || ''),
+    `${errs.buttonToast} · ${(errs.clipboard || '(empty)').slice(0, 40)}`);
+  check('…naming the build, the browser, the platform features and the faults',
+    /browser:/.test(errs.diag) && /WebCodecs:/.test(errs.diag)
+    && /IndexedDB:/.test(errs.diag) && /secure context:/.test(errs.diag)
+    && /faults this session \(2 distinct/.test(errs.diag),
+    (errs.diag || '').split('\n').find((l) => l.startsWith('features:'))?.slice(0, 70) || '');
 }
 
 console.log('-'.repeat(64));

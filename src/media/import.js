@@ -6,9 +6,25 @@ import { slug } from '../library/library.js';
 import { hasVideoSource, videoSource } from '../video/sources.js';
 
 export let _importedImg=null, _importedName="import";
+/* A failed image import used to log one line — "Image decode failed" — to a
+   console panel that is closed by default, and raise no toast at all. Its video
+   sibling below has always toasted. So dropping a .txt on the SCREEN tab looked
+   exactly like dropping nothing: the old image stayed on the canvas and the tool
+   said nothing anyone would see. The FileReader's own error was not handled at
+   all, which made a file the browser cannot read (removed drive, permissions)
+   silent in both places. Both now say what failed, on what file, and what the
+   tool can actually open. */
+const IMAGE_KINDS="PNG, JPEG, GIF, WebP, BMP or SVG";
+function importFailed(file,what){
+  const name=file&&file.name?" “"+String(file.name).slice(0,48)+"”":"";
+  log(what+name+". This tool opens "+IMAGE_KINDS+" — if that is what it is, the file may be damaged or incomplete.","err");
+  toast("Could not open that image","err");
+}
 export function loadImageFile(file, cb){ if(!file)return; const r=new FileReader();
   r.onload=()=>{ const im=new Image(); im.onload=()=>{ _importedImg=im; _importedName=slug((file.name||"import").replace(/\.[^.]+$/,""))||"import"; log("Imported image "+im.width+"×"+im.height,"ok"); toast("Image imported"); cb&&cb(); };
-    im.onerror=()=>{ log("Image decode failed","err"); }; im.src=r.result; }; r.readAsDataURL(file); }
+    im.onerror=()=>importFailed(file,"Could not decode the image"); im.src=r.result; };
+  r.onerror=()=>importFailed(file,"Could not read the file");
+  try{ r.readAsDataURL(file); }catch(e){ importFailed(file,"Could not read the file"); } }
 export function drawImportFit(ctx,W,H,pan){ if(!_importedImg){ ctx.fillStyle="#0d0d12"; ctx.fillRect(0,0,W,H); setFont(ctx,Math.max(11,H*0.055)); ctx.fillStyle="#7788aa"; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText("DROP or LOAD an image",W/2,H/2); ctx.textAlign="left"; ctx.textBaseline="top"; return; }
   const iw=_importedImg.width, ih=_importedImg.height, scale=Math.max(W/iw,H/ih); let dw=iw*scale, dh=ih*scale, dx=(W-dw)/2, dy=(H-dh)/2;
   if(pan){ const z=1+0.18*pan.z; dw*=z; dh*=z; dx=(W-dw)/2 + pan.x*(dw-W)*0.5; dy=(H-dh)/2 + pan.y*(dh-H)*0.5; }
@@ -22,7 +38,18 @@ export function loadVideoFile(file, cb){ if(!file)return;
      so revoking up front left the still-active old import backed by a dead URL
      whenever the new file failed to decode. */
   const url=makeUrl(file); v.src=url;
-  v.onloadedmetadata=()=>{ if(_importedVideoUrl) revokeUrl(_importedVideoUrl);
+  v.onloadedmetadata=()=>{
+    /* A file the browser can open but that has no picture in it — an .mp3, an
+       audio-only .mp4, a container whose video track this build cannot decode —
+       reaches HERE, not onerror. It used to be accepted: the log read "Imported
+       video 0×0", the toast read "Video imported", v-dur was rewritten to the
+       clip's length, and the canvas went on showing "DROP or LOAD a video clip"
+       because hasImportedVideo() tests videoWidth. Refuse it where it arrives,
+       and leave the previous clip and the duration alone. */
+    if(!v.videoWidth || !v.videoHeight){ revokeUrl(url);
+      log("That file has no picture in it"+(file.name?" (“"+String(file.name).slice(0,48)+"”)":"")+" — it may be audio only, or its video track is one this browser cannot decode.","err");
+      toast("No video track in that file","err"); return; }
+    if(_importedVideoUrl) revokeUrl(_importedVideoUrl);
     _importedVideoUrl=url; _importedVideo=v; _importedVideoName=slug((file.name||"clip").replace(/\.[^.]+$/,""))||"clip";
     const d=isFinite(v.duration)&&v.duration>0?v.duration:8;
     log("Imported video "+v.videoWidth+"×"+v.videoHeight+" · "+d.toFixed(1)+"s","ok"); toast("Video imported");

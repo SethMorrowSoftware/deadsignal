@@ -118,7 +118,14 @@ export async function openStorage({ prefer = 'auto', name = DB_NAME } = {}) {
  */
 export function autosave(store, backend, { id = 'current', delay = 800, onSave, onError } = {}) {
   let timer = null, inFlight = false, dirty = false, stopped = false;
-  const state = { savedAt: null };
+  /* Whether the LAST write failed, so the caller can report a transition rather
+     than an event. A failing autosave fails on every edit — ten ordinary edits
+     produced ten identical "Autosave failed" lines and nothing else — and the
+     thing the author needs to know is not that the eighth one failed, it is that
+     saving stopped working, once, loudly. `first` and `recovered` say which
+     writes are the interesting ones; the policy stays with the caller. */
+  let failing = false;
+  const state = { savedAt: null, get failing() { return failing; } };
 
   const write = async () => {
     if (stopped) return;
@@ -127,9 +134,13 @@ export function autosave(store, backend, { id = 'current', delay = 800, onSave, 
     try {
       await backend.putDoc(id, JSON.parse(JSON.stringify(store.doc)));
       state.savedAt = Date.now();
-      onSave?.(state.savedAt);
+      const recovered = failing;
+      failing = false;
+      onSave?.(state.savedAt, { recovered });
     } catch (e) {
-      onError?.(e);
+      const first = !failing;
+      failing = true;
+      onError?.(e, { first });
     } finally {
       inFlight = false;
       if (dirty) { dirty = false; schedule(); }
@@ -155,6 +166,7 @@ export function autosave(store, backend, { id = 'current', delay = 800, onSave, 
 
   return {
     get savedAt() { return state.savedAt; },
+    get failing() { return failing; },
     flush: () => { clearTimeout(timer); timer = null; return write(); },
     stop() {
       stopped = true; clearTimeout(timer); unsubscribe();

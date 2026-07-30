@@ -29,7 +29,7 @@
  * ten-second clips is several minutes of encoding to answer a question that
  * three seconds each answers. The cap is a parameter, not a rule.
  */
-import { log } from '../core/dom.js';
+import { log, toast } from '../core/dom.js';
 import { flatPresets, presetRecipe } from '../presets/index.js';
 import { userPresets } from '../core/recipes.js';
 import { _persistCanvas, readVideoCfg, renderScaled } from '../video/render.js';
@@ -210,7 +210,11 @@ async function gather(sourceId, seconds) {
     const wholeMix = async () => {
       if (full === undefined) {
         try { full = await sequenceMix(sched); }
-        catch (e) { log(`Sequence mix failed (${e.message}) — exporting silent.`, 'warn'); full = null; }
+        catch (e) {
+          log(`Sequence mix failed (${e.message}) — exporting silent.`, 'warn');
+          toast('No sound in this batch — the sequence mix failed', 'warn');
+          full = null;
+        }
       }
       return full;
     };

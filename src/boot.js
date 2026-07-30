@@ -1,14 +1,17 @@
 /* Dead Signal Studio — boot.js */
 import { doRenderAudio, initAudioTab, markAudioStale } from './audio/ui.js';
 import { fillContainerSelect } from './export/encoder.js';
+import { primeSizing } from './ui/sizing.js';
 import { download } from './core/blobs.js';
-import { $, log, setVal, toast } from './core/dom.js';
+import { $, guardDisabled, log, setVal, toast } from './core/dom.js';
 import { applyAesthetic, applyPack, fillPaletteSelect } from './core/palettes.js';
 import { applyProject, readProject } from './core/recipes.js';
 import { startSession } from './doc/bind.js';
 import { createDocument } from './doc/schema.js';
 import { toJSON } from './doc/serialize.js';
 import { autosave, openStorage } from './platform/storage.js';
+import { diagnostics, installErrorReporter } from './platform/errors.js';
+import { BUILD, VERSION } from './core/version.js';
 import { currentSeed, seedRng } from './core/rng.js';
 import { initImageTab, renderImage } from './image/render.js';
 import { decodeStego } from './image/stego.js';
@@ -20,6 +23,7 @@ import { loadImageFile, loadVideoFile } from './media/import.js';
 import { PRESETS, rebuildPresetSelect } from './presets/index.js';
 import { initPalette } from './ui/palette.js';
 import { explainCoverage, initExplain, setArmed } from './ui/explain.js';
+import { initWhyOff } from './ui/whyoff.js';
 import { applyLevel, getLevel, initComplexity } from './ui/complexity.js';
 import { getContrast, initContrast, setContrast } from './ui/contrast.js';
 import { MACROS, applyMacro, initMacros } from './ui/macros.js';
@@ -63,6 +67,14 @@ let studioSession=null, studioBackend=null, studioAutosave=null;
 export const AUDIO_FX_CHAIN='a-fx';
 
 export function boot(){
+  /* FIRST, so it covers boot itself. Everything below can throw, and a boot that
+     throws part way is exactly the failure an author cannot diagnose: the page
+     is there, half of it works, and nothing says why. The markup for the console
+     and the toast rail is already parsed by now, so both channels are live. */
+  installErrorReporter();
+  // Which build this is, on screen and in the boot line — a bug report against
+  // a tool with no version in it is a report about an unknown program.
+  { const t=$("build-tag"); if(t) t.textContent=VERSION; }   /* dom-only: a readout, never project state */
   // Read before anything can clear the fragment: initCloud() consumes it.
   const arrivedByShareLink=hasShareFragment();
   // selects
@@ -86,6 +98,13 @@ export function boot(){
      long after the document was seeded from the markup, so their recorded boot
      default was the empty string and every document→DOM write blanked them. */
   fillContainerSelect($("v-container")); fillContainerSelect($("tl-container"));
+  /* And the four Format / Aspect pairs, for exactly the same reason — they were
+     the last two selects per panel still filled at tab-init, so their recorded
+     boot default was "" and the first ordinary edit in the view silently wrote a
+     Format and an Aspect the author never chose. See primeSizing. */
+  primeSizing({ format:"v-format",  aspect:"v-aspect",  w:"v-w",  h:"v-h"  });
+  primeSizing({ format:"i-format",  aspect:"i-aspect",  w:"i-w",  h:"i-h"  });
+  primeSizing({ format:"tl-format", aspect:"tl-aspect", w:"tl-w", h:"tl-h" });
   // The document becomes authoritative here. Selects must already be filled,
   // or their .value would not yet be the real default the markup implies.
   /* Every panel that is a PROJECTION of the document rather than a control.
@@ -145,6 +164,35 @@ export function boot(){
   initContrast();
   initMacros((tab)=>{ if(tab==='video') startVideoPreview(); else markAudioStale(); });
   initExplain();
+  /* Copies the build, the browser, which platform features are present and any
+     faults this session. Clipboard only — nothing is sent anywhere, which is
+     the whole premise of the tool and has to stay true of its bug reports too.
+     The textarea fallback is for the browsers and the insecure contexts where
+     navigator.clipboard is simply absent; without it the button would be dead
+     on exactly the setups most likely to have something to report. */
+  $("help-diagnostics")?.addEventListener("click", async ()=>{
+    const text=diagnostics({ view: document.querySelector(".tab.active")?.dataset.view || "?" });
+    let ok=false;
+    try{ await navigator.clipboard.writeText(text); ok=true; }
+    catch(e){
+      try{
+        const ta=document.createElement("textarea");
+        ta.value=text; ta.setAttribute("readonly","");
+        ta.style.cssText="position:fixed;top:-1000px;opacity:0";
+        document.body.appendChild(ta); ta.select();
+        ok=document.execCommand("copy"); ta.remove();
+      }catch(e2){ ok=false; }
+    }
+    // Either way it goes to the console, so there is always something to copy.
+    log("--- diagnostics ---\n"+text,"info");
+    toast(ok?"Diagnostics copied":"Could not reach the clipboard — the block is in CONSOLE", ok?"ok":"warn");
+  });
+  /* Keeps the tooltip on every button that can be greyed out saying what would
+     turn it back on. After the panels above, so the ids all exist. */
+  initWhyOff();
+  /* And makes the reachable-but-off spelling actually refuse. One listener for
+     every such control, so no panel has to remember a guard of its own. */
+  guardDisabled();
   // One action list, shared by the palette and the workspace Browser so the
   // two cannot drift apart.
   const studioActions=[
@@ -297,9 +345,19 @@ export function boot(){
     if(lrst) lrst.addEventListener("click",(e)=>{ e.stopPropagation(); clearLayers(); }); }
   // init previews
   seedRng(currentSeed()); startVideoPreview(); renderImage(); renderLibTable(); renderCoverage(); renderTimelineTable();
-  log("DEAD SIGNAL STUDIO ready — "+Object.keys(SCENES).length+" scenes, "+Object.keys(TEMPLATES).length+" screen templates.","ok");
+  log(BUILD+" ready — "+Object.keys(SCENES).length+" scenes, "+Object.keys(TEMPLATES).length+" screen templates.","ok");
   // Asked before initCloud() has had a chance to clear the fragment.
   initPersistence(session, { arrivedByShareLink });
+  /* BOOT IS OVER — said once, out loud.
+     window.DeadSignalStudio is assigned at module scope, which is before boot()
+     has run a single line, and the scene picker is filled in boot()'s first
+     dozen. So "the global exists and the pickers have options" — the readiness
+     test the suites were using — was true for most of boot, including the whole
+     stretch where the first-run card may still be up and swallowing clicks.
+     Anything waiting on the studio (a suite, an embedder, a bookmarklet) wants
+     THIS instead: set last, after the final panel and the persistence layer. */
+  document.documentElement.dataset.studio="ready";
+  dispatchEvent(new CustomEvent("deadsignal:ready"));
 }
 
 /* Storage is best-effort and must never block or break boot: a private window
@@ -322,8 +380,20 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
   // Every generated blob goes to the asset store from here on. The store was
   // built for exactly this and nothing called it, so "generated assets are
   // lost on refresh" was still true however good the autosave was.
+  /* A failed asset write leaves a library row whose bytes are not on disk: the
+     row is there, the thumbnail is there, and after a reload the file is gone.
+     It said so only in a line of the closed console, so the first anyone knew
+     was a bundle export missing half its media. `first` keeps a browser that
+     has run out of room from producing one toast per generated asset — the same
+     hysteresis the autosave readout uses. */
+  let assetWritesFailing=false;
   setAssetPersister((key,blob)=>{
-    backend.putAsset(key,blob,{}).catch((e)=>log("Could not store asset: "+e.message,"warn"));
+    backend.putAsset(key,blob,{})
+      .then(()=>{ assetWritesFailing=false; })
+      .catch((e)=>{
+        log("Could not store asset: "+e.message+" — this item is in the library for now, but will not survive a reload. Download anything you need to keep.","warn");
+        if(!assetWritesFailing){ assetWritesFailing=true; toast("Generated files are not being saved","warn"); }
+      });
   });
   let restoreFailed=false;
   try{
@@ -366,10 +436,39 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
      failure put the fragment back, a revoked token disabled autosave and session
      restore for that URL on every load, forever, for a reader whose work was
      never anyone else's project. A share that FAILED is an ordinary visit. */
+  /* THE READOUT, AND THE ONE MOMENT WORTH INTERRUPTING FOR.
+     This tool's promise is that the session comes back. Nothing on screen said
+     whether that was true: a failing autosave wrote one line into the CONSOLE
+     panel per edit — ten ordinary edits, ten identical lines — and was otherwise
+     invisible, so the author's work could stop being kept without a word they
+     would notice. The readout is glanceable and quiet; the transition INTO
+     failure is a toast, because that is the moment to stop and save a file.
+     Reported on the transition rather than per write, so a broken backend does
+     not turn into a stream of toasts. */
+  const paintSaveState=(kind,at)=>{
+    const el=$("save-state"); if(!el) return;
+    el.classList.toggle("ok",kind==="ok");
+    el.classList.toggle("failing",kind==="failing");
+    if(kind==="failing"){ el.textContent="⚠ NOT SAVING";
+      el.title="This session is NOT being saved to your browser. Save a project file (Ctrl+S) to keep your work."; return; }
+    const t=at?new Date(at):null;
+    el.textContent="✓ saved"+(t?" "+String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0"):"");
+    el.title="This session is saved in your browser and is restored automatically when you come back.";
+  };
   const startAutosave=()=>{
     if(studioAutosave) return;
     studioAutosave=autosave(session.store, backend, {
-      onError:(e)=>log("Autosave failed: "+e.message,"warn"),
+      onSave:(at,{recovered}={})=>{
+        paintSaveState("ok",at);
+        if(recovered){ log("Autosave is working again — this session is being kept.","ok"); toast("Saving again"); }
+      },
+      onError:(e,{first}={})=>{
+        paintSaveState("failing");
+        if(first){
+          log("Autosave failed ("+e.message+"). This session is NOT being kept — save a project file (Ctrl+S) to be safe.","err");
+          toast("Not saving — save a project file","err");
+        }
+      },
     });
   };
   if(arrivedByShareLink){

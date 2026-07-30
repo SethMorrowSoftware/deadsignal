@@ -38,6 +38,20 @@
   <span class="ctl">seed <input type="number" id="seed" value="1947" min="0" max="4294967295" step="1" style="width:80px" title="deterministic seed for all randomness">
     <button class="btn small" id="seed-roll" title="new random seed">⟳</button></span>
   <span class="ctl">CRT <input type="range" id="crt-intensity" min="0" max="100" value="50" style="width:70px" title="tool chrome CRT intensity (does not affect output)"></span>
+  <!-- Whether the session is being kept. The tool autosaves to IndexedDB and
+       restores on reload, and nothing on screen said whether that was working:
+       a failing autosave wrote a line into the CONSOLE panel and was otherwise
+       invisible, so "my work comes back" was a promise with no way to check it.
+       role=status, not a live region that recites every save — it is polled by
+       eye, and the one moment worth announcing (saving stopped) is a toast. -->
+  <span class="ctl"><span id="save-state" class="tag save-state" role="status"
+    title="Whether this session is being saved to your browser. It is restored automatically when you come back.">·</span></span>
+  <!-- Which build this is. Filled by boot from src/core/version.js rather than
+       typed here, so there is one place to bump and no way for the markup and
+       the diagnostics block to disagree about the answer. A bug report against
+       a tool with no version in it is a bug report about an unknown program. -->
+  <span class="ctl"><span id="build-tag" class="tag build-tag"
+    title="Which build of the studio this is. Quote it in a bug report — ⎘ COPY DIAGNOSTICS on the HELP tab gets this and everything else worth knowing."></span></span>
   <span class="ctl"><label for="contrast">contrast</label>
     <select id="contrast" title="High contrast turns off the CRT overlay and phosphor glow in the tool's own interface. Rendered media is unaffected.">
       <option value="normal">Normal</option><option value="high">High</option>
@@ -70,7 +84,17 @@
   <div class="tab" data-view="help" role="tab" id="tab-help" aria-controls="view-help" aria-selected="false" tabindex="-1">HELP</div>
 </div>
 
-<div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-h" tabindex="-1">
+<!-- Hidden until initWelcome() decides. It used to start visible, so that a cold
+     start showed it at the first paint rather than waiting for sixty modules to
+     load and evaluate — but the same wait applied to hiding it, so an author who
+     dismissed it months ago got a flash of a modal dialog on every single load,
+     and every click landed on the dialog instead of the tool for as long as it
+     was up (measured: 16 of the 17 frames boot takes). Starting closed inverts
+     the cost onto the case that WANTS a dialog: a first-run visitor sees the
+     card a moment after the tool paints, which is if anything the better
+     introduction. Inline rather than a stylesheet rule because openWelcome()
+     clears el.style.display, and a rule would survive that. -->
+<div id="welcome" role="dialog" aria-modal="true" aria-labelledby="welcome-h" tabindex="-1" style="display:none">
   <div class="welcome-card">
     <h2 id="welcome-h">▓ WELCOME</h2>
     <p>This is an offline forge for analogue-horror, cyberpunk and vaporwave media. Everything renders in your browser and downloads to your machine — nothing is uploaded.</p>
@@ -101,7 +125,7 @@
           <span id="v-time" class="tag">0.0s</span></div>
         <div class="btns">
           <button class="btn" id="v-record">● RECORD .webm</button>
-          <button class="btn small" id="v-stop" disabled>■ STOP</button>
+          <button class="btn small" id="v-stop" aria-disabled="true">■ STOP</button>
           <button class="btn small amber" id="v-gif">⤓ .gif</button>
           <button class="btn small amber" id="v-apng" title="lossless, 24-bit, real alpha — the archival one">⤓ .apng</button>
           <button class="btn small amber" id="v-awebp" title="24-bit with real alpha, a fraction of the size — the one to upload">⤓ .webp</button>
@@ -274,16 +298,16 @@ signal integrity: 100%</textarea>
           <div class="row">
             <select id="a-region-op" class="grow" aria-label="edit to apply"></select>
             <span class="row" style="display:none"><label for="a-region-amount">Amount</label><input type="number" id="a-region-amount" value="100" min="0" max="400" step="5"></span>
-            <button class="btn small amber" id="a-region-add" disabled>＋ APPLY</button>
+            <button class="btn small amber" id="a-region-add" aria-disabled="true">＋ APPLY</button>
             <button class="btn small" id="a-regions-clear" title="Remove every edit">✕ clear</button>
           </div>
           <div id="a-regions-list" data-generated></div>
         </fieldset>
         <div class="btns">
           <button class="btn" id="a-render">◆ RENDER</button>
-          <button class="btn small" id="a-play" disabled>▶ PLAY</button>
-          <button class="btn small" id="a-dl" disabled>⤓ .wav</button>
-          <button class="btn small amber" id="a-norm" disabled>NORMALIZE</button>
+          <button class="btn small" id="a-play" aria-disabled="true">▶ PLAY</button>
+          <button class="btn small" id="a-dl" aria-disabled="true">⤓ .wav</button>
+          <button class="btn small amber" id="a-norm" aria-disabled="true">NORMALIZE</button>
           <button class="btn small" id="a-savepreset">✚ PRESET</button>
         </div>
         <div class="hint" id="a-status" role="status" aria-live="polite">Idle. Configure layers + FX, then render.</div>
@@ -566,7 +590,7 @@ C:\&gt; _</textarea>
           <span id="tl-peak" class="tag" title="Loudest sample in the sequence mix. The mix is not limited, so past 0 dB the encoder clamps." aria-live="polite"></span></div>
         <div class="btns">
           <button class="btn" id="tl-record">● RECORD sequence</button>
-          <button class="btn small" id="tl-stop" disabled>■ STOP</button>
+          <button class="btn small" id="tl-stop" aria-disabled="true">■ STOP</button>
           <button class="btn small amber" id="tl-add" title="Append the VIDEO tab's current look">＋ SCENE</button>
           <button class="btn small amber" id="tl-still" title="Append the SCREEN tab's current render, held">＋ STILL</button>
           <button class="btn small amber" id="tl-title" title="Words over the picture: a title on V2 at the playhead, edited in the CLIP panel">＋ TITLE</button>
@@ -630,7 +654,7 @@ C:\&gt; _</textarea>
         </div>
         <div class="row">
           <button class="btn amber" id="bx-run">▶ EXPORT BATCH</button>
-          <button class="btn" id="bx-stop" disabled>■ STOP</button>
+          <button class="btn" id="bx-stop" aria-disabled="true">■ STOP</button>
         </div>
         <div id="bx-progress-wrap" style="display:none"><div class="progress"><div id="bx-progress"></div></div></div>
         <p class="hint" id="bx-status"></p>
@@ -762,7 +786,7 @@ C:\&gt; _</textarea>
   <!-- ===================== HELP ===================== -->
   <section class="view" id="view-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0">
     <div class="panel">
-      <h2>HOW TO USE <span class="hdr-actions"><button class="btn small" id="help-welcome">▓ Show the welcome card</button></span></h2>
+      <h2>HOW TO USE <span class="hdr-actions"><button class="btn small" id="help-welcome">▓ Show the welcome card</button><button class="btn small" id="help-diagnostics" title="Copies the build, your browser, which platform features are present, and any faults this session — everything a bug report needs and nothing else. Nothing is sent anywhere; it goes to your clipboard.">⎘ COPY DIAGNOSTICS</button></span></h2>
       <p>Offline, no dependencies, no network. Serve <span class="k">tools/media-studio/</span> from any static server &mdash; <span class="k">python -m http.server</span> in that folder is enough &mdash; and open it. A browser will not load ES modules straight off the filesystem, which is why it is served rather than double-clicked; nothing is uploaded and everything renders locally and downloads to your machine.</p>
       <ol>
         <li><b>VIDEO</b> — pick a Scene, tune the CRT/VHS stack + text, preview (scrub to any frame), then <b>Record .webm</b>. Export runs offline and faster than real time &mdash; a 10s clip takes about a second &mdash; and does not need the tab focused. Also exports animated <b>.gif</b> and a frame-strip. <b>Bring your own art</b>: <b>⇪ IMG</b> (Ken Burns) or <b>⇪ VID</b> — import a video clip (or drop one on the preview) and run it through the whole CRT/VHS + reveal/subliminal stack, then re-export. Plays natively in the campaign.<br><b>Keyframes</b>: scrub to a time, set a control, press <b>◆ KEY</b> — two keys make a ramp, so a look can build or decay across the clip. <b>Layers</b>: stack up to six more scenes over the base, each with its own blend and opacity.</li>
