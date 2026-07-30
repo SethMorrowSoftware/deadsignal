@@ -243,6 +243,39 @@ $named = array_values(array_filter($r['versions'] ?? [],
 check('the named snapshot is still listed after 51 autosaving saves',
     count($named) === 1 && ($named[0]['id'] ?? 0) === $namedId,
     count($r['versions'] ?? []) . ' rows, ' . count($named) . ' named');
+
+/* THE QUOTA HAS TO SEE THE DOCUMENT.
+   `SUM(size)` over studio_assets was the whole of it, and documents live in
+   MySQL rather than on disk — so a project, its 50 autosaves and its permanent
+   named versions were all free. A user could fill a shared host to the point of
+   breaking every other account without uploading one asset, while the CLOUD tab
+   reported 0% used. StudioProject::documentBytes() already existed and was
+   called from nowhere, which is the tell.
+   Deltas, because this account may predate the run. */
+[, $q0] = req('/studio/config', 'GET', null, $alice);
+$before = (int) ($q0['quota']['used'] ?? 0);
+$fat = str_repeat('W', 40000);
+[$s] = req('/studio/projects/' . $pid, 'PUT', ['document' => ['tabs' => ['video' => ['v-text' => $fat]]]], $alice);
+check('a big document saves', $s === 200, (string) $s);
+[, $q1] = req('/studio/config', 'GET', null, $alice);
+$after = (int) ($q1['quota']['used'] ?? 0);
+check('saving a document charges it against the quota',
+    $after - $before >= 40000, ($after - $before) . ' bytes for a 40000-byte document');
+check('…and the breakdown says where the space went',
+    isset($q1['quota']['breakdown']['projects'], $q1['quota']['breakdown']['versions'],
+          $q1['quota']['breakdown']['assets'])
+    && (int) $q1['quota']['breakdown']['projects'] >= 40000,
+    json_encode($q1['quota']['breakdown'] ?? null));
+/* And the autosave the save above created is charged too — that is the half of
+   this that grows without the author doing anything. */
+[, $q2] = req('/studio/config', 'GET', null, $alice);
+$vBefore = (int) ($q2['quota']['breakdown']['versions'] ?? 0);
+[$s] = req('/studio/projects/' . $pid, 'PUT', ['document' => ['tabs' => ['video' => ['v-text' => $fat . '!']]]], $alice);
+[, $q3] = req('/studio/config', 'GET', null, $alice);
+check('…and an autosave of it is charged as well',
+    $s === 200 && (int) ($q3['quota']['breakdown']['versions'] ?? 0) - $vBefore >= 40000,
+    ((int) ($q3['quota']['breakdown']['versions'] ?? 0) - $vBefore) . ' bytes');
+
 [$s, $r] = req('/studio/versions/' . $namedId . '/restore', 'POST', [], $alice);
 check('…and can still be restored',
     $s === 200 && ($r['project']['document']['tabs']['video']['v-scan'] ?? '') === '50', (string) $s);

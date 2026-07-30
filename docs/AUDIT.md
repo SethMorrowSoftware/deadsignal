@@ -17,16 +17,16 @@ their output implied:
 
 | Suite | Before | After |
 |---|---|---|
-| `test-studio-audit.mjs` | **crashed at check 76** — `readFileSync` on a path outside the folder throws rather than failing a check, so 505 later checks never ran | 582 pass |
-| `test-studio-modules.mjs` | **crashed before its summary**, same cause | 47 pass |
+| `test-studio-audit.mjs` | **crashed at check 76** — `readFileSync` on a path outside the folder throws rather than failing a check, so 505 later checks never ran | 628 pass |
+| `test-studio-modules.mjs` | **crashed before its summary**, same cause | 52 pass |
 | `test-studio-cloud.mjs` | **skipped itself and exited 0** — it looked for the studio at a hard-coded `/tools/media-studio/` and reported "no live backend" for a backend that was answering | 38 pass |
-| `test-studio-units.php` | 112/113 (`api/.htaccess` missing) | 124 pass |
-| `test-studio-api.php` | never run in CI, and failed on a second run against the same install | 55 pass, twice |
+| `test-studio-units.php` | 112/113 (`api/.htaccess` missing) | 135 pass |
+| `test-studio-api.php` | never run in CI, and failed on a second run against the same install | 59 pass, twice |
 | the other five | green | green |
 
 There was also no CI, so nothing ran any of them on a push.
 
-**Total now: 2227 checks across ten gated suites, plus 93 against a live backend.**
+**Total now: 2305 checks across ten gated suites, plus 97 against a live backend.**
 
 ---
 
@@ -288,14 +288,6 @@ Recorded because "we looked and it was fine" is a result.
 ## Still open
 
 None of these are fixed. They are recorded with enough detail to act on.
-
-**Export**
-- MP4 muxing throws `RangeError` past roughly 14 minutes and falls back to WebM
-  after a full encode.
-
-**Backend**
-- Quota counts assets only; project documents and their 50-deep autosave history
-  are unbounded and unmetered.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit

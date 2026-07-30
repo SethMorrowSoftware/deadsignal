@@ -1515,6 +1515,60 @@ section('MP4 muxing');
 
   check('mp4CanCarry knows H.264 from everything else',
     mp4CanCarry('avc1.42001f') && !mp4CanCarry('vp09.00.10.08') && !mp4CanCarry('opus') && !mp4CanCarry(null));
+
+  /* A LONG CLIP IS NOT A DIFFERENT KIND OF CLIP.
+     The sample tables and mdat were assembled by SPREADING a per-frame array
+     into a varargs box writer — `fullBox('stsz', …, ...samples.map(…))`,
+     `box('mdat', ...payload)`. An argument list is stack-allocated, so past a few
+     tens of thousands of entries the spread throws RangeError: a quarter of an
+     hour at 30fps is enough, and the tool's own clip cap is longer than that.
+     The throw landed AFTER a full encode — an hour of an author's time — and the
+     caller then fell back to WebM having discarded the MP4 it had just made.
+
+     MEASURED, because the number that was reported did not reproduce: the
+     finding said "roughly 14 minutes" and it is not that. In Chromium the spread
+     version carries 120,000 frames and throws at 130,000 — 66m40s and 72m at
+     30fps — and in Node it throws between 125,000 and 130,000. Both are
+     stack-dependent, so neither is a number to design around; what matters is
+     that it exists at all, since MAX_CLIP alone allows a clip longer than that
+     and a sequence is 64 of them.
+
+     140,000 frames: past the ceiling in both engines, and small payloads because
+     the point is the table lengths rather than the bytes. */
+  const LONG = 140_000;
+  let longErr = null, longBytes = 0, longTables = null;
+  try {
+    const frames = Array.from({ length: LONG }, (_, i) => ({
+      data: new Uint8Array(4).fill(i & 255),
+      timestampUs: Math.round((i * 1e6) / 30),
+      durationUs: Math.round(1e6 / 30),
+      key: i % 30 === 0,
+    }));
+    const long = await bytesOf(muxMP4({ frames, width: 64, height: 48, description: AVCC }));
+    longBytes = long.length;
+    const trak = all(long, 'trak')[0];
+    const stszB = find(long, 'mdia/minf/stbl/stsz', trak.body, trak.bodyEnd);
+    const stssB = find(long, 'mdia/minf/stbl/stss', trak.body, trak.bodyEnd);
+    const mdat = boxes(long).find((b) => b.type === 'mdat');
+    longTables = {
+      samples: u32At(long, stszB.body + 8),
+      keys: stssB ? u32At(long, stssB.body + 4) : null,
+      mdatBytes: mdat ? mdat.size - 8 : 0,
+      topLevelAccounted: boxes(long).reduce((n, b) => n + b.size, 0) === long.length,
+    };
+  } catch (e) {
+    longErr = `${e.name}: ${e.message}`;
+  }
+  check(`a ${LONG}-frame clip muxes at all`, longErr === null, String(longErr));
+  check('…with one stsz entry per frame', longTables && longTables.samples === LONG,
+    String(longTables && longTables.samples));
+  check('…every sync sample indexed',
+    longTables && longTables.keys === Math.ceil(LONG / 30),
+    `${longTables && longTables.keys} of ${Math.ceil(LONG / 30)}`);
+  check('…every payload byte in mdat', longTables && longTables.mdatBytes === LONG * 4,
+    String(longTables && longTables.mdatBytes));
+  check('…and the boxes still account for the whole file',
+    longTables && longTables.topLevelAccounted, String(longBytes));
 }
 
 /* ================================================== audio region edits === */

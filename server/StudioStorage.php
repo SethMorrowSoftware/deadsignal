@@ -133,7 +133,7 @@ class StudioStorage
         // query is behind the quota test so an unlimited deployment does not
         // pay for a SUM() on every chunk-session start.
         if ($this->userQuota() > 0
-            && StudioAsset::quotaUsage($ownerId) + $size > $this->userQuota()) {
+            && $this->usageFor($ownerId) + $size > $this->userQuota()) {
             throw new \RuntimeException('Storage quota exceeded');
         }
 
@@ -371,7 +371,7 @@ class StudioStorage
         // re-upload of an existing asset needs no new storage, and counting it
         // twice refused exactly the transfer that costs nothing.
         if ($this->userQuota() > 0) {
-            $usage = StudioAsset::quotaUsage($ownerId);
+            $usage = $this->usageFor($ownerId);
             $existing = StudioAsset::findBySha($ownerId, $sha);
             if ($existing) $usage -= min($usage, (int) $existing['size']);
             if ($usage + $total > $this->userQuota()) {
@@ -458,15 +458,44 @@ class StudioStorage
         return $n;
     }
 
+    /**
+     * Everything this user is charged for, in bytes.
+     *
+     * ASSETS WERE THE ONLY THING COUNTED. Project documents and their version
+     * history are stored in MySQL, not on disk, so `SUM(size)` over
+     * studio_assets never saw them — and there is a lot to not see: a document is
+     * the whole project (every clip, every keyframe, every annotation), each
+     * project keeps 50 autosaves of it, and named versions are kept forever. A
+     * user could therefore fill a shared host's disk to the point of breaking
+     * every other account on it without ever uploading a single asset, while the
+     * CLOUD tab reported 0% of quota used.
+     *
+     * StudioProject::documentBytes() already existed and was called from nowhere,
+     * which is the tell: the intent was there and the wiring was not.
+     */
+    public function usageFor(int $ownerId): int
+    {
+        return StudioAsset::quotaUsage($ownerId)
+            + StudioProject::documentBytes($ownerId)
+            + StudioVersion::documentBytes($ownerId);
+    }
+
     public function quotaInfo(int $ownerId): array
     {
-        $used = StudioAsset::quotaUsage($ownerId);
+        $assets = StudioAsset::quotaUsage($ownerId);
+        $projects = StudioProject::documentBytes($ownerId);
+        $versions = StudioVersion::documentBytes($ownerId);
+        $used = $assets + $projects + $versions;
         $quota = $this->userQuota();
         return [
             'used'      => $used,
             'quota'     => $quota,
             'remaining' => $quota > 0 ? max(0, $quota - $used) : null,
             'percent'   => $quota > 0 ? round(($used / $quota) * 100, 2) : 0,
+            /* Broken out, because "you are full" is not an actionable message
+               when the thing that filled you is invisible: an author who has
+               uploaded nothing needs to be told it is their version history. */
+            'breakdown' => ['assets' => $assets, 'projects' => $projects, 'versions' => $versions],
         ];
     }
 }
