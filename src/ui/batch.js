@@ -7,7 +7,7 @@
  * operation and the two things an author needs from it are an honest estimate
  * up front and a way to stop.
  */
-import { $, escHtml, log, toast } from '../core/dom.js';
+import { $, escHtml, log, setEnabled, toast } from '../core/dom.js';
 import { BATCH_SOURCES, runBatch } from '../export/batch.js';
 import { CONTAINERS } from '../export/encoder.js';
 import { claimExport, releaseExport, startVideoPreview, stopVideoPreview } from '../video/capture.js';
@@ -47,7 +47,7 @@ function setBusy(on, text) {
   running = on;
   const go = $('bx-run'), stop = $('bx-stop');
   if (go) go.disabled = on;
-  if (stop) stop.disabled = !on;
+  if (stop) setEnabled(stop, !!on);
   const wrap = $('bx-progress-wrap');
   if (wrap) wrap.style.display = on ? 'block' : 'none';
   if ($('bx-status')) $('bx-status').textContent = text || '';

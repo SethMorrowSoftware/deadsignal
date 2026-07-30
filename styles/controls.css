@@ -10,7 +10,14 @@ input[type=text],input[type=number],textarea,select{background:#050a0d; color:va
   .btn{background:#08131a; color:var(--phos); border:1px solid var(--phos-dim); border-radius:2px; font-family:var(--mono);
     font-size:13px; letter-spacing:1px; padding:8px 13px; cursor:pointer}
   .btn:hover{background:var(--phos); color:#021}
-  .btn:disabled{opacity:.4; cursor:not-allowed}
+  /* Both spellings, and they must look identical. A control that is off but
+     still reachable by keyboard carries aria-disabled instead of disabled (see
+     core/dom.js setEnabled) — if only the first selector were styled, switching
+     a button to the reachable form would silently un-grey it. */
+  .btn:disabled,
+  .btn[aria-disabled="true"]{opacity:.4; cursor:not-allowed}
+  /* It is still focusable, so it still has to show focus. */
+  .btn[aria-disabled="true"]:focus-visible{opacity:.6}
   .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover{background:var(--hot); color:#100}
   .btn.small{padding:4px 8px; font-size:12px}
   .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover{background:var(--amber); color:#210}

@@ -3,7 +3,7 @@ import { doRenderAudio, initAudioTab, markAudioStale } from './audio/ui.js';
 import { fillContainerSelect } from './export/encoder.js';
 import { primeSizing } from './ui/sizing.js';
 import { download } from './core/blobs.js';
-import { $, log, setVal, toast } from './core/dom.js';
+import { $, guardDisabled, log, setVal, toast } from './core/dom.js';
 import { applyAesthetic, applyPack, fillPaletteSelect } from './core/palettes.js';
 import { applyProject, readProject } from './core/recipes.js';
 import { startSession } from './doc/bind.js';
@@ -190,6 +190,9 @@ export function boot(){
   /* Keeps the tooltip on every button that can be greyed out saying what would
      turn it back on. After the panels above, so the ids all exist. */
   initWhyOff();
+  /* And makes the reachable-but-off spelling actually refuse. One listener for
+     every such control, so no panel has to remember a guard of its own. */
+  guardDisabled();
   // One action list, shared by the palette and the workspace Browser so the
   // two cannot drift apart.
   const studioActions=[

@@ -287,7 +287,7 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-Four items. None blocks the beta.
+Three items. None blocks the beta.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
@@ -309,14 +309,6 @@ Four items. None blocks the beta.
   broken. Every other filter in the set changes the picture on sight. Either a
   non-identity default or a word in the row would fix it; both are product
   decisions rather than audit findings.
-
-**Accessibility**
-- **Disabled buttons are unreachable by keyboard.** `disabled` removes an
-  element from the tab order, so a keyboard-only or screen-reader author never
-  lands on ▶ PLAY and never hears the tooltip added in round four explaining
-  that ◆ RENDER comes first — they simply do not learn the button exists.
-  Fixing it means `aria-disabled` plus a refusal in every affected handler, and
-  the handlers are spread across five files. Recorded rather than rushed.
 
 Every other finding this audit raised has been either fixed above or recorded
 under *Investigated and found NOT to be defects*. Two caveats on that, because
@@ -646,6 +638,58 @@ Recorded separately: **`grade` and `levels` have no visible effect at their
 default parameters.** That is defensible — they are adjustment filters and their
 defaults are identity — but an author who adds one and sees nothing has no way
 to tell that from a broken filter. Listed under *Still open*.
+
+### A control that is off, and out of reach
+
+Recorded as *Still open* at the end of round four and now closed, because the
+tooltips that round added turned out to be unreachable by exactly the people who
+cannot see a greyed-out button and guess.
+
+`disabled` takes an element **out of the tab order**. That is the right answer
+for a control nobody needs to know about, and the wrong one for a control whose
+whole problem is that the author does not know what would switch it on.
+
+Measured on a stock build: on the AUDIO panel, Tab from ◆ RENDER walks
+`a-savepreset` → the section strip → `a-tidy` → `a-reset` → the macros →
+`a-preset` → `a-gallery-btn` → `a-preset-manage` → `a-dur`. It never lands on
+**▶ PLAY, ⤓ .wav or NORMALIZE at all** — so a keyboard or screen-reader author
+does not learn those buttons exist, let alone that ◆ RENDER is what turns them
+on.
+
+Seven controls now carry `aria-disabled` instead: announced as unavailable,
+still focusable, still able to explain themselves. Two pieces make that safe:
+
+- **`setEnabled()`** in `core/dom.js` is the one place that knows the reachable
+  spelling, so the five panels that switch these controls say what they mean
+  rather than each choosing an attribute.
+- **`guardDisabled()`** is a single capture-phase listener that makes the
+  refusal real. `aria-disabled` carries no behaviour of its own — without this
+  the button would look off and fire anyway, which is worse than where this
+  started. `stopImmediatePropagation` is what stops the control's own handler,
+  which is registered on the control itself. Pressing it is a question, so it
+  answers with the title `whyoff.js` keeps current, through a toast rather than
+  only the console: someone driving by keyboard is not reading the console.
+
+Both spellings are styled identically, or switching a button to the reachable
+form would silently un-grey it; and the reachable one gets a focus style,
+because it can now be focused.
+
+Measured after: Tab from ◆ RENDER lands on `a-play` → `a-dl` → `a-norm`
+immediately. Pressing one refuses — label unchanged, still off — and says *"No
+sound has been rendered yet — press ◆ RENDER first."* After ◆ RENDER the
+attribute is gone and the tooltip reads *"Play the rendered sound"*.
+
+Verified in both directions, and the second half needed its own backwards case:
+reverting the three audio buttons to `disabled` turns four of the five checks
+red, but *"comes back on cleanly"* passes there for the wrong reason — its real
+failure is a broken re-enable, so it was checked against a `setEnabled()` that
+forgets to clear the attribute.
+
+One existing check had to change with it. The behaviour audit asserted
+`a-region-add.disabled === true`, which now reads "live" for a button that is
+plainly off. Restated as the intent — unavailable in *either* spelling — plus a
+second check that it is reachable, so the pair says what the panel actually
+promises.
 
 ### Investigated and found NOT to be defects
 

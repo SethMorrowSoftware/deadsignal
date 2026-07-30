@@ -125,7 +125,7 @@
           <span id="v-time" class="tag">0.0s</span></div>
         <div class="btns">
           <button class="btn" id="v-record">● RECORD .webm</button>
-          <button class="btn small" id="v-stop" disabled>■ STOP</button>
+          <button class="btn small" id="v-stop" aria-disabled="true">■ STOP</button>
           <button class="btn small amber" id="v-gif">⤓ .gif</button>
           <button class="btn small amber" id="v-apng" title="lossless, 24-bit, real alpha — the archival one">⤓ .apng</button>
           <button class="btn small amber" id="v-awebp" title="24-bit with real alpha, a fraction of the size — the one to upload">⤓ .webp</button>
@@ -298,16 +298,16 @@ signal integrity: 100%</textarea>
           <div class="row">
             <select id="a-region-op" class="grow" aria-label="edit to apply"></select>
             <span class="row" style="display:none"><label for="a-region-amount">Amount</label><input type="number" id="a-region-amount" value="100" min="0" max="400" step="5"></span>
-            <button class="btn small amber" id="a-region-add" disabled>＋ APPLY</button>
+            <button class="btn small amber" id="a-region-add" aria-disabled="true">＋ APPLY</button>
             <button class="btn small" id="a-regions-clear" title="Remove every edit">✕ clear</button>
           </div>
           <div id="a-regions-list" data-generated></div>
         </fieldset>
         <div class="btns">
           <button class="btn" id="a-render">◆ RENDER</button>
-          <button class="btn small" id="a-play" disabled>▶ PLAY</button>
-          <button class="btn small" id="a-dl" disabled>⤓ .wav</button>
-          <button class="btn small amber" id="a-norm" disabled>NORMALIZE</button>
+          <button class="btn small" id="a-play" aria-disabled="true">▶ PLAY</button>
+          <button class="btn small" id="a-dl" aria-disabled="true">⤓ .wav</button>
+          <button class="btn small amber" id="a-norm" aria-disabled="true">NORMALIZE</button>
           <button class="btn small" id="a-savepreset">✚ PRESET</button>
         </div>
         <div class="hint" id="a-status" role="status" aria-live="polite">Idle. Configure layers + FX, then render.</div>
@@ -590,7 +590,7 @@ C:\&gt; _</textarea>
           <span id="tl-peak" class="tag" title="Loudest sample in the sequence mix. The mix is not limited, so past 0 dB the encoder clamps." aria-live="polite"></span></div>
         <div class="btns">
           <button class="btn" id="tl-record">● RECORD sequence</button>
-          <button class="btn small" id="tl-stop" disabled>■ STOP</button>
+          <button class="btn small" id="tl-stop" aria-disabled="true">■ STOP</button>
           <button class="btn small amber" id="tl-add" title="Append the VIDEO tab's current look">＋ SCENE</button>
           <button class="btn small amber" id="tl-still" title="Append the SCREEN tab's current render, held">＋ STILL</button>
           <button class="btn small amber" id="tl-title" title="Words over the picture: a title on V2 at the playhead, edited in the CLIP panel">＋ TITLE</button>
@@ -654,7 +654,7 @@ C:\&gt; _</textarea>
         </div>
         <div class="row">
           <button class="btn amber" id="bx-run">▶ EXPORT BATCH</button>
-          <button class="btn" id="bx-stop" disabled>■ STOP</button>
+          <button class="btn" id="bx-stop" aria-disabled="true">■ STOP</button>
         </div>
         <div id="bx-progress-wrap" style="display:none"><div class="progress"><div id="bx-progress"></div></div></div>
         <p class="hint" id="bx-status"></p>

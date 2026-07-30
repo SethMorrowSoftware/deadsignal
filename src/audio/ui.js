@@ -2,7 +2,7 @@
 import { applyEdgeFades, readAudioCfg, renderAudio } from './engine.js';
 import { bufferPeakRms, encodeWav } from './wav.js';
 import { download, makeUrl, revokeUrl } from '../core/blobs.js';
-import { $, chk, log, setVal, toast, val } from '../core/dom.js';
+import { $, chk, log, setEnabled, setVal, toast, val } from '../core/dom.js';
 import { saveUserPreset } from '../core/recipes.js';
 import { fxScanlines } from '../fx/crt.js';
 import { paintWave, peaksOf } from './peaks.js';
@@ -82,7 +82,7 @@ export async function doRenderAudio(){ if(aRendering)return; aRendering=true; co
     lastAudio=r; bumpAudioRev(); drawWaveform(r.channels); setRegionDuration(r.channels[0].length/r.sr);
     const pr=bufferPeakRms(r.channels); const db=(pr.peak>0?20*Math.log10(pr.peak):-99); $("a-peak").style.width=Math.min(100,pr.peak*100)+"%"; $("a-peakv").textContent=db.toFixed(1)+"dB";
     if(pr.peak>0.999){ setBanner("a-banners",[{msg:"Clipping (peak ≥ 0dBFS). Normalize or lower levels.",fix:()=>{$("a-norm").click();}}]); } else clearBanner("a-banners");
-    $("a-play").disabled=false; $("a-dl").disabled=false; $("a-norm").disabled=false; $("a-stale").textContent="fresh"; $("a-stale").className="badge2";
+    setEnabled($("a-play"),true); setEnabled($("a-dl"),true); setEnabled($("a-norm"),true); $("a-stale").textContent="fresh"; $("a-stale").className="badge2";
     $("a-status").textContent="Rendered "+r.duration.toFixed(1)+"s · "+(r.channels.length>1?"stereo":"mono")+" · peak "+db.toFixed(1)+"dB.";
     const psel=val("a-preset"); const nm=(psel&&psel!=="— custom —")?psel:(val("a-morse-w")||"audio");
     lastAudio.blob=encodeWav(r.channels,r.sr,r.bits);
@@ -161,7 +161,7 @@ export function updateSampleName(){ const t=$("a-sample-name"); if(!t)return;
   t.textContent = hasImportedAudio()
     ? importedAudioName()+" · "+importedAudio().duration.toFixed(1)+"s"
     : "none loaded"; }
-export function markAudioStale(){ const b=$("a-stale"); if(b){ b.textContent="stale"; b.className="badge2 stale"; } if($("a-dl"))$("a-dl").disabled=true; }
+export function markAudioStale(){ const b=$("a-stale"); if(b){ b.textContent="stale"; b.className="badge2 stale"; } setEnabled($("a-dl"),false); }
 /* ============================================================================
    SCREEN — Win95 chrome engine + templates + still FX + export
    ========================================================================== */

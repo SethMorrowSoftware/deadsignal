@@ -1,5 +1,5 @@
 /* Dead Signal Studio — video/timeline.js */
-import { $, clamp, escHtml, log, num, toast, val } from '../core/dom.js';
+import { $, clamp, escHtml, log, num, setEnabled, toast, val } from '../core/dom.js';
 import { readRecipe } from '../core/recipes.js';
 import { MAX_DIM, MIN_H, MIN_W } from '../core/formats.js';
 import { MAX_CLIP, MAX_CLIPS, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, flashHalf, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf, spineSpans } from '../doc/timeline.js';
@@ -995,7 +995,7 @@ async function recordTimelineFast(sched){
   const frames=Math.max(1, Math.round(s.total*tl.fps));
 
   stopTimelinePreview(); tlRecording=true;
-  $("tl-record").disabled=true; $("tl-stop").disabled=false; $("tl-progress-wrap").style.display="block";
+  $("tl-record").disabled=true; setEnabled($("tl-stop"),true); $("tl-progress-wrap").style.display="block";
   log("Exporting "+s.total.toFixed(1)+"s sequence @ "+tl.fps+"fps "+tl.W+"×"+tl.H+" via WebCodecs ("+support.label+")…","info");
 
   let bed=null;
@@ -1021,7 +1021,7 @@ async function recordTimelineFast(sched){
   }catch(e){ err=e; }
 
   $("tl-progress-wrap").style.display="none";
-  tlRecording=false; $("tl-record").disabled=false; $("tl-stop").disabled=true;
+  tlRecording=false; $("tl-record").disabled=false; setEnabled($("tl-stop"),false);
 
   // Same contract as the single-clip exporter: a cancelled export is discarded
   // rather than saved as a short sequence, and counts as handled so the caller
@@ -1081,14 +1081,14 @@ export async function recordTimeline(){ if(tlRecording)return; if(!timeline.leng
   let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
                                                    toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  stopTimelinePreview(); tlRecording=true; $("tl-record").disabled=true; $("tl-stop").disabled=false; $("tl-progress-wrap").style.display="block";
+  stopTimelinePreview(); tlRecording=true; $("tl-record").disabled=true; setEnabled($("tl-stop"),true); $("tl-progress-wrap").style.display="block";
   /* STOP discards and an error is an error — same contract as the offline
      exporter; see recordVideo()'s finish(). */
   let endReason="done";
   let done=false; const finish=()=>{ if(done)return; done=true; try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
     try{ bedCtx&&bedCtx.close(); }catch(e){}
     $("tl-progress-wrap").style.display="none";
-    tlRecording=false; releaseExport(); $("tl-record").disabled=false; $("tl-stop").disabled=true;
+    tlRecording=false; releaseExport(); $("tl-record").disabled=false; setEnabled($("tl-stop"),false);
     if(endReason!=="done"){
       const stopped=endReason==="stopped";
       $("tl-status").textContent=stopped?"Recording cancelled — nothing saved.":"Recorder failed — nothing saved.";

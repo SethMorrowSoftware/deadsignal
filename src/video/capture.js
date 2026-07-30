@@ -2,7 +2,7 @@
 import { CONTAINERS, encodeClip, encoderSupport, fillContainerSelect } from '../export/encoder.js';
 import { sampleFlash, paintFlash, resetFlashMeter } from '../ui/flashmeter.js';
 import { download } from '../core/blobs.js';
-import { $, clamp, log, num, setVal, toast, val } from '../core/dom.js';
+import { $, clamp, log, num, setEnabled, setVal, toast, val } from '../core/dom.js';
 import { applyPalette } from '../core/palettes.js';
 import { saveUserPreset } from '../core/recipes.js';
 import { addToLibrary, slug } from '../library/library.js';
@@ -266,7 +266,7 @@ async function recordVideoFast(cfg){
      project twice produced different files. The real-time path and
      collectFrames() both reset it by resizing; this one never did. */
   _persistCanvas().width=cfg.W; _persistCanvas().height=cfg.H;
-  $("v-record").disabled=true; $("v-stop").disabled=false; $("v-progress-wrap").style.display="block";
+  $("v-record").disabled=true; setEnabled($("v-stop"),true); $("v-progress-wrap").style.display="block";
   log("Exporting "+cfg.duration+"s @ "+cfg.fps+"fps "+cfg.W+"×"+cfg.H+" via WebCodecs ("+support.label+")…","info");
 
   // Resolved before the picture starts so a missing bed is reported up front
@@ -290,7 +290,7 @@ async function recordVideoFast(cfg){
   }catch(e){ err=e; }
 
   $("v-progress-wrap").style.display="none";
-  vRecording=false; $("v-record").disabled=false; $("v-stop").disabled=true;
+  vRecording=false; $("v-record").disabled=false; setEnabled($("v-stop"),false);
 
   // STOP means stop. The encoder hands back the frames it managed, and saving
   // those would put a silently truncated clip in the library announced as a
@@ -382,7 +382,7 @@ export async function recordVideo(){
   let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
                                                    toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  stopVideoPreview(); vRecording=true; $("v-record").disabled=true; $("v-stop").disabled=false; $("v-progress-wrap").style.display="block";
+  stopVideoPreview(); vRecording=true; $("v-record").disabled=true; setEnabled($("v-stop"),true); $("v-progress-wrap").style.display="block";
   /* Why the recording ended decides what finish() does with the chunks. The
      fast path's contract holds here too: STOP means stop, and a recorder error
      is an error — saving either as a normal clip put a silently truncated file
@@ -391,7 +391,7 @@ export async function recordVideo(){
   let done=false; const finish=()=>{ if(done)return; done=true; try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
     try{ bedCtx&&bedCtx.close(); }catch(e){}
     $("v-progress-wrap").style.display="none";
-    vRecording=false; releaseExport(); $("v-record").disabled=false; $("v-stop").disabled=true;
+    vRecording=false; releaseExport(); $("v-record").disabled=false; setEnabled($("v-stop"),false);
     if(endReason!=="done"){
       const stopped=endReason==="stopped";
       $("v-status").textContent=stopped?"Recording cancelled — nothing saved.":"Recorder failed — nothing saved.";
