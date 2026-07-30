@@ -10,6 +10,8 @@ import { startSession } from './doc/bind.js';
 import { createDocument } from './doc/schema.js';
 import { toJSON } from './doc/serialize.js';
 import { autosave, openStorage } from './platform/storage.js';
+import { diagnostics, installErrorReporter } from './platform/errors.js';
+import { BUILD, VERSION } from './core/version.js';
 import { currentSeed, seedRng } from './core/rng.js';
 import { initImageTab, renderImage } from './image/render.js';
 import { decodeStego } from './image/stego.js';
@@ -65,6 +67,14 @@ let studioSession=null, studioBackend=null, studioAutosave=null;
 export const AUDIO_FX_CHAIN='a-fx';
 
 export function boot(){
+  /* FIRST, so it covers boot itself. Everything below can throw, and a boot that
+     throws part way is exactly the failure an author cannot diagnose: the page
+     is there, half of it works, and nothing says why. The markup for the console
+     and the toast rail is already parsed by now, so both channels are live. */
+  installErrorReporter();
+  // Which build this is, on screen and in the boot line — a bug report against
+  // a tool with no version in it is a report about an unknown program.
+  { const t=$("build-tag"); if(t) t.textContent=VERSION; }   /* dom-only: a readout, never project state */
   // Read before anything can clear the fragment: initCloud() consumes it.
   const arrivedByShareLink=hasShareFragment();
   // selects
@@ -154,6 +164,29 @@ export function boot(){
   initContrast();
   initMacros((tab)=>{ if(tab==='video') startVideoPreview(); else markAudioStale(); });
   initExplain();
+  /* Copies the build, the browser, which platform features are present and any
+     faults this session. Clipboard only — nothing is sent anywhere, which is
+     the whole premise of the tool and has to stay true of its bug reports too.
+     The textarea fallback is for the browsers and the insecure contexts where
+     navigator.clipboard is simply absent; without it the button would be dead
+     on exactly the setups most likely to have something to report. */
+  $("help-diagnostics")?.addEventListener("click", async ()=>{
+    const text=diagnostics({ view: document.querySelector(".tab.active")?.dataset.view || "?" });
+    let ok=false;
+    try{ await navigator.clipboard.writeText(text); ok=true; }
+    catch(e){
+      try{
+        const ta=document.createElement("textarea");
+        ta.value=text; ta.setAttribute("readonly","");
+        ta.style.cssText="position:fixed;top:-1000px;opacity:0";
+        document.body.appendChild(ta); ta.select();
+        ok=document.execCommand("copy"); ta.remove();
+      }catch(e2){ ok=false; }
+    }
+    // Either way it goes to the console, so there is always something to copy.
+    log("--- diagnostics ---\n"+text,"info");
+    toast(ok?"Diagnostics copied":"Could not reach the clipboard — the block is in CONSOLE", ok?"ok":"warn");
+  });
   /* Keeps the tooltip on every button that can be greyed out saying what would
      turn it back on. After the panels above, so the ids all exist. */
   initWhyOff();
@@ -309,7 +342,7 @@ export function boot(){
     if(lrst) lrst.addEventListener("click",(e)=>{ e.stopPropagation(); clearLayers(); }); }
   // init previews
   seedRng(currentSeed()); startVideoPreview(); renderImage(); renderLibTable(); renderCoverage(); renderTimelineTable();
-  log("DEAD SIGNAL STUDIO ready — "+Object.keys(SCENES).length+" scenes, "+Object.keys(TEMPLATES).length+" screen templates.","ok");
+  log(BUILD+" ready — "+Object.keys(SCENES).length+" scenes, "+Object.keys(TEMPLATES).length+" screen templates.","ok");
   // Asked before initCloud() has had a chance to clear the fragment.
   initPersistence(session, { arrivedByShareLink });
   /* BOOT IS OVER — said once, out loud.

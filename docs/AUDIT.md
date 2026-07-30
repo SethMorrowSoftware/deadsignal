@@ -287,12 +287,20 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-Two items. Neither blocks the beta.
+Three items. None blocks the beta.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
   should make, and it is deliberately left out. Nothing else here is blocked on
   it, but a beta without one is a beta nobody can legally build on.
+
+**Verification**
+- **Everything is verified in Chromium only.** All four browser suites drive
+  Chromium; Firefox and WebKit are untested. Specific known risk points in this
+  codebase: canvas `letterSpacing` (Firefox does not implement it — guarded, so
+  type *renders differently* rather than crashing), WebCodecs, `captureStream`,
+  IndexedDB in Safari private mode, and H.264/MP4. `⎘ COPY DIAGNOSTICS` reports
+  each of these, so a beta tester on another engine can say which are missing.
 
 **Accessibility**
 - **Disabled buttons are unreachable by keyboard.** `disabled` removes an
@@ -522,6 +530,57 @@ The export check is made by serving `audio/bed.js` as a module that re-exports
 the real one and shadows `prepareBed` alone, so boot is untouched and only the
 bed fails; the asset check rejects `backend.putAsset` for four writes and counts
 the announcements.
+
+### The fault nobody anticipated, and what build it happened on
+
+Two things a beta needs that this repository did not have.
+
+**There was no global error handler.** No `window.onerror`, no
+`unhandledrejection` listener, anywhere. Every *individual* failure path in the
+tool now says what went wrong — that is most of this round — but the one that
+was never anticipated had nowhere to go. A throw on a path these suites do not
+walk left the interface half-wedged and completely quiet: a button that stopped
+working, and nothing to report about it. The deep suite's "no uncaught page
+errors" check proves it for the paths it walks; finding the others is what a
+beta *is*, and a tester can only report what the tool tells them.
+
+`src/platform/errors.js` now catches both. Three properties, each measured:
+
+- **Announced once per distinct fault, not once per occurrence.** A handler that
+  throws on every animation frame is one problem, not sixty. Verified: 21 throws
+  of the same error, 1 announcement.
+- **Collapsed in the report, too.** The first version appended one line per
+  occurrence, so twenty-one identical entries filled the twenty-slot list and
+  pushed out the earlier, *different* fault that was the useful part. Now one
+  line with a count and a last-seen time.
+- **A missing image is not an exception.** Element `error` events do not bubble,
+  so a non-capturing window listener never sees them — the guard in the handler
+  is for the day someone adds `true` to that listener, which would deliver every
+  broken image as an unexplained "something went wrong".
+
+Nothing suppresses the default handling: the error still reaches the browser
+console and still reaches Playwright's `pageerror`, so every suite that asserts
+on uncaught errors goes on working unchanged.
+
+**And there was no version anywhere.** No `package.json`, no build step, nothing
+in the interface, and a boot line that read `DEAD SIGNAL STUDIO ready` with no
+stamp. A bug report against a tool with no version in it is a report about an
+unknown program. `src/core/version.js` holds one hand-maintained constant — a
+generated stamp needs a build step, and not having one is a commitment this
+repository makes everywhere else — shown in the header, in the boot line, and in
+**⎘ COPY DIAGNOSTICS** on the HELP tab, which puts the build, the browser, which
+platform features are actually present (WebCodecs, OffscreenCanvas, IndexedDB,
+MediaRecorder, AudioContext, canvas `letterSpacing`), the secure-context state
+and the session's faults on the clipboard. Clipboard only: nothing is sent
+anywhere, which is the premise of the tool and has to stay true of its bug
+reports.
+
+One correction worth recording. The missing-image check originally measured the
+*toast rail* and passed against a reporter that was recording the image error —
+every announcement carries the same text and the rail collapses repeats into
+`×N`, so "no new toast text" cannot tell absence from collapse. Two neighbouring
+checks caught what it missed. It measures the fault list now, and goes red when
+the listener is made capturing.
 
 ### Investigated and found NOT to be defects
 

@@ -3223,6 +3223,120 @@ section('when the tool cannot use what it was given, it says so where you can se
     (assetWrite.logged || '').slice(0, 90));
 }
 
+/* ------------------------------------ the fault nobody anticipated -- */
+section('an uncaught fault says so, once, and leaves something to report');
+{
+  /* THE LAST SILENT FAILURE. Every individual failure path in this tool now
+     says what went wrong. What none of them covered is the one that was never
+     anticipated: an uncaught exception, or a promise nobody caught. There was
+     no window.onerror and no unhandledrejection listener anywhere, so a throw
+     on a path these suites do not walk left the interface half-wedged and
+     completely quiet — a button that stopped working, and nothing to report
+     about it. Finding those paths is what a beta is for, and a tester can only
+     report what the tool tells them.
+
+     Its own context: this section deliberately raises uncaught errors, and the
+     shared page ends on a check that there have been none. */
+  const errs = await (async () => {
+    const c = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    try {
+      const p5 = await c.newPage();
+      await p5.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p5.waitForFunction(() => document.documentElement.dataset.studio === 'ready',
+        null, { timeout: 30000 });
+      return await p5.evaluate(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const toasts = () => document.getElementById('toasts').textContent;
+        const con = () => document.getElementById('console').textContent;
+        const E = await import('./src/platform/errors.js');
+        const out = {};
+        out.buildTag = document.getElementById('build-tag').textContent;
+        out.bootLineNamesBuild = /Dead Signal Studio \d+\.\d+/.test(con());
+
+        E._resetFaults();
+        const t0 = toasts().length; const c0 = con().length;
+        // The way an uncaught error really arrives: out of a callback.
+        setTimeout(() => { throw new Error('deep-suite probe fault'); }, 0);
+        await sleep(350);
+        out.thrown = { toast: toasts().slice(t0).replace(/\s+/g, ' ').trim(),
+                       log: con().slice(c0).replace(/\s+/g, ' ').trim() };
+
+        // Twenty more of the SAME fault. One problem, not twenty-one.
+        for (let i = 0; i < 20; i++) setTimeout(() => { throw new Error('deep-suite probe fault'); }, 0);
+        await sleep(600);
+        out.announcements = (toasts().match(/Something went wrong/g) || []).length;
+
+        // A promise nobody caught.
+        Promise.reject(new Error('deep-suite probe rejection'));
+        await sleep(350);
+        out.rejectionLogged = /probe rejection/.test(con());
+
+        /* A missing image is not an exception and must not be reported as one.
+           Measured on the FAULT LIST, not on the toast rail: every announcement
+           carries the same text and the rail collapses repeats into "×N", so
+           "no new toast text" cannot tell absence from collapse — an earlier
+           version of this check passed against a reporter that was recording
+           the image error, and two neighbouring checks caught it instead. */
+        const beforeImg = E.faults().length;
+        const img = document.createElement('img');
+        img.src = './definitely-not-here-' + Math.random().toString(36).slice(2) + '.png';
+        document.body.appendChild(img);
+        await sleep(450); img.remove();
+        out.resourceFaults = E.faults().length - beforeImg;
+        out.resourceNames = E.faults().map((f) => f.message).filter((m) => /not-here/.test(m));
+
+        out.diag = E.diagnostics({ view: 'probe' });
+        out.distinct = E.faults().length;
+
+        // And the button an author is told to press.
+        document.querySelector('.tab[data-view=help]')?.click();
+        await sleep(250);
+        const t3 = toasts().length;
+        document.getElementById('help-diagnostics').click();
+        await sleep(700);
+        out.buttonToast = toasts().slice(t3).replace(/\s+/g, ' ').trim();
+        out.clipboard = await navigator.clipboard.readText().catch(() => '');
+        E._resetFaults();
+        return out;
+      });
+    } finally { await c.close(); }
+  })();
+
+  check('an uncaught error is announced where the author can see it',
+    /Something went wrong/.test(errs.thrown.toast || ''),
+    (errs.thrown.toast || '(no toast)').slice(0, 60));
+  check('…with the message and a stack written down to read afterwards',
+    /probe fault/.test(errs.thrown.log || '') && /at /.test(errs.thrown.log || ''),
+    (errs.thrown.log || '').slice(0, 100));
+  check('…and the author is told how to report it',
+    /COPY DIAGNOSTICS/.test(errs.thrown.log || ''), (errs.thrown.log || '').slice(-70));
+  check('twenty-one throws of the same fault are ONE announcement, not twenty-one',
+    errs.announcements === 1, `${errs.announcements} announcements`);
+  check('…and the report collapses them to one line with a count, not twenty-one lines',
+    errs.distinct === 2 && /×21/.test(errs.diag || ''),
+    `${errs.distinct} distinct · ${(errs.diag || '').split('\n').filter((l) => /probe fault/.test(l))[0] || ''}`);
+  check('a promise nobody caught is reported too',
+    errs.rejectionLogged === true);
+  check('…but a missing image is not — that is not an exception',
+    errs.resourceFaults === 0 && (errs.resourceNames || []).length === 0,
+    errs.resourceFaults === 0 ? 'not recorded, as it should be'
+      : `${errs.resourceFaults} recorded: ${(errs.resourceNames || []).join(', ').slice(0, 60)}`);
+
+  check('the interface says which build this is',
+    /^\d+\.\d+\.\d+/.test(errs.buildTag || ''), errs.buildTag || '(empty)');
+  check('…and the boot line names it too, so a saved console log carries it',
+    errs.bootLineNamesBuild === true);
+  check('⎘ COPY DIAGNOSTICS puts a usable report on the clipboard',
+    /Diagnostics copied/.test(errs.buttonToast || '')
+    && /Dead Signal Studio \d+\.\d+/.test(errs.clipboard || ''),
+    `${errs.buttonToast} · ${(errs.clipboard || '(empty)').slice(0, 40)}`);
+  check('…naming the build, the browser, the platform features and the faults',
+    /browser:/.test(errs.diag) && /WebCodecs:/.test(errs.diag)
+    && /IndexedDB:/.test(errs.diag) && /secure context:/.test(errs.diag)
+    && /faults this session \(2 distinct/.test(errs.diag),
+    (errs.diag || '').split('\n').find((l) => l.startsWith('features:'))?.slice(0, 70) || '');
+}
+
 console.log('-'.repeat(64));
 if (failures.length) {
   console.log('\nFailures:');

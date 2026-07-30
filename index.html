@@ -46,6 +46,12 @@
        eye, and the one moment worth announcing (saving stopped) is a toast. -->
   <span class="ctl"><span id="save-state" class="tag save-state" role="status"
     title="Whether this session is being saved to your browser. It is restored automatically when you come back.">·</span></span>
+  <!-- Which build this is. Filled by boot from src/core/version.js rather than
+       typed here, so there is one place to bump and no way for the markup and
+       the diagnostics block to disagree about the answer. A bug report against
+       a tool with no version in it is a bug report about an unknown program. -->
+  <span class="ctl"><span id="build-tag" class="tag build-tag"
+    title="Which build of the studio this is. Quote it in a bug report — ⎘ COPY DIAGNOSTICS on the HELP tab gets this and everything else worth knowing."></span></span>
   <span class="ctl"><label for="contrast">contrast</label>
     <select id="contrast" title="High contrast turns off the CRT overlay and phosphor glow in the tool's own interface. Rendered media is unaffected.">
       <option value="normal">Normal</option><option value="high">High</option>
@@ -780,7 +786,7 @@ C:\&gt; _</textarea>
   <!-- ===================== HELP ===================== -->
   <section class="view" id="view-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0">
     <div class="panel">
-      <h2>HOW TO USE <span class="hdr-actions"><button class="btn small" id="help-welcome">▓ Show the welcome card</button></span></h2>
+      <h2>HOW TO USE <span class="hdr-actions"><button class="btn small" id="help-welcome">▓ Show the welcome card</button><button class="btn small" id="help-diagnostics" title="Copies the build, your browser, which platform features are present, and any faults this session — everything a bug report needs and nothing else. Nothing is sent anywhere; it goes to your clipboard.">⎘ COPY DIAGNOSTICS</button></span></h2>
       <p>Offline, no dependencies, no network. Serve <span class="k">tools/media-studio/</span> from any static server &mdash; <span class="k">python -m http.server</span> in that folder is enough &mdash; and open it. A browser will not load ES modules straight off the filesystem, which is why it is served rather than double-clicked; nothing is uploaded and everything renders locally and downloads to your machine.</p>
       <ol>
         <li><b>VIDEO</b> — pick a Scene, tune the CRT/VHS stack + text, preview (scrub to any frame), then <b>Record .webm</b>. Export runs offline and faster than real time &mdash; a 10s clip takes about a second &mdash; and does not need the tab focused. Also exports animated <b>.gif</b> and a frame-strip. <b>Bring your own art</b>: <b>⇪ IMG</b> (Ken Burns) or <b>⇪ VID</b> — import a video clip (or drop one on the preview) and run it through the whole CRT/VHS + reveal/subliminal stack, then re-export. Plays natively in the campaign.<br><b>Keyframes</b>: scrub to a time, set a control, press <b>◆ KEY</b> — two keys make a ramp, so a look can build or decay across the clip. <b>Layers</b>: stack up to six more scenes over the base, each with its own blend and opacity.</li>
