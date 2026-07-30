@@ -2818,6 +2818,79 @@ section('the document is wired to itself correctly');
     blanking.added.video === 1 && blanking.added.audio === 1, JSON.stringify(blanking.added));
   check('every number and range input declares its own bounds, so the box agrees with the clamp',
     wiring.unbounded.length === 0, wiring.unbounded.slice(0, 8).join(', '));
+
+  /* DECLARING A BOUND IS NOT ENFORCING ONE.
+     The check above proves each field advertises min/max. `<input type=number>`
+     clamps only its own steppers, so a TYPED number was kept however far
+     outside them it was — and every reader here goes through clamp(), so the
+     picture was right while the control, the document AND THE SAVED PROJECT
+     FILE all said something else. Measured on a stock build: 1299 into FPS
+     (max 30) rendered at 30, stored "1299", and wrote "1299" into the project
+     file — a number no build of this tool will ever honour, travelling with the
+     project forever. Duration 9999 → 60, width −50 → 64. All 53 behaved so. */
+  const held = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const nums = [...document.querySelectorAll('input[type=number][min][max]')]
+      .filter((e) => e.id && !e.disabled);
+    const commit = (el, v) => { el.value = String(v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true })); };
+    const over = [], under = [];
+    for (const el of nums) {
+      const min = Number(el.min), max = Number(el.max), orig = el.value;
+      commit(el, max * 10 + 999);
+      if (Number(el.value) > max) over.push(`${el.id}>${max}:${el.value}`);
+      commit(el, min - 999);
+      if (Number(el.value) < min) under.push(`${el.id}<${min}:${el.value}`);
+      commit(el, orig);
+    }
+
+    /* And the document must agree with the box, or the project file carries the
+       number the tool refused. */
+    document.querySelector('.tab[data-view=video]').click();
+    const fps = document.getElementById('v-fps');
+    commit(fps, 1299);
+    const doc = S.store.get('tabs.video.v-fps');
+    const saved = JSON.parse(JSON.stringify(S.readProject())).tabs?.video?.['v-fps'];
+    const rendered = S.readVideoCfg().fps;
+    commit(fps, 12);
+
+    /* Typing is NOT corrected mid-keystroke: an `input` alone leaves the box, so
+       typing "50" into a field whose minimum is 10 survives the "5". */
+    fps.value = '3';
+    fps.dispatchEvent(new Event('input', { bubbles: true }));
+    const midTyping = fps.value;
+    commit(fps, 12);
+
+    /* A cleared box is a box being cleared, not a value of zero. */
+    const dur = document.getElementById('v-dur');
+    const durWas = dur.value;
+    commit(dur, '');
+    const cleared = dur.value;
+    commit(dur, durWas);
+
+    /* An in-range value passes through untouched and without a word. */
+    const toastsBefore = document.getElementById('toasts').textContent;
+    const w = document.getElementById('v-w');
+    const wWas = w.value;
+    commit(w, 480);
+    const inRange = { kept: w.value, silent: document.getElementById('toasts').textContent === toastsBefore };
+    commit(w, wWas);
+
+    return { checked: nums.length, over, under, doc, saved, rendered, midTyping, cleared, inRange };
+  });
+  check('…and every one of them is HELD to those bounds when a value is typed',
+    held.over.length === 0 && held.under.length === 0,
+    `${held.checked} fields · over: ${held.over.join(',') || 'none'} · under: ${held.under.join(',') || 'none'}`);
+  check('…so the document and the saved project carry what will actually render',
+    held.doc === '30' && held.saved === '30' && held.rendered === 30,
+    `doc ${held.doc}, saved ${held.saved}, rendered ${held.rendered}`);
+  check('…while typing is left alone until it is committed',
+    held.midTyping === '3', held.midTyping);
+  check('…a cleared box stays cleared rather than snapping to a minimum',
+    held.cleared === '', JSON.stringify(held.cleared));
+  check('…and an in-range value passes through untouched and unremarked',
+    held.inRange.kept === '480' && held.inRange.silent === true, JSON.stringify(held.inRange));
 }
 
 console.log('-'.repeat(64));

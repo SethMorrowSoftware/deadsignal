@@ -309,6 +309,55 @@ under *Investigated and found NOT to be defects*. Two caveats on that, because
 
 ---
 
+## Round four: a field that lied about its own value
+
+**Every number field kept a value it would never honour, and saved it.**
+`<input type="number">` clamps only its own steppers, so a *typed* number stayed
+in the box however far outside its declared min/max it was — while every reader
+in the tool goes through `clamp()`. The picture was therefore right and the
+control, the document and the project file all said something else.
+
+Measured on a stock build: typing **1299 into FPS (max 30)** rendered at 30,
+stored `"1299"` in the document, and wrote `"1299"` into the saved project — a
+number no build of this tool will ever honour, travelling with that project
+forever, with nothing said. Duration `9999 → 60`; width `−50 → 64`. **All 53
+bounded number inputs behaved this way.**
+
+The deep suite already asserted that every field *declares* min and max. It
+turns out declaring a bound and enforcing one are different claims, and only the
+first was being made.
+
+Now clamped on `change` — the commit point, never on `input`, because correcting
+mid-keystroke would make typing "50" into a field with a minimum of 10 snap to 10
+after the "5". A blank box is left blank (that is a field being cleared, and
+every reader already defaults it), an in-range value passes through untouched and
+unremarked, and a correction is announced, because a number that changes under
+your hands without a word is its own bug report.
+
+The clamp hangs on `document` in the capture phase rather than on the document
+binding, and that matters: two of the fifty-three live outside project state —
+`bx-seconds`, which caps how long each item in a batch runs (a 45-item batch at
+the 1599 the box would accept is twenty hours of encoding), and
+`cloud-share-days`, whose number is sent to the server. Being held to an
+advertised bound is a property of the field, not of whether it happens to be
+project state.
+
+### Investigated and found NOT to be defects
+
+- **"The welcome card ignores Escape."** The first probe dispatched the key on
+  `document`; the listener is on the dialog element. Focus is moved inside on
+  open, so a real key press bubbles to it and closes the card. The palette and
+  preset manager behave identically, and all three also close on a backdrop
+  click. The probe was wrong, not the code — the same mistake as the synthetic
+  `change` event earlier in this audit, and worth recording twice for that
+  reason.
+- **"CLEAR ALL wipes the library without confirming."** It does not confirm, and
+  does not need to: it is a single undo entry, and undo restores the rows *and
+  their bytes* — checked by reading the blob back after the undo, 128 bytes in
+  and 128 bytes out. Recoverable beats interrogated.
+
+---
+
 ## A gate that could not say what broke
 
 Recorded because it is the one problem in here the audit found by *being* the
