@@ -238,6 +238,21 @@ export async function encodeClip(opts) {
 
   const KEY_EVERY = Math.max(1, Math.round(fps * 2));   // a keyframe every ~2s
   let stopped = false;
+  /* A VideoEncoder is a hardware handle, and drawFrame is ARBITRARY CALLER CODE
+     — a scene, a filter chain, an author's keyframe curve. If it throws, the
+     exception used to propagate out of here with the encoder still open and
+     configured, because close() sat after the loop. Chromium caps how many
+     encoders a page may hold, so a few failed exports in a row stopped being
+     able to export at all — and the symptom was "WebCodecs is unavailable",
+     which is a different problem with a different fix.
+     flush() stays inside, so a successful run is ordered exactly as before. */
+  let encoderClosed = false;
+  const closeEncoder = () => {
+    if (encoderClosed) return;
+    encoderClosed = true;
+    try { encoder.close(); } catch { /* already gone */ }
+  };
+  try {
   for (let i = 0; i < frames; i++) {
     if (cancelled?.()) { stopped = true; break; }
     if (encodeError) break;
@@ -259,7 +274,9 @@ export async function encodeClip(opts) {
   }
 
   await encoder.flush();
-  encoder.close();
+  } finally {
+    closeEncoder();
+  }
   if (encodeError) throw encodeError;
   // Stopped before a single frame landed: there is nothing to mux, but this is
   // still a cancellation and not "WebCodecs is unavailable". Saying so keeps

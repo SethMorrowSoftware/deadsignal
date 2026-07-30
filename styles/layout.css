@@ -41,6 +41,15 @@ header.top{padding:12px 18px 8px; border-bottom:1px solid var(--edge2); display:
   .panel h2 .hdr-actions .btn{padding:3px 9px; font-size:12px; letter-spacing:1px}
   .split2{display:grid; grid-template-columns:1fr 1fr; gap:9px}
   .split3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:9px}
+  /* A column is a label plus its control, and .row label has a 98px floor — so
+     three of them will not go below about 312px however narrow the panel gets.
+     At 320 CSS px, the width WCAG 1.4.10 names, the OUTPUT fieldset's W / H / FPS
+     row was 312px inside a 296px panel, and the panel's own overflow:auto turned
+     three number boxes into a sideways scroll. Stacked below that, they are three
+     ordinary rows. */
+  @media(max-width:460px){
+    .split2,.split3{grid-template-columns:minmax(0,1fr)}
+  }
   .foot{color:var(--muted); font-size:12px; text-align:center; padding:16px 10px 26px; letter-spacing:1px}
 
 /* Two even columns that stack on a narrow screen. Used where a panel holds

@@ -125,7 +125,35 @@ export function lsGet(k,d){ try{ const v=localStorage.getItem(k); return v?JSON.
 export function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ log("localStorage write failed: "+e.message,"err"); return false; } }
 export const PKEY=(tab)=>"erebus.studio.presets."+tab;
 export function userPresets(tab){ return lsGet(PKEY(tab),{}); }
-export function saveUserPreset(tab,viewId){ const name=prompt("Preset name:"); if(!name)return; const all=userPresets(tab); all[name]=readRecipe(viewId); lsSet(PKEY(tab),all); rebuildPresetSelect(tab); toast("Saved preset: "+name); log("Saved user preset ["+tab+"] "+name,"ok"); }
+/* Saving over an existing name ASKS FIRST.
+ *
+ * `all[name] = readRecipe(...)` destroyed whatever was there, silently, on a
+ * name typed into a prompt() — where a typo or a half-remembered name is the
+ * ordinary case, and where the thing being destroyed is a look somebody built by
+ * hand and cannot get back. The preset MANAGER already refuses to rename onto an
+ * occupied name ("X already exists"), so the two paths disagreed about the same
+ * rule: the panel protected you and the button did not.
+ *
+ * Overwriting is legitimate — it is how you update a preset you are iterating on
+ * — so this confirms rather than refuses. Trimmed, too: " Mine" and "Mine" are
+ * the same name to a person and were two entries here. */
+export function saveUserPreset(tab,viewId){
+  const typed=prompt("Preset name:"); if(typed==null)return;
+  const name=String(typed).trim(); if(!name)return;
+  const all=userPresets(tab);
+  /* hasOwnProperty, not `in`: a preset called "toString" or "constructor" is a
+     name like any other, and `in` would claim it already existed. */
+  const replaced=Object.prototype.hasOwnProperty.call(all,name);
+  if(replaced && !confirm(`"${name}" already exists. Replace it?`)){
+    log("Save cancelled — \""+name+"\" was left as it was.","info");
+    return;
+  }
+  all[name]=readRecipe(viewId);
+  if(!lsSet(PKEY(tab),all)){ toast("Could not save the preset","err"); return; }
+  rebuildPresetSelect(tab);
+  toast((replaced?"Replaced preset: ":"Saved preset: ")+name);
+  log((replaced?"Replaced":"Saved")+" user preset ["+tab+"] "+name,"ok");
+}
 export function deleteUserPreset(tab,name){ const all=userPresets(tab); delete all[name]; lsSet(PKEY(tab),all); rebuildPresetSelect(tab); }
 /* ============================================================================
    SHARED CRT / VHS FX  (operate on a 2D context of size W×H)

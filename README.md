@@ -54,7 +54,7 @@ server/           the backend itself — classes, schema, config, storage
   models/         User Session StudioProject StudioAsset StudioVersion StudioShare
   controllers/    Auth System Studio
   migrate.php     `php server/migrate.php` — schema from the command line
-  account.php     `php server/account.php add <name> <password>`
+  account.php     `php server/account.php add <name>` — asks for the password
 styles/           tokens · layout · controls · panels
 src/              the engine, 94 ES modules
   core/           dom blobs rng text palettes packs recipes formats
@@ -1409,7 +1409,9 @@ hand.)
 
 **Accounts** are made from the server, never from a sign-up page: `setup.php`
 creates the first one, and after that either re-run the wizard with the
-reconfirm key or use `php server/account.php add <name> <password>`. Every
+reconfirm key or use `php server/account.php add <name>`, which asks for the
+password rather than taking it as an argument (`ps` and your shell history both
+keep a copy of an argument). A pipe works too, for scripts. Every
 account has identical rights; who may see a project is decided per project by
 its owner.
 

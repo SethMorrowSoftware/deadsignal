@@ -22,6 +22,7 @@
 import { hasVisibleLayers, normalizeLayers } from '../doc/layers.js';
 import { getStore } from '../doc/session.js';
 import { withSeedOffset } from '../core/rng.js';
+import { resetCtxState } from '../core/text.js';
 import { SCENES } from './scenes.js';
 
 export const LAYERS_PATH = 'layers.video';
@@ -78,9 +79,15 @@ export function drawLayers(ctx, W, H, cfg, t) {
     if (!L.enabled || L.opacity <= 0) continue;
     const s = SCENES[L.scene];
     if (!s) continue;
-    lx.setTransform(1, 0, 0, 1, 0, 0);
-    lx.globalAlpha = 1;
-    lx.globalCompositeOperation = 'source-over';
+    /* EVERY layer starts on a context that looks new, not just a blank one.
+       Clearing the transform, alpha and composite op — which is all this did —
+       left font, textAlign, textBaseline, fillStyle, strokeStyle and lineWidth
+       carrying over from the layer before, and a scene that relies on a default
+       instead of setting it then drew with the previous scene's value. 396 of
+       the 2304 scene pairs rendered the second one differently depending on the
+       first, which made reordering a stack change the appearance of a layer the
+       author had not touched. See resetCtxState. */
+    resetCtxState(lx);
     // Black, not the recipe's background: the blend has to drop it, and an
     // additive blend drops black exactly.
     lx.fillStyle = '#000';

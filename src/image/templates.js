@@ -32,8 +32,34 @@ export const FIXED_PALETTE = new Set(['autopsy', 'bios', 'blueprint', 'bsod', 'b
   'http404', 'import', 'journal', 'mall', 'map', 'policereport', 'poster', 'prescription',
   'redacted', 'registry', 'shutdown', 'statement', 'taskmgr', 'vapordesktop', 'vhslabel', 'vitals']);
 
-/** True when this template draws in its own fixed colours. */
+/** True when this template draws in its own fixed colours — BOTH ink and ground. */
 export const hasFixedPalette = (id) => FIXED_PALETTE.has(String(id || ''));
+
+/* INK AND GROUND ARE TWO CLAIMS, NOT ONE.
+ *
+ * The list above is the templates that fix both, and the panel enabled and
+ * disabled the two controls together on the strength of it. Nine templates are
+ * neither one thing nor the other, so on every one of them exactly one live
+ * control sat beside one dead one, with nothing on screen to tell them apart —
+ * the same failure the list was added to fix, one level down.
+ *
+ * Measured on 480×360 with the post stack silenced, changing one colour at a
+ * time: three screens paint their own black ground and take an ink colour (a
+ * boot splash, a test card, a cash machine); six are paper props printed in
+ * black on stock whose colour IS the ground (a till receipt, an evidence label,
+ * a boarding pass, a floppy label, a CD label, a punch card).
+ *
+ * The palette PICKER stays tied to the both-fixed list: it sets ink and ground
+ * together, so it still does something wherever either one is live.
+ */
+const INK_ONLY_FIXED = ['receipt', 'evidence', 'boardingpass', 'floppy', 'cdlabel', 'punchcard'];
+const GROUND_ONLY_FIXED = ['boot', 'testpattern', 'atm'];
+export const FIXED_INK = new Set([...FIXED_PALETTE, ...INK_ONLY_FIXED]);
+export const FIXED_GROUND = new Set([...FIXED_PALETTE, ...GROUND_ONLY_FIXED]);
+/** True when this template's INK colour is its own and the control does nothing. */
+export const hasFixedInk = (id) => FIXED_INK.has(String(id || ''));
+/** True when this template's BACKGROUND is its own and the control does nothing. */
+export const hasFixedGround = (id) => FIXED_GROUND.has(String(id || ''));
 export function template(id,name,draw){ TEMPLATES[id]={id,name,draw}; }
 export function baseTerm(ctx,W,H,c){ ctx.fillStyle=c.trans?"rgba(0,0,0,0)":c.bg; if(!c.trans){ctx.fillStyle=c.bg;ctx.fillRect(0,0,W,H);}
   const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"rgba(20,60,45,.10)"); g.addColorStop(1,"rgba(0,0,0,0)"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
@@ -63,9 +89,43 @@ template("camera","Camera Still",(ctx,W,H,c)=>{ baseTerm(ctx,W,H,c); ctx.save();
 template("keycard","ID / Keycard",(ctx,W,H,c)=>{ ctx.fillStyle=c.bg; ctx.fillRect(0,0,W,H); ctx.strokeStyle=c.fg; ctx.lineWidth=2; ctx.strokeRect(10,10,W-20,H-20);
   setFont(ctx,c.font+4); ctx.textAlign="left"; ctx.textBaseline="alphabetic"; glowText(ctx,macros(c.title||"EREBUS LABS // ACCESS"),24,42,c.fg,4); ctx.strokeRect(24,60,W*0.3,W*0.3); setFont(ctx,c.font); glowText(ctx,"[ NO PHOTO ]",30,60+W*0.16,c.fg,0);
   const bx=24+W*0.3+20; let y=78; bodyLines(ctx,c,"NAME:  M. WEBB\nBADGE: 0047\nCLEAR: LEAD ARCHITECT\nSTATUS: MISSING 47d\nLAST:  03:47",W-bx-24).forEach(l=>{ glowText(ctx,l,bx,y,c.fg,0); y+=c.font*1.6; }); });
-template("dialog","Error Dialog",(ctx,W,H,c)=>{ ctx.fillStyle="#0a5a6a"; ctx.fillRect(0,0,W,H); const w=Math.min(W-40,360),h=140,x=(W-w)/2,y=(H-h)/2; const win=win95(ctx,x,y,w,h,c.title||"System Error",true);
-  drawIcon(ctx,win.cx+6,win.cy+8,(c.extra||"stop")); ctx.fillStyle="#000"; setFont(ctx,12); ctx.textAlign="left"; ctx.textBaseline="top"; let ty=win.cy+8; bodyLines(ctx,c,"EREBUS.EXE has performed an illegal operation.\nIt will not be shut down.",win.cw-56).forEach(l=>{ ctx.fillText(l,win.cx+48,ty); ty+=16; });
-  const bw=64,bx=x+w-bw-10,by=y+h-26; ctx.fillStyle="#c0c0c0"; ctx.fillRect(bx,by,bw,20); bevel(ctx,bx,by,bw,20,true); ctx.fillStyle="#000"; ctx.textAlign="center"; ctx.fillText("OK",bx+bw/2,by+4); });
+/* THE WINDOW IS SIZED FROM ITS CONTENT, not from a constant.
+ *
+ * `h` was 140 whatever the frame was, and `y=(H-h)/2` goes NEGATIVE below that:
+ * at 520×120 — an ordinary banner shape, and the tab lets you type any size —
+ * the title bar sat above the top edge, the close buttons were gone, and the OK
+ * button hung off the bottom. A dialog is the one template whose whole subject
+ * is a window, so a window that does not fit inside the picture is the picture
+ * being wrong.
+ *
+ * It grows for a long message too, and is clamped to the frame either way. The
+ * content box is clipped, so where the frame genuinely cannot hold the text the
+ * overflow is cut off at the window edge — visibly, like a real dialog too small
+ * for its own message — rather than painted over the chrome and the button.
+ */
+template("dialog","Error Dialog",(ctx,W,H,c)=>{ ctx.fillStyle="#0a5a6a"; ctx.fillRect(0,0,W,H);
+  const w=Math.max(60,Math.min(W-40,360));
+  // Wrapping needs the font that will draw it, and the height needs the wrap.
+  setFont(ctx,12);
+  const lines=bodyLines(ctx,c,"EREBUS.EXE has performed an illegal operation.\nIt will not be shut down.",w-12-56);
+  // 30 chrome + 24 title strip, 8 pad, the taller of icon and text, then the
+  // button strip. The icon is 32 and two lines of 16 are the same, which is why
+  // the old constant looked fine on the default frame.
+  /* The frame clamp is applied LAST so it always wins: a floor that could
+     exceed H-16 would put the bottom of the window back outside the picture,
+     which is the bug. */
+  const h=Math.min(H-16,Math.max(96,69+Math.max(32,lines.length*16)));
+  const x=(W-w)/2,y=Math.max(8,(H-h)/2); const win=win95(ctx,x,y,w,h,c.title||"System Error",true);
+  if(win.ch>0){
+    ctx.save(); ctx.beginPath(); ctx.rect(win.cx,win.cy,win.cw,win.ch); ctx.clip();
+    drawIcon(ctx,win.cx+6,win.cy+8,(c.extra||"stop")); ctx.fillStyle="#000"; setFont(ctx,12); ctx.textAlign="left"; ctx.textBaseline="top";
+    let ty=win.cy+8; lines.forEach(l=>{ ctx.fillText(l,win.cx+48,ty); ty+=16; });
+    ctx.restore();
+  }
+  /* Baseline set again on purpose: the restore above put back what win95 left
+     ("middle"), and the OK label is positioned from its top. */
+  const bw=64,bx=x+w-bw-10,by=y+h-26; ctx.fillStyle="#c0c0c0"; ctx.fillRect(bx,by,bw,20); bevel(ctx,bx,by,bw,20,true);
+  ctx.fillStyle="#000"; setFont(ctx,12); ctx.textAlign="center"; ctx.textBaseline="top"; ctx.fillText("OK",bx+bw/2,by+4); });
 template("explorer","File Explorer",(ctx,W,H,c)=>{ ctx.fillStyle="#0a5a6a"; ctx.fillRect(0,0,W,H); const win=win95(ctx,8,8,W-16,H-16,c.title||"Exploring - .archive",true);
   ctx.fillStyle="#fff"; ctx.fillRect(win.cx,win.cy,win.cw,win.ch); bevel(ctx,win.cx,win.cy,win.cw,win.ch,false); setFont(ctx,12); ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.fillStyle="#000"; ctx.fillText("Name                    Size    Type        Modified",win.cx+8,win.cy+6);

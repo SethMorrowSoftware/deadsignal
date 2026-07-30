@@ -361,6 +361,82 @@ section('screen effects change the image');
   check('all 14 screen effects alter the image', deadImg.length === 0, deadImg.join(', '));
   await hashImg(ZERO);
 
+  /* …AND THE INVERT MARK HAS TO LAND ON EVERY TEMPLATE, not just this one.
+     The sweep above pins i-tpl:'terminal', which is dark, and the mark was
+     always white at 4% alpha: +10 per channel there, and nothing at all on light
+     stock. Measured over all 46 templates: Task Manager took NO pixels (white
+     over white) and Prescription, Boarding Pass and Statement took a difference
+     of ONE unit, which no invert reveals and no re-encode survives. */
+  const mark = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    const R = await import('./src/image/render.js');
+    const px = (id, over) => {
+      const W = 320, H = 240;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const cfg = R.readImageCfg();
+      cfg.W = W; cfg.H = H; cfg.tpl = id; cfg.wrap = true;
+      for (const k of ['scan', 'noise', 'vig', 'chroma', 'bloom', 'dead', 'copy',
+        'skew', 'posterize', 'halftone', 'pixsort']) cfg[k] = 0;
+      cfg.duotone = false; cfg.stego = ''; cfg.invert = '';
+      Object.assign(cfg, over);
+      R.drawImageTo(ctx, W, H, cfg);
+      return ctx.getImageData(0, 0, W, H).data;
+    };
+    const faint = [];
+    for (const id of Object.keys(T.TEMPLATES)) {
+      const a = px(id, {}), b = px(id, { invert: 'OBSERVE' });
+      let touched = 0, worst = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        const d = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+        if (d) { touched++; if (d > worst) worst = d; }
+      }
+      // Deliberately faint — it is meant to survive an invert, not be read — but
+      // a single unit is rounding, not a message.
+      if (touched < 50 || worst < 6) faint.push(`${id}: ${touched}px, worst Δ${worst}`);
+    }
+    return { total: Object.keys(T.TEMPLATES).length, faint };
+  });
+  check('the invert mark lands on every template, light stock included',
+        mark.faint.length === 0, `${mark.total} templates; ${mark.faint.slice(0, 5).join(' | ')}`);
+
+  /* A PAYLOAD THAT DID NOT FIT HAS TO SAY SO.
+     The 4096-byte ceiling toasted; the per-frame capacity — the one an author
+     actually hits, because a 120×90 screen holds 1346 bytes — only wrote to the
+     log panel and returned. So the exported PNG carried no payload, nothing said
+     so where anyone was looking, and the in-tool decoder reads the LIVE canvas,
+     so checking it in the tool could not tell you either. */
+  const stego = await page.evaluate(async () => {
+    const St = await import('./src/image/stego.js');
+    const said = () => document.getElementById('toasts')?.textContent || '';
+    const attempt = (W, H, n) => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#123'; ctx.fillRect(0, 0, W, H);
+      const before = said();
+      const ok = St.embedStego(ctx, W, H, 'x'.repeat(n), '#123');
+      return { ok, toasted: said() !== before };
+    };
+    const cap = St.stegoCapacity(120, 90);
+    return {
+      cap, hardMax: St.STEGO_MAX,
+      atCapacity: attempt(120, 90, cap),
+      overCapacity: attempt(120, 90, cap + 1),
+      atHardMax: attempt(1000, 1000, St.STEGO_MAX),
+      overHardMax: attempt(1000, 1000, St.STEGO_MAX + 1),
+    };
+  });
+  check('a stego payload that fits the frame is embedded',
+        stego.atCapacity.ok === true && stego.atHardMax.ok === true,
+        `capacity ${stego.cap} at 120×90, ceiling ${stego.hardMax}`);
+  check('…one byte too big for the frame is refused, out loud',
+        stego.overCapacity.ok === false && stego.overCapacity.toasted === true,
+        JSON.stringify(stego.overCapacity));
+  check('…and so is one past the hard ceiling',
+        stego.overHardMax.ok === false && stego.overHardMax.toasted === true,
+        JSON.stringify(stego.overHardMax));
+  await hashImg(ZERO);
+
   // pixel-sort at 100 on a WHITE template (lum 255 >= the span ceiling) — the
   // sweep above pins i-tpl:'terminal' (lum ~185) and so never hit the hang.
   // Pre-fix this spun the main thread forever; any hash coming back at all is
@@ -1795,6 +1871,86 @@ section('preset manager');
   check('the manager overlay opens, lists and closes', r.rows === 3 && r.closed, `${r.rows} rows`);
 }
 
+/* SAVE used to destroy a preset of the same name without asking, on a name typed
+   into a prompt() — while the MANAGER refused the same collision on rename. The
+   two paths disagreed about the same rule. */
+{
+  const r = await page.evaluate(async () => {
+    const rec = await import('./src/core/recipes.js');
+    const p = await import('./src/presets/index.js');
+    const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
+    const scanOf = (n) => (rec.userPresets('video')[n] || {})['v-scan'];
+    const seed = () => { localStorage.setItem(rec.PKEY('video'), JSON.stringify({ Keeper: { 'v-scan': '11' } })); p.rebuildPresetSelect('video'); };
+    const realPrompt = window.prompt, realConfirm = window.confirm;
+
+    seed(); set('v-scan', '77');
+    window.prompt = () => 'Keeper'; window.confirm = () => false;
+    rec.saveUserPreset('video', 'view-video');
+    const declined = scanOf('Keeper');                       // must still be the seeded look
+
+    window.confirm = () => true;
+    rec.saveUserPreset('video', 'view-video');
+    const accepted = scanOf('Keeper');                       // now the controls on screen
+
+    /* " Keeper " and "Keeper" are the same name to a person. */
+    seed();
+    window.prompt = () => '   Keeper   '; window.confirm = () => true;
+    rec.saveUserPreset('video', 'view-video');
+    const names = Object.keys(rec.userPresets('video'));
+
+    /* An empty or all-whitespace name is not a preset name. */
+    window.prompt = () => '   ';
+    rec.saveUserPreset('video', 'view-video');
+    const afterBlank = Object.keys(rec.userPresets('video')).length;
+
+    window.prompt = realPrompt; window.confirm = realConfirm;
+    return { declined, accepted, names, afterBlank };
+  });
+  check('saving over a preset asks before replacing it', r.declined === '11', String(r.declined));
+  check('…and replaces it when that is confirmed', r.accepted === '77', String(r.accepted));
+  check('…and a padded name is the same name', r.names.length === 1 && r.names[0] === 'Keeper',
+        r.names.join(', '));
+  check('…and a blank name saves nothing', r.afterBlank === 1, String(r.afterBlank));
+}
+
+/* Deleting or renaming the SELECTED preset rebuilds the picker without that
+   option, which left selectedIndex at -1: a blank control whose whole job is to
+   say which look is loaded. */
+{
+  const r = await page.evaluate(async () => {
+    const rec = await import('./src/core/recipes.js');
+    const p = await import('./src/presets/index.js');
+    const pm = await import('./src/ui/presetman.js');
+    const sel = () => document.getElementById('v-preset');
+    const seat = (name) => {
+      localStorage.setItem(rec.PKEY('video'), JSON.stringify({ [name]: { 'v-scan': '13' } }));
+      p.rebuildPresetSelect('video');
+      sel().value = `user:${name}`;
+    };
+    const read = () => ({ value: sel().value, index: sel().selectedIndex,
+                          text: sel().selectedOptions[0]?.textContent ?? null });
+
+    seat('Doomed');
+    const seated = read();
+    rec.deleteUserPreset('video', 'Doomed');
+    const afterDelete = read();
+
+    seat('Renamed');
+    pm.renamePreset('video', 'Renamed', 'New Name');
+    const afterRename = read();
+
+    localStorage.removeItem(rec.PKEY('video'));
+    p.rebuildPresetSelect('video');
+    return { seated, afterDelete, afterRename };
+  });
+  check('a saved preset can be selected', r.seated.value === 'user:Doomed', JSON.stringify(r.seated));
+  check('…deleting the selected preset leaves the picker naming something',
+        r.afterDelete.index >= 0 && r.afterDelete.value === '— custom —', JSON.stringify(r.afterDelete));
+  check('…and renaming it carries the selection to the new name',
+        r.afterRename.value === 'user:New Name' && r.afterRename.text === 'New Name',
+        JSON.stringify(r.afterRename));
+}
+
 /* ======================================================== layer overrides == */
 /* A layer used to inherit the base clip's ENTIRE recipe, so every layer drew
    the same words in the same colour at the same size — which is why the panel
@@ -1829,6 +1985,33 @@ section('a layer is its own signal');
   check('a variant makes a second copy of a scene a different one', v.changes);
   check('…and the same variant renders the same picture twice', v.deterministic);
 
+  /* …AND THE BUTTON HAS TO HAND ONE OUT.
+     Variant 0 means "draw with the base clip's randomness", so two copies of a
+     scene at 0 draw the identical picture and the second only brightens the
+     first — measured at 45 of the 48 scenes. Every layer ADD made arrived at 0,
+     which meant the variant mechanism above only ever worked for an author who
+     found the number box. */
+  const nv = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const UL = await import('./src/ui/layers.js');
+    S.store.apply({ op: 'set', path: 'layers.video', value: [], label: 'probe' });
+    UL.addLayer(); UL.addLayer(); UL.addLayer();
+    const seeds = S.store.get('layers.video').map((l) => l.seed);
+    /* And a hand-typed 0 still means what it says. */
+    S.store.apply({ op: 'set', path: 'layers.video',
+      value: [{ scene: 'matrix', blend: 'screen', opacity: 1, enabled: true, seed: 0 },
+              { scene: 'matrix', blend: 'screen', opacity: 1, enabled: true, seed: 2 }],
+      label: 'probe' });
+    const mixed = S.store.get('layers.video').map((l) => l.seed);
+    S.store.apply({ op: 'set', path: 'layers.video', value: [], label: 'probe' });
+    return { seeds, mixed };
+  });
+  check('every layer ADD gives that layer its own variant',
+        nv.seeds.length === 3 && new Set(nv.seeds).size === 3 && !nv.seeds.includes(0),
+        nv.seeds.join(','));
+  check('…and a variant of 0 is still allowed, because it still means something',
+        nv.mixed[0] === 0, nv.mixed.join(','));
+
   const o = await page.evaluate(() => {
     const base = window.__shot([{ scene: 'matrix', blend: 'screen', opacity: 1, enabled: true }]);
     const red = window.__shot([{ scene: 'matrix', blend: 'screen', opacity: 1, enabled: true, fg: '#ff2b6b' }]);
@@ -1856,6 +2039,104 @@ section('a layer is its own signal');
         m.resolved === `NODE 47 / ${m.caseNow}` && !m.resolved.includes('{{'), m.resolved);
   check('…and are stored unexpanded, so changing one updates the clip',
         m.stored === '{{station}} / {{case}}', m.stored);
+
+  /* EVERY LAYER STARTS ON A CONTEXT THAT LOOKS NEW.
+     The shared layer canvas was cleared (transform, alpha, composite op, and a
+     black fill) but not RESET, so font, textBaseline, textAlign, fillStyle,
+     strokeStyle and lineWidth carried over from the layer before. A scene that
+     relies on a default rather than setting it then drew with the previous
+     scene's value — measured across all 48 scenes: 37 leave `font` changed, 29
+     `textBaseline`, 26 `textAlign`, 26 `fillStyle`, 21 `strokeStyle`, 1
+     `lineWidth`.
+
+     Checked two ways, because the state check is exact and the pixel check is
+     what an author would actually notice. */
+  const rs = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { SCENES } = await import('./src/video/scenes.js');
+    const { resetCtxState } = await import('./src/core/text.js');
+    const { beginFrame } = await import('./src/core/rng.js');
+    const W = 160, H = 120;
+    const PROPS = ['globalAlpha', 'globalCompositeOperation', 'fillStyle', 'strokeStyle',
+      'lineWidth', 'lineCap', 'lineJoin', 'miterLimit', 'lineDashOffset', 'shadowBlur',
+      'shadowColor', 'shadowOffsetX', 'shadowOffsetY', 'filter', 'font', 'textAlign',
+      'textBaseline', 'direction', 'letterSpacing', 'imageSmoothingEnabled', 'imageSmoothingQuality'];
+    const snap = (x) => {
+      const o = { __dash: x.getLineDash().join(','), __t: Object.values(x.getTransform()).join(',') };
+      for (const p of PROPS) o[p] = String(x[p]);
+      return o;
+    };
+    const virgin = snap(document.createElement('canvas').getContext('2d'));
+
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const cfg = { ...S.readVideoCfg(), W, H, bg: '#000' };
+    const notReset = [];
+    for (const name of Object.keys(SCENES)) {
+      beginFrame(51);
+      SCENES[name].draw(x, W, H, cfg, 1.7);
+      resetCtxState(x);
+      const after = snap(x);
+      const bad = Object.keys(virgin).filter((k) => virgin[k] !== after[k]);
+      if (bad.length) notReset.push(name + ': ' + bad.join('/'));
+    }
+    return { scenes: Object.keys(SCENES).length, notReset };
+  });
+  check('resetCtxState puts the context back to a new canvas\'s state, after every scene',
+        rs.notReset.length === 0, rs.notReset.slice(0, 4).join(' | '));
+
+  /* And through the real render: with source-over at opacity 1 a layer's bitmap
+     is fully opaque (it is filled black before the scene draws), so it covers
+     the base and everything under it. frame([A, B]) must therefore equal
+     frame([B]) exactly, for every A.
+
+     Four of the 48 scenes are excluded from "must be exact" rather than the
+     whole check being loosened, and the reason is not this code: Chromium
+     rasterises a shadowBlur'd draw slightly differently after a gradient fill on
+     the same canvas (max 18/765 per pixel). Neutralising shadowBlur takes the
+     order-dependence to 0 across all 2304 pairs, with the context state and the
+     bitmap both provably identical beforehand. Before the reset, 396 pairs
+     differed for reasons that WERE this code. */
+  const st = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { SCENES } = await import('./src/video/scenes.js');
+    const names = Object.keys(SCENES);
+    /* Distinct NON-ZERO variants, so withSeedOffset re-addresses each layer's
+       randomness from a fixed point and the only thing left that could differ is
+       the canvas. Variant 0 means "share the base clip's randomness", which
+       genuinely does make a layer depend on what drew before it — documented,
+       deliberate, and a different question from this one. */
+    const L = (scene, seed) => ({ scene, blend: 'source-over', opacity: 1, enabled: true,
+                                  text: '', fg: '', font: 0, seed });
+    const set = (v) => S.store.apply({ op: 'set', path: 'layers.video', value: v, label: 'probe' });
+    const frame = () => {
+      const cfg = { ...S.readVideoCfg(), W: 160, H: 120 };
+      const c = document.createElement('canvas'); c.width = 160; c.height = 120;
+      const ctx = c.getContext('2d');
+      S.renderVideoFrame(ctx, 160, 120, { ...cfg, __layers: S.store.get('layers.video') }, 1.7);
+      const d = ctx.getImageData(0, 0, 160, 120).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 3) { h ^= d[i]; h = Math.imul(h, 16777619); }
+      return h >>> 0;
+    };
+    /* Four heavy state-setters as the preceding layer: terminal (font,
+       baseline), snow (textAlign center), bars (fillStyle, gradient), hud
+       (lineWidth). */
+    const unstable = new Set();
+    for (const b of names) {
+      set([L(b, 5)]);
+      const solo = frame();
+      for (const a of ['terminal', 'snow', 'bars', 'hud']) {
+        set([L(a, 9), L(b, 5)]);
+        if (frame() !== solo) unstable.add(b);
+      }
+    }
+    set([]);
+    return { comparisons: names.length * 4, unstable: [...unstable] };
+  });
+  check('a layer renders the same whatever layer precedes it',
+        st.unstable.length <= 4,
+        `${st.comparisons} comparisons, ${st.unstable.length} scenes affected: ${st.unstable.join(', ') || 'none'}`);
 
   /* A layer draws on black so an additive blend drops its background. That
      made multiply against black BLACK: choosing Multiply crushed the whole
@@ -2399,6 +2680,42 @@ section('a timeline that is a timeline');
   check('dragging an edge trims the clip', drag.dragged < drag.before, JSON.stringify(drag));
   check('…the whole drag is ONE undo entry', drag.entries === 1, String(drag.entries));
   check('…and undoing it restores the pre-drag trim', drag.afterUndo === drag.before, String(drag.afterUndo));
+
+  /* …INCLUDING A DRAG THAT PAUSES.
+     The check above runs twelve pointermoves in one tick, which no 600ms window
+     could split. A real drag rests: the pointer stops on a snap, or a heavy
+     filter chain stalls the main thread. Coalescing was purely time-based, so a
+     pause longer than 600ms started a new undo entry — one gesture became
+     several, and undoing it took as many presses as it happened to contain
+     pauses. This drives the same gesture with a real wait in the middle, which
+     is the only version of it that ever failed. */
+  const paused = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    S.editClip(0, { in: 0, out: 6 }, 'reset');
+    const box = document.getElementById('tl-track');
+    const grip = box.querySelector('.tl-clip[data-i="0"] .tl-grip.r');
+    const r = grip.getBoundingClientRect();
+    const before = S.timeline[0].out;
+    const depth0 = S.store.undoDepth;
+    const at = (x) => ({ bubbles: true, clientX: x, clientY: r.top + r.height / 2, pointerId: 12 });
+    grip.dispatchEvent(new PointerEvent('pointerdown', at(r.left + 2)));
+    for (let k = 1; k <= 4; k++) box.dispatchEvent(new PointerEvent('pointermove', at(r.left - k * 5)));
+    await new Promise((res) => setTimeout(res, 800));      // longer than the window
+    for (let k = 5; k <= 8; k++) box.dispatchEvent(new PointerEvent('pointermove', at(r.left - k * 5)));
+    await new Promise((res) => setTimeout(res, 800));
+    for (let k = 9; k <= 12; k++) box.dispatchEvent(new PointerEvent('pointermove', at(r.left - k * 5)));
+    box.dispatchEvent(new PointerEvent('pointerup', at(r.left - 60)));
+    const dragged = S.timeline[0].out;
+    const entries = S.store.undoDepth - depth0;
+    S.undo();
+    return { before, dragged, entries, afterUndo: S.timeline[0].out,
+             gestureOpen: S.store.gestureKey };
+  });
+  check('a drag that rests twice is still ONE undo entry',
+        paused.entries === 1, `${paused.entries} entries`);
+  check('…and one undo still restores the pre-drag trim',
+        paused.dragged < paused.before && paused.afterUndo === paused.before, JSON.stringify(paused));
+  check('…and pointerup closed the gesture', paused.gestureOpen === null, String(paused.gestureOpen));
 
   const reorder = await page.evaluate(() => {
     const S = window.DeadSignalStudio;
@@ -3219,6 +3536,75 @@ section('a timeline that is a timeline');
       footage.pool.count > 0 && footage.pool.count <= footage.pool.cap, JSON.stringify(footage.pool));
   }
 
+  /* FOOTAGE THAT WILL NOT DECODE IS ASKED ONCE.
+     `_loading` stopped a CONCURRENT second attempt and nothing stopped the next
+     one, so a failure left no trace and the synchronous lookup in videoSource()
+     asked again on the following preview frame: a new <video>, a new blob URL
+     held through an 8-second timeout, and a log line, every frame — while the
+     docblock promised the failure was "reported once". Measured over twenty
+     frames of preview: 20 extra elements before, 0 after.
+
+     Driven one frame at a time WITH THE GAP ELAPSING, which matters: asking
+     sixty times inside one tick is suppressed by `_loading` and hides the whole
+     defect. The first version of this check did exactly that and saw one extra
+     element instead of twenty. */
+  const undecodable = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const V = await import('./src/video/sources.js');
+    const L = await import('./src/library/library.js');
+    V.clearVideoSources();
+    S.clearLibrary();
+
+    const junk = () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'video/mp4' });
+    const keyOf = (name) => {
+      L.addToLibrary(junk(), 'mp4', 'video', name, 2);
+      return L.library.at(-1).key;
+    };
+    const key = keyOf('undecodable');
+
+    let made = 0;
+    const realCreate = document.createElement.bind(document);
+    document.createElement = (tag, ...rest) => {
+      if (String(tag).toLowerCase() === 'video') made++;
+      return realCreate(tag, ...rest);
+    };
+    try {
+      await V.ensureVideoSource(key);
+      const first = made;
+      for (let i = 0; i < 20; i++) {
+        V.videoSource(key);
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      const afterFrames = made;
+      // Different bytes are a different question, so they get asked.
+      const key2 = keyOf('undecodable-2');
+      await V.ensureVideoSource(key2);
+      const afterSecondRow = made;
+      // And an explicit retry asks again.
+      V.retryVideoSource(key);
+      await V.ensureVideoSource(key);
+      const afterRetry = made;
+      const remembered = V.failedVideoSources();
+      V.clearVideoSources();
+      return { first, extraOverTwentyFrames: afterFrames - first,
+               secondRowTried: afterSecondRow - afterFrames,
+               retryTried: afterRetry - afterSecondRow,
+               remembered, forgottenOnClear: V.failedVideoSources() };
+    } finally {
+      document.createElement = realCreate;
+      S.clearLibrary();
+    }
+  });
+  check('undecodable footage is tried once, not once per frame',
+    undecodable.first === 1 && undecodable.extraOverTwentyFrames === 0,
+    JSON.stringify(undecodable));
+  check('…a different file is still a different question',
+    undecodable.secondRowTried === 1, String(undecodable.secondRowTried));
+  check('…an explicit retry asks again', undecodable.retryTried === 1, String(undecodable.retryTried));
+  check('…and clearing the sources forgets what failed',
+    undecodable.remembered === 2 && undecodable.forgottenOnClear === 0,
+    `${undecodable.remembered} → ${undecodable.forgottenOnClear}`);
+
   check('the pane sits in the properties column, right of the picture',
     insp.editor && insp.visible && insp.rightOfStage,
     JSON.stringify({ editor: insp.editor, visible: insp.visible, right: insp.rightOfStage }));
@@ -3602,6 +3988,47 @@ section('sixteen more scenes');
   check('picking a new scene reaches the document and survives a reload',
     wired.doc === 'teletext' && wired.afterLoad === 'teletext' && wired.cfg === 'teletext',
     JSON.stringify(wired));
+
+  /* A CRAWL IS A LOOP.
+     Emergency Alert drew one string of four copies starting at
+     `W - (travelled % width)`, which put its LEFT edge at the right-hand edge of
+     the frame at the top of every cycle: the band started completely empty and
+     filled in from the right over the next three and a half seconds, then
+     snapped back to empty. Measured at 400×300 over 20 s: coverage climbing
+     0 → 255 of 400 columns, under half the width for 4.8 s of every 20 — on the
+     one scene in the set whose whole point is that it is an urgent
+     interruption. Sampled every 100 ms across more than one full cycle. */
+  const crawl = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { beginFrame } = await import('./src/core/rng.js');
+    const W = 400, H = 300;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const cfg = { ...S.readVideoCfg(), W, H, bg: '#000', text: 'THIS IS NOT A TEST' };
+    // The crawl band: below the colour bars (H*0.42) and above the footer.
+    const y0 = Math.round(H * 0.44), rows = Math.round(H * 0.72) - y0;
+    let worst = W, empty = 0, thin = 0, n = 0;
+    for (let t = 0; t < 20; t += 0.1) {
+      x.setTransform(1, 0, 0, 1, 0, 0);
+      x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+      beginFrame(Math.round(t * 12));
+      S.SCENES.alert.draw(x, W, H, cfg, t);
+      const d = x.getImageData(0, y0, W, rows).data;
+      let cols = 0;
+      for (let px = 0; px < W; px++) {
+        for (let r = 0; r < rows; r++) {
+          const i = (r * W + px) * 4;
+          if (d[i] + d[i + 1] + d[i + 2] > 90) { cols++; break; }
+        }
+      }
+      n++; if (cols === 0) empty++; if (cols < W * 0.5) thin++;
+      if (cols < worst) worst = cols;
+    }
+    return { W, samples: n, empty, thin, worst };
+  });
+  check('the alert crawl is never off the screen', crawl.empty === 0, `${crawl.empty} of ${crawl.samples} frames`);
+  check('…and always covers most of the band', crawl.thin === 0,
+    `worst ${crawl.worst} of ${crawl.W} columns, ${crawl.thin} thin frames`);
 }
 
 /* ============================================ fifteen more screens ==== */
@@ -3724,6 +4151,109 @@ section('fifteen more screens');
   });
   check('picking a new template reaches the document and survives a reload',
     wired.doc === 'blueprint' && wired.afterLoad === 'blueprint', JSON.stringify(wired));
+
+  /* A WINDOW HAS TO FIT INSIDE THE PICTURE.
+     Error Dialog hard-coded a 140px window height, and `y = (H - h) / 2` goes
+     negative below that: at 520×120 — an ordinary banner shape, and the tab
+     accepts any size from 120×90 up — the title bar sat above the top edge, the
+     close buttons were gone and the OK button hung off the bottom. Every other
+     window template sizes from the frame; this one was the exception, so the
+     check covers all of them rather than just the one that was wrong. */
+  const fit = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    await import('./src/image/templates-extra.js');
+    const R = await import('./src/image/render.js');
+    const WINDOWED = ['dialog', 'explorer', 'taskmgr', 'registry', 'vapordesktop', 'chat', 'filecabinet'];
+    const bad = [];
+    for (const id of WINDOWED) {
+      for (const [W, H] of [[520, 420], [520, 120], [400, 100], [120, 90]]) {
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        const ctx = c.getContext('2d');
+        const cfg = R.readImageCfg();
+        cfg.W = W; cfg.H = H; cfg.tpl = id; cfg.wrap = true;
+        for (const k of ['scan', 'noise', 'vig', 'chroma', 'bloom', 'dead', 'copy',
+          'skew', 'posterize', 'halftone', 'pixsort']) cfg[k] = 0;
+        cfg.duotone = false; cfg.stego = ''; cfg.invert = '';
+        R.drawImageTo(ctx, W, H, cfg);
+        /* The chrome is #c0c0c0. Find its topmost and bottommost row: a window
+           that fits leaves at least one row of desktop above and below it. */
+        const d = ctx.getImageData(0, 0, W, H).data;
+        let top = -1, bot = -1;
+        for (let row = 0; row < H; row++) {
+          let grey = 0;
+          for (let px = 0; px < W; px++) {
+            const i = (row * W + px) * 4;
+            if (Math.abs(d[i] - 192) < 10 && Math.abs(d[i + 1] - 192) < 10 && Math.abs(d[i + 2] - 192) < 10) grey++;
+          }
+          if (grey > 8) { if (top < 0) top = row; bot = row; }
+        }
+        if (top < 1 || bot > H - 2) bad.push(`${id}@${W}×${H}: rows ${top}–${bot}`);
+      }
+    }
+    return bad;
+  });
+  check('every window template keeps its window inside the frame, down to 120×90',
+    fit.length === 0, fit.slice(0, 5).join(' | '));
+
+  /* A DEAD CONTROL HAS TO LOOK DEAD, ONE CONTROL AT A TIME.
+     Ink and Ground were greyed out together, from one list of templates that fix
+     BOTH — so on the nine that fix exactly one, a live control sat beside a dead
+     one with nothing on screen to tell them apart: the very failure the list was
+     added to fix, one level down. Measured behaviour is the authority here, not
+     the list: each control's disabled state is compared against whether changing
+     that colour actually changes the picture. */
+  const palette = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    const R = await import('./src/image/render.js');
+    const shot = (id, over) => {
+      const W = 320, H = 240;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const cfg = R.readImageCfg();
+      cfg.W = W; cfg.H = H; cfg.tpl = id; cfg.wrap = true;
+      for (const k of ['scan', 'noise', 'vig', 'chroma', 'bloom', 'dead', 'copy',
+        'skew', 'posterize', 'halftone', 'pixsort']) cfg[k] = 0;
+      cfg.duotone = false; cfg.stego = ''; cfg.invert = '';
+      Object.assign(cfg, over);
+      R.drawImageTo(ctx, W, H, cfg);
+      const d = ctx.getImageData(0, 0, W, H).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 3) { h ^= d[i]; h = Math.imul(h, 16777619); }
+      return h >>> 0;
+    };
+    const sel = document.getElementById('i-tpl');
+    document.querySelector('.tab[data-view=image]').click();
+    const wrong = [], unexplained = [];
+    for (const id of Object.keys(T.TEMPLATES)) {
+      const base = shot(id, { fg: '#39ff9e', bg: '#050a08' });
+      const inkLive = shot(id, { fg: '#ff2bd6', bg: '#050a08' }) !== base;
+      const groundLive = shot(id, { fg: '#39ff9e', bg: '#7a2b00' }) !== base;
+      /* Dispatched, not just assigned: the template is document state, and
+         readImageCfg reads the document — a bare `sel.value = id` would leave
+         every render in this loop on whatever template the document still held.
+         `input` as well as `change`, because a real <select> fires both and it is
+         the input that wireLive listens for; then render directly rather than
+         waiting out the 70 ms debounce. */
+      sel.value = id;
+      sel.dispatchEvent(new Event('input', { bubbles: true }));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      R.renderImage();
+      const fg = document.getElementById('i-fg').disabled;
+      const bg = document.getElementById('i-bg').disabled;
+      const pal = document.getElementById('i-palette').disabled;
+      const note = document.getElementById('i-palette-note').textContent.trim();
+      if (fg !== !inkLive) wrong.push(`${id}: ink ${inkLive ? 'live' : 'dead'} / control ${fg ? 'off' : 'on'}`);
+      if (bg !== !groundLive) wrong.push(`${id}: ground ${groundLive ? 'live' : 'dead'} / control ${bg ? 'off' : 'on'}`);
+      if (pal !== !(inkLive || groundLive)) wrong.push(`${id}: picker ${pal ? 'off' : 'on'}`);
+      // Anything greyed out has to say why.
+      if ((fg || bg) && !note) unexplained.push(id);
+    }
+    return { total: Object.keys(T.TEMPLATES).length, wrong, unexplained };
+  });
+  check('Ink and Ground are enabled exactly where they do something',
+    palette.wrong.length === 0, `${palette.total} templates; ${palette.wrong.slice(0, 5).join(' | ')}`);
+  check('…and a greyed-out colour control always says why',
+    palette.unexplained.length === 0, palette.unexplained.join(', '));
 }
 
 /* ============================================ sixteen more sounds ==== */
@@ -4255,6 +4785,53 @@ section('batch export');
   check('…and video items can be written in either container',
     panel.containers.join() === 'webm,mp4', JSON.stringify(panel.containers));
 
+  /* THE BATCH TAKES THE SAME TOKEN AS EVERY OTHER EXPORT.
+     It was the one entry point of six that never asked. `running` only stopped a
+     second BATCH, so a batch beside a clip RECORD or a .gif interleaved two
+     encoders over the same module-level scratch canvases (_persistCanvas, _ss,
+     _tlA) and the same shared imported <video> — exactly the corruption
+     claimExport() exists to prevent. Driven through the real button, and the
+     token is checked from the outside by asking whether another export can start
+     while the batch holds it. */
+  const locked = await page.evaluate(async () => {
+    const C = await import('./src/video/capture.js');
+    const B = await import('./src/export/batch.js');
+    const S = window.DeadSignalStudio;
+    document.querySelector('.tab[data-view=library]').click();
+    S.clearLibrary();
+
+    document.getElementById('bx-source').value = 'screen-presets';
+    document.getElementById('bx-source').dispatchEvent(new Event('change', { bubbles: true }));
+    /* The handler is async, but everything up to its first await runs during
+       dispatch — and the claim is in that part. So the moment .click() returns,
+       the token is either held or it never was. */
+    document.getElementById('bx-run').click();
+    /* Buttons read BEFORE the probe claim: a probe that succeeds would itself
+       grey them, and the check would then be measuring the probe. */
+    const stillBtnsDisabled = ['v-gif', 'v-apng', 'v-awebp', 'v-strip']
+      .every((x) => document.getElementById(x).disabled);
+    const probe = C.claimExport('probe');
+    const heldDuringRun = probe === false;
+    // And hand it straight back if it was free, or every later export refuses.
+    if (probe) C.releaseExport();
+    // Wait for the panel to report it finished.
+    for (let i = 0; i < 300 && document.getElementById('bx-run').disabled; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const afterwards = C.claimExport('probe-after');
+    if (afterwards) C.releaseExport();
+    S.clearLibrary();
+    void B;
+    return { heldDuringRun, stillBtnsDisabled, releasedAfterwards: afterwards,
+             ran: document.getElementById('bx-status')?.textContent || '' };
+  });
+  check('a running batch holds the one export token',
+    locked.heldDuringRun === true, JSON.stringify(locked));
+  check('…so the four still-export buttons are greyed while it runs',
+    locked.stillBtnsDisabled === true);
+  check('…and it gives the token back when it is done',
+    locked.releasedAfterwards === true);
+
   /* The screens batch first: it is a single frame per item, so it exercises the
      whole path in a fraction of the time and can afford to check the output. */
   const screens = await page.evaluate(async () => {
@@ -4683,6 +5260,100 @@ section('animated stills beyond GIF');
   }));
   check('both sit beside the .gif button, sharing its frame rate',
     wired.apng && wired.awebp && wired.label === 'Anim fps', JSON.stringify(wired));
+
+  /* 2×SS IS A CHECKBOX ON THE SAME PANEL AS THESE BUTTONS.
+     collectFrames — the frame source for all four still exporters (.gif, .apng,
+     .webp, frame strip) — called renderVideoFrame directly instead of
+     renderScaled, so the box did nothing here while the preview, both RECORD
+     paths and the batch all honoured it. Measured on a scene with a diagonal:
+     supersampling changes the anti-aliasing, so the frames differ. */
+  const ss = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const C = await import('./src/video/capture.js');
+    const set = (id, v) => { const e = document.getElementById(id); e.value = v;
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true })); };
+    const tick = (id, on) => { const e = document.getElementById(id); e.checked = on;
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true })); };
+    document.querySelector('.tab[data-view=video]').click();
+    set('v-scene', 'radar'); set('v-w', '160'); set('v-h', '120'); set('v-dur', '2');
+    const grab = async () => {
+      const frames = await C.collectFrames(S.readVideoCfg(), 3, {});
+      return frames.map((f) => {
+        const d = f.getContext('2d').getImageData(0, 0, f.width, f.height).data;
+        let h = 2166136261;
+        for (let i = 0; i < d.length; i += 3) { h ^= d[i]; h = Math.imul(h, 16777619); }
+        return h >>> 0;
+      }).join(',');
+    };
+    tick('v-ss', false);
+    const plain = await grab();
+    const plainAgain = await grab();
+    tick('v-ss', true);
+    const supersampled = await grab();
+    tick('v-ss', false);
+    return { plain, plainAgain, supersampled };
+  });
+  check('the still exporters honour 2×SS',
+    ss.supersampled !== ss.plain, `${ss.plain} vs ${ss.supersampled}`);
+  check('…and are otherwise deterministic, so that difference is the SS and not noise',
+    ss.plain === ss.plainAgain, `${ss.plain} vs ${ss.plainAgain}`);
+
+  /* ■ STOP HAS TO REACH THE ENCODE, WHICH IS THE SLOW HALF.
+     The frame collector honoured the cancel flag and these two encoders did not,
+     so pressing STOP once collection had finished did nothing at all — and this
+     path never showed a progress bar either, so there was no way to tell the
+     difference between working and hung. Both now poll between frames and
+     report, and a cancelled encode returns null (the caller tells that apart
+     from "no encoder for this format" by asking the flag again). */
+  const stoppable = await page.evaluate(async (mk) => {
+    const A = await import('./src/export/anim.js');
+    const frames = eval(mk)(12, 32, 24);
+    const out = {};
+    for (const [name, fn] of [['apng', A.encodeAPNG], ['webp', A.encodeAnimatedWebP]]) {
+      if (name === 'webp' && !await A.webpSupported()) { out[name] = { skipped: true }; continue; }
+      const seen = [];
+      // Cancels after the third frame, the way ■ STOP does mid-encode.
+      const blob = await fn(frames, { delayMs: 60,
+        onProgress: (p) => seen.push(p),
+        cancelled: () => seen.length >= 3 });
+      // And a run with the same options but never cancelled still produces a file.
+      const full = await fn(frames, { delayMs: 60, onProgress: () => {}, cancelled: () => false });
+      out[name] = { cancelledToNull: blob === null, framesBeforeStop: seen.length,
+                    progressRose: seen.length > 1 && seen[seen.length - 1] > seen[0],
+                    lastProgress: seen[seen.length - 1],
+                    completesWhenNotCancelled: !!(full && full.size > 0) };
+    }
+    return out;
+  }, MK);
+  for (const kind of ['apng', 'webp']) {
+    const r = stoppable[kind];
+    if (r.skipped) { check(`${kind}: skipped, no encoder here`, true); continue; }
+    check(`a cancel lands inside the ${kind} encode, not after it`,
+      r.cancelledToNull === true && r.framesBeforeStop < 12,
+      `${r.framesBeforeStop} of 12 frames`);
+    check(`…and the ${kind} encode reports where it is`,
+      r.progressRose === true, `progress rose to ${r.lastProgress}`);
+    check(`…while an uncancelled ${kind} encode still writes a file`,
+      r.completesWhenNotCancelled === true);
+  }
+
+  /* And the panel wires both halves of the bar to it: rendering is the first
+     half, encoding the second, exactly as the GIF exporter splits it. */
+  const wiredStop = await page.evaluate(async () => {
+    const src = await (await fetch('./src/video/gif.js')).text();
+    const fn = src.slice(src.indexOf('async function exportAnimated'));
+    const body = fn.slice(0, fn.indexOf('\nexport const exportAPNG'));
+    return {
+      showsBar: /v-progress-wrap"\)/.test(body) && /wrap\.style\.display="block"/.test(body),
+      halves: /setP\(p\*0\.5/.test(body) && /setP\(0\.5\+0\.5\*p/.test(body),
+      passesCancel: /cancelled:stillExportCancelled/.test(body),
+    };
+  });
+  check('the animated-still exporter shows a progress bar and splits it in two',
+    wiredStop.showsBar && wiredStop.halves, JSON.stringify(wiredStop));
+  check('…and hands the cancel flag to the encoder', wiredStop.passesCancel);
 }
 
 /* ================================================ sound per clip ========= */
@@ -6077,6 +6748,50 @@ section('wipe, slide, key marks and a draggable transition length');
   check('…and trimming the clip drops the keys that fall outside it',
     marks.afterTrim === 2, `${marks.afterTrim} of 3`);
 
+  /* A DIP HAS TO FINISH INSIDE THE CLIP IT ENTERS.
+     The overlapping transitions clamp to min(xdur, len, prevLen); the flash
+     branch (dip / dipwhite / burn) used xdur / 2 raw, and nothing stopped that
+     being longer than either clip. With the maximum 4s dip on a 1s clip the half
+     was 2s, so the wash covered the clip's entire length: it never completed,
+     and the picture the author trimmed was never once seen. Measured against the
+     same pair joined with a CUT, which is what the clip looks like undipped. */
+  const dip = await page.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    const build = (transition, xdur) => {
+      S.setTimelineClips([
+        { kind: 'scene', label: 'A', rec: { 'v-scene': 'bars' }, in: 0, out: 1, transition: 'cut', xdur: 0 },
+        { kind: 'scene', label: 'B', rec: { 'v-scene': 'bars' }, in: 0, out: 1, transition, xdur },
+      ]);
+      return S.buildSchedule();
+    };
+    const meansInB = (sched) => {
+      const { W, H } = sched.tl;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const out = [];
+      for (let T = 1.0; T <= 1.951; T += 0.1) {
+        S.renderTimelineFrame(ctx, T, sched);
+        const d = ctx.getImageData(0, 0, W, H).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+        out.push(Math.round(sum / (d.length / 4) / 3));
+      }
+      return out;
+    };
+    const cut = meansInB(build('cut', 0));
+    const long = meansInB(build('dip', 4));
+    const ok = meansInB(build('dip', 0.4));
+    const settled = (rows) => rows.filter((m, i) => Math.abs(m - cut[i]) <= 1).length;
+    S.setTimelineClips([]);
+    return { cut, long, ok, settledLong: settled(long), settledOk: settled(ok), of: cut.length };
+  });
+  check('a dip longer than its clip still finishes inside it',
+    dip.settledLong >= 4, `${dip.settledLong} of ${dip.of} instants clear · ${JSON.stringify(dip.long)}`);
+  check('…and it does start from the flash, so it is still a dip',
+    dip.long[0] < dip.cut[0] / 4, `${dip.long[0]} vs ${dip.cut[0]}`);
+  check('…while a dip that already fitted is unchanged',
+    dip.settledOk >= 7, `${dip.settledOk} of ${dip.of} · ${JSON.stringify(dip.ok)}`);
+
   await page.evaluate(() => document.getElementById('tl-clear').click());
 }
 
@@ -7256,6 +7971,44 @@ section('feature seams');
     isolated.liveMarks === 1 && isolated.liveFilters >= 1
     && isolated.recipeMarks === 0 && isolated.recipeFilters === 0,
     JSON.stringify(isolated));
+
+  /* THE SEQUENCE CAP IS A REFUSAL, NOT A SILENT DROP.
+     normalizeClips slices to MAX_CLIPS, but commitClips wrote the DOCUMENT from
+     the unsliced array — so a 65th clip left the store holding 65 while the
+     sequence played 64, a disagreement that survives a save and a reload. And
+     all five add paths then toasted "Clip added (64)": a number that reads as
+     success and is really the count of clips that survived the one just thrown
+     away. Nothing said so. */
+  const cap = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { MAX_CLIPS } = await import('./src/doc/timeline.js');
+    S.clearTimeline();
+    // Fill to exactly the cap through the document, then try to add past it.
+    const one = { kind: 'video', rec: {}, label: 'x', scene: 'terminal',
+                  src: 1, in: 0, out: 1, transition: 'cut', xdur: 0 };
+    S.setTimelineClips(new Array(MAX_CLIPS).fill(0).map(() => ({ ...one })));
+    // Push that state THROUGH commitClips so the document holds it too — the
+    // question below is whether an add past the cap can make the two disagree,
+    // and that is only observable if they agree to begin with.
+    S.editClip(0, { label: 'seed' }, 'seed');
+    const atCap = S.timeline.length;
+    const docAtCap = (S.store.get('timeline.clips') || []).length;
+    S.addTimelineClip();          // the 65th: must be refused, not dropped
+    const runtime = S.timeline.length;
+    /* Read the document with NOTHING in between. commitClips is what writes it,
+       and any further edit would rewrite it from the already-normalised runtime
+       — erasing the very divergence this is looking for. (It did: the first
+       version of this check nudged a clip first and passed with the fix removed.) */
+    const doc = (S.store.get('timeline.clips') || []).length;
+    S.clearTimeline();
+    return { MAX_CLIPS, atCap, docAtCap, runtime, doc };
+  });
+  check('a sequence can be filled to its cap',
+    cap.atCap === cap.MAX_CLIPS && cap.docAtCap === cap.MAX_CLIPS, JSON.stringify(cap));
+  check('a sequence at its cap refuses another clip rather than dropping it',
+    cap.runtime === cap.MAX_CLIPS && cap.doc === cap.MAX_CLIPS, JSON.stringify(cap));
+  check('…so the document can never hold more clips than the sequence plays',
+    cap.doc <= cap.MAX_CLIPS, `doc ${cap.doc} vs cap ${cap.MAX_CLIPS}`);
 }
 
 console.log('-'.repeat(64));

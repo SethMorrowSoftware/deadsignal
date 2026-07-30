@@ -17,16 +17,16 @@ their output implied:
 
 | Suite | Before | After |
 |---|---|---|
-| `test-studio-audit.mjs` | **crashed at check 76** — `readFileSync` on a path outside the folder throws rather than failing a check, so 505 later checks never ran | 582 pass |
-| `test-studio-modules.mjs` | **crashed before its summary**, same cause | 47 pass |
+| `test-studio-audit.mjs` | **crashed at check 76** — `readFileSync` on a path outside the folder throws rather than failing a check, so 505 later checks never ran | 628 pass |
+| `test-studio-modules.mjs` | **crashed before its summary**, same cause | 52 pass |
 | `test-studio-cloud.mjs` | **skipped itself and exited 0** — it looked for the studio at a hard-coded `/tools/media-studio/` and reported "no live backend" for a backend that was answering | 38 pass |
-| `test-studio-units.php` | 112/113 (`api/.htaccess` missing) | 124 pass |
-| `test-studio-api.php` | never run in CI, and failed on a second run against the same install | 55 pass, twice |
+| `test-studio-units.php` | 112/113 (`api/.htaccess` missing) | 135 pass |
+| `test-studio-api.php` | never run in CI, and failed on a second run against the same install | 59 pass, twice |
 | the other five | green | green |
 
 There was also no CI, so nothing ran any of them on a push.
 
-**Total now: 2224 checks across ten gated suites, plus 93 against a live backend.**
+**Total now: 2305 checks across ten gated suites, plus 97 against a live backend.**
 
 ---
 
@@ -186,6 +186,84 @@ page load 404s — on a subdirectory install, against somebody else's site.
 
 ---
 
+## Medium, fixed
+
+- **A throwing `drawFrame` leaked the `VideoEncoder`.** `drawFrame` is arbitrary
+  caller code — a scene, a filter chain, an author's keyframe curve — and
+  `encoder.close()` sat *after* the loop, so a throw propagated out with the
+  hardware handle still open and configured. Chromium caps how many encoders a
+  page may hold, so a few failed exports in a row stopped being able to export
+  at all — reported as *"WebCodecs is unavailable"*, which is a different problem
+  with a different fix. Now a `try/finally`, with `flush()` still inside so a
+  successful run is ordered exactly as before.
+
+- **A 65th clip diverged the document from the sequence.** `normalizeClips`
+  slices to `MAX_CLIPS`, but `commitClips` wrote the document from the *unsliced*
+  array — so the store held 65 while the sequence played 64, a disagreement that
+  survives a save and a reload. All five add paths then toasted
+  *"Clip added (64)"*: a number that reads as success and is really the count of
+  clips that survived the one just thrown away. The cap is now enforced at
+  `commitClips` (the choke point every edit funnels through) and refused out loud
+  before a clip is built.
+
+  *Worth recording how nearly this test was useless:* the first version nudged a
+  clip after the add to observe the document, and that nudge rewrote it from the
+  already-normalised runtime — erasing the divergence and passing with the fix
+  removed. It now reads the document with nothing in between, and is verified in
+  both directions.
+
+- **The preset picker and the SAVE button disagreed about the same rule.**
+  `renamePreset` refuses to rename onto an occupied name (*"X already exists"*),
+  while `saveUserPreset` wrote `all[name] = readRecipe(...)` straight over
+  whatever was there — silently, on a name typed into a `prompt()`, where a typo
+  or a half-remembered name is the ordinary case and the thing destroyed is a
+  look somebody built by hand and cannot get back. Overwriting is legitimate (it
+  is how you iterate on a preset), so this now confirms rather than refuses.
+  Names are trimmed too: `" Mine"` and `"Mine"` are one name to a person and
+  were two entries here.
+
+- **Renaming or deleting the selected preset blanked the picker.**
+  `rebuildPresetSelect` restored the previous selection without checking that it
+  still existed, so writing a name the rebuilt list no longer held left
+  `selectedIndex` at `-1` — a blank control whose entire job is to say which look
+  is loaded. Measured: `{value: "", index: -1}` after deleting the selected
+  preset, and the same after renaming it. Delete now falls back to
+  `— custom —` (honest: the loaded preset is gone, and what is on screen is
+  nobody's preset), and rename carries the selection to the new name.
+
+- **The wizard locked itself only when it created the *first* account.** Every
+  other route through step 5 left `server/config/.setup-complete` unwritten:
+  *Skip — I have an account* (offered whenever the database already has
+  accounts) and creating a second account both fell through. That is not
+  cosmetic. `needsReconfirm` returns `false` when there is no secret to check a
+  key against, and `server/env.example.php` ships with an empty database
+  password *and* an empty `setup.secret` — so a socket-auth install configured
+  by copying it, on a database that already had a user, had a wizard that opened
+  for anonymous visitors indefinitely. Same failure mode as the Critical item
+  above, reached by a different door. Locking now happens on arrival at step 6
+  whatever route got there, the Done page says so on its own line, and a lock it
+  could not write is reported instead of passed over.
+
+- **`account.php` took the password as an argument.** An argument is visible to
+  every user on the box in `ps`, is written verbatim into `~/.bash_history`, and
+  on shared hosting is often in the process accounting log as well — which made
+  the one command whose job is to set a credential the one command that leaked
+  it. It now asks, with the terminal's echo off (and says so if it cannot turn
+  echo off, rather than quietly showing the password), confirms by asking twice,
+  and accepts a pipe for scripts: `printf '%s' "$PW" | php server/account.php
+  add alice`. An argument still works and still warns. `add` checks the name
+  before asking, so a password is never typed for an account that cannot be
+  created. CI and both install docs now use the pipe.
+
+- **The generated deny file emitted a bare `Require all denied`.** On Apache 2.2
+  there is no `mod_authz_core`, `Require` rejects the `all` provider at
+  parse time, and in a `.htaccess` a parse error is a 500 on every request into
+  that directory — so a file written to lock a folder down took the studio
+  offline instead, with nothing to connect the two. The 2.2 syntax beside it was
+  already fenced; both are now.
+
+---
+
 ## Investigated and found NOT to be defects
 
 Recorded because "we looked and it was fine" is a result.
@@ -209,60 +287,64 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-None of these are fixed. They are recorded with enough detail to act on.
-
-**Export**
-- MP4 muxing throws `RangeError` past roughly 14 minutes and falls back to WebM
-  after a full encode.
-- `encodeClip` has no `try/finally` around the encode loop, so a throwing
-  `drawFrame` leaks the `VideoEncoder`.
-- `runBatch` takes no export lock and stops no preview, so it can run
-  concurrently with a clip export over the same scratch canvases.
-- STOP does nothing during the APNG/WebP encode phase, which also shows no
-  progress.
-- 2×SS is silently ignored by the still exporters.
-
-**Scenes and screens**
-- Emergency Alert's crawl leaves the screen empty for 3.6 s of every 15.7 s.
-- The shared layer canvas is not reset between layers, so a scene renders
-  differently depending on which layer precedes it.
-- Error Dialog hard-codes a 140 px window height, so its title bar leaves the
-  top of a short frame.
-- Ink/Ground are enabled all-or-nothing, so nine templates keep a colour control
-  that does nothing.
-- A stego message too large for the canvas is dropped silently on export.
-- "Invert text" writes nothing on light-stock templates.
-
-**Timeline**
-- A trim/reorder drag that pauses for over 600 ms splits into several undo
-  entries.
-- Undecodable footage retries the decode on every preview frame.
-- Adding a 65th clip writes it to the document, drops it from the sequence, and
-  reports success.
-- A dip/burn duration is not bounded by the clip it belongs to.
-
-**Backend**
-- Quota counts assets only; project documents and their 50-deep autosave history
-  are unbounded and unmetered.
-- `account.php` takes the password as a command-line argument, exposing it in
-  `ps` and shell history.
-- The generated deny file emits an unguarded `Require all denied`, which 500s on
-  Apache 2.2 — unlike the `api/.htaccess` this audit added, which fences every
-  directive behind `<IfModule>`.
-- The install does not lock itself when the account step is skipped.
-
-**Client and UI**
-- Renaming or deleting the selected user preset leaves the picker blank.
-- Saving a preset over an existing name destroys it without asking.
-- The command palette's catalogue is frozen at boot, so saved presets are never
-  findable.
-- `#v-flash` is a permanently-live region that rewrites four times a second.
-- The editor layout overflows horizontally below ~500 px (WCAG 1.4.10).
+One item, and it is not a code defect.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
-  should make. Nothing else here is blocked on it, but a beta without one is a
-  beta nobody can legally build on.
+  should make, and it is deliberately left out. Nothing else here is blocked on
+  it, but a beta without one is a beta nobody can legally build on.
+
+Every other finding this audit raised has been either fixed above or recorded
+under *Investigated and found NOT to be defects*. Two caveats on that, because
+"the list is empty" is a weaker claim than it looks:
+
+- **40 of the 128 workflow agents died on API 529s.** The findings they had
+  already filed were worked through; whatever they had not yet filed was never
+  seen. This is an audit of what was looked at, not a proof that nothing else
+  exists.
+- **Two of the reported numbers did not reproduce**, and both are recorded as
+  measured rather than as filed: the MP4 ceiling is around 66 minutes rather than
+  14, and the editor's reflow broke at about 600 px rather than 500. A finding
+  worth fixing can still be wrong about its own detail.
+
+---
+
+## A gate that could not say what broke
+
+Recorded because it is the one problem in here the audit found by *being* the
+user of its own tooling.
+
+A `ci-gate` run went red with **`smoke: 175 passed, 1 failed`** and no way to
+learn which check that was. Two separate gaps, both now closed:
+
+- **`test-studio-smoke.mjs` was the only one of the ten suites that printed a
+  count and never listed its failures.** Fine locally, where the FAIL line is on
+  screen; useless in CI, where the gate captures a suite's output.
+- **`scripts/ci-gate.sh` echoed `tail -30` of a failing suite** — the wrong 30
+  lines whenever the failure is not at the end, and a suite that finishes with two
+  hundred passes never is. Every visible line in that log was a `PASS`.
+
+The gate now greps the FAIL lines and the suites' own *Needs attention* block and
+prints those first, keeping the tail underneath because a crash has no FAIL line
+to grep and that is precisely when the last lines are the whole story. Verified
+by breaking a check ~200 lines from the end: it now names itself in the first
+screenful, where before it appeared nowhere in the log.
+
+**The flake itself is unidentified, and is left that way rather than guessed at.**
+The same commit passed on a second run, and twelve minutes of local runs — three
+of them under 3× CPU oversubscription — stayed green. There is a plausible
+suspect (`the preview redraws at the clip frame rate` measures over 2 s and calls
+`getImageData` on every rAF tick, so under contention the measurement competes
+with the thing it measures) but no evidence against it, so nothing was changed
+there. A recurrence will now name itself.
+
+**The same commit was also being gated twice.** `push: ['**']` alongside
+`pull_request` ran all ten jobs on every push to a branch with a PR open: double
+the CI minutes for no extra coverage, double the exposure to any flake, and the
+reason one SHA in this PR's history carries both a red and a green `ci-gate`.
+`push` is now scoped to the default branch, `pull_request` covers the rest, and
+the concurrency group keys on the head ref so the two events can no longer both
+survive to completion.
 
 ---
 

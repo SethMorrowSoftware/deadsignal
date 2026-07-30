@@ -10,6 +10,7 @@
 import { $, escHtml, log, toast } from '../core/dom.js';
 import { BATCH_SOURCES, runBatch } from '../export/batch.js';
 import { CONTAINERS } from '../export/encoder.js';
+import { claimExport, releaseExport, startVideoPreview, stopVideoPreview } from '../video/capture.js';
 
 let running = false;
 
@@ -77,6 +78,19 @@ export function initBatch() {
 
     const seconds = Math.max(0, Number($('bx-seconds')?.value) || 0);
     const container = $('bx-container')?.value || 'webm';
+
+    /* THE BATCH TAKES THE SAME TOKEN EVERY OTHER EXPORTER TAKES.
+       `running` only stopped a second BATCH. The batch renders through the same
+       module-level scratch canvases as every other export path
+       (_persistCanvas, _ss, _tlA) and seeks the same shared imported <video>, so
+       a batch running beside a clip RECORD or a .gif interleaved two encoders
+       over one set of canvases — exactly the corruption claimExport() exists to
+       prevent, and the one entry point of the six that never asked for it.
+       Stopping the preview is the other half: it draws through _persistCanvas
+       too, and a one-frame accumulator shared with a running export puts a ghost
+       of the preview into the batch's frames. */
+    if (!claimExport('Batch export')) return;
+    stopVideoPreview();
     setBusy(true, `Exporting 0 / ${chosen.count()}…`);
     log(`Batch: ${chosen.label} — ${chosen.count()} item(s)`, 'info');
 
@@ -100,6 +114,12 @@ export function initBatch() {
       log('Batch failed: ' + e.message, 'err');
       toast('Batch failed', 'err');
       return;
+    } finally {
+      /* Released here rather than after the summary below: an exception above
+         returns, and a token still held after a failed batch greys out the four
+         still buttons and refuses every export for the rest of the session. */
+      releaseExport();
+      startVideoPreview();
     }
 
     const parts = [`${res.made} exported`];

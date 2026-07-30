@@ -53,6 +53,26 @@ class StudioVersion
     }
 
     /**
+     * Total bytes a user's version history occupies.
+     *
+     * Joined through studio_projects because a version knows its project and not
+     * its owner. Counted against the same quota as everything else: named
+     * versions are kept forever, and 50 autosaves per project of a document that
+     * can itself be megabytes is not a rounding error — it was simply unmetered,
+     * so a user could fill a disk without ever uploading an asset.
+     */
+    public static function documentBytes(int $userId): int
+    {
+        return (int) Database::fetchColumn(
+            'SELECT COALESCE(SUM(v.size_bytes), 0)
+               FROM studio_versions v
+               JOIN studio_projects p ON p.id = v.project_id
+              WHERE p.owner_id = ?',
+            [$userId]
+        );
+    }
+
+    /**
      * Keep the newest $keep autosaves for a project; delete the rest.
      *
      * The subquery is wrapped in a derived table because MySQL refuses to

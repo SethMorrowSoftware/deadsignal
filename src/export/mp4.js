@@ -46,7 +46,21 @@ function u64(n) {
   return concat(u32(hi), u32(lo));
 }
 
-function concat(...parts) {
+/* ARRAY IN, NOT SPREAD, for anything with one entry PER SAMPLE.
+ *
+ * These were all varargs, and the sample tables spread a per-frame array into
+ * them: `fullBox('stsz', 0, 0, u32(0), u32(n), ...samples.map(...))`, and
+ * `box('mdat', ...payload)` with one entry per frame. An argument list is
+ * stack-allocated, so past a few tens of thousands of entries the spread throws
+ * `RangeError` — after a full encode, which is minutes of an author's time, and
+ * the caller then fell back to WebM having thrown the MP4 away. It is not a
+ * limit anybody chose: 30fps for a quarter of an hour is enough to reach it, and
+ * the tool's own clip cap is longer than that.
+ *
+ * The list forms take an array and iterate it, so the only bound left is memory.
+ * The varargs forms stay for the dozens of fixed-shape boxes that read better
+ * that way — they are bounded by the code, not by the clip. */
+function concatList(parts) {
   let n = 0;
   for (const p of parts) n += p.length;
   const out = new Uint8Array(n);
@@ -54,15 +68,21 @@ function concat(...parts) {
   for (const p of parts) { out.set(p, at); at += p.length; }
   return out;
 }
+function concat(...parts) { return concatList(parts); }
 
 /** A box: 4-byte size, 4-char type, payload. */
-function box(type, ...payload) {
-  const body = concat(...payload);
+function boxList(type, payload) {
+  const body = concatList(payload);
   return concat(u32(body.length + 8), str(type), body);
 }
+function box(type, ...payload) { return boxList(type, payload); }
 /** A full box: version and flags before the payload. */
+function fullBoxList(type, version, flags, payload) {
+  const head = u8(version, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255);
+  return boxList(type, [head].concat(payload));
+}
 function fullBox(type, version, flags, ...payload) {
-  return box(type, u8(version, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255), ...payload);
+  return fullBoxList(type, version, flags, payload);
 }
 
 /* MP4 dates count from 1904, not 1970. Fixed rather than "now" so the same
@@ -100,8 +120,8 @@ function stts(samples) {
     if (last && last.delta === s.duration) last.count++;
     else runs.push({ count: 1, delta: s.duration });
   }
-  return fullBox('stts', 0, 0, u32(runs.length),
-    ...runs.map((r) => concat(u32(r.count), u32(r.delta))));
+  return fullBoxList('stts', 0, 0,
+    [u32(runs.length)].concat(runs.map((r) => concat(u32(r.count), u32(r.delta)))));
 }
 
 /** stsc: how many samples are in each chunk, run-length encoded. */
@@ -112,13 +132,13 @@ function stsc(chunks) {
     const last = runs[runs.length - 1];
     if (!last || last.n !== n) runs.push({ first: i + 1, n });
   });
-  return fullBox('stsc', 0, 0, u32(runs.length),
-    ...runs.map((r) => concat(u32(r.first), u32(r.n), u32(1))));
+  return fullBoxList('stsc', 0, 0,
+    [u32(runs.length)].concat(runs.map((r) => concat(u32(r.first), u32(r.n), u32(1)))));
 }
 
 function stsz(samples) {
-  return fullBox('stsz', 0, 0, u32(0), u32(samples.length),
-    ...samples.map((s) => u32(s.data.length)));
+  return fullBoxList('stsz', 0, 0,
+    [u32(0), u32(samples.length)].concat(samples.map((s) => u32(s.data.length))));
 }
 
 /* 64-bit offsets always. stco would be four bytes smaller per chunk and would
@@ -126,7 +146,7 @@ function stsz(samples) {
    before the offsets are known, a table that changed width would break the
    two-pass write. Fixed width is the property that makes this exact. */
 function co64(offsets) {
-  return fullBox('co64', 0, 0, u32(offsets.length), ...offsets.map(u64));
+  return fullBoxList('co64', 0, 0, [u32(offsets.length)].concat(offsets.map(u64)));
 }
 
 /** stss: which samples are sync samples. Omitted when they all are. */
@@ -134,7 +154,7 @@ function stss(samples) {
   const keys = [];
   samples.forEach((s, i) => { if (s.key) keys.push(i + 1); });
   if (keys.length === samples.length) return new Uint8Array(0);
-  return fullBox('stss', 0, 0, u32(keys.length), ...keys.map(u32));
+  return fullBoxList('stss', 0, 0, [u32(keys.length)].concat(keys.map(u32)));
 }
 
 /* --------------------------------------------------------- descriptions -- */
@@ -330,7 +350,7 @@ export function muxMP4({ frames, width, height, description, audio }) {
     // corrupt index is far worse than a failed export.
     throw new Error(`moov size changed between passes (${moovSize} -> ${moov.length})`);
   }
-  const mdat = box('mdat', ...payload);
+  const mdat = boxList('mdat', payload);
   return new Blob([ftyp, moov, mdat], { type: 'video/mp4' });
 }
 

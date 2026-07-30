@@ -3,8 +3,18 @@
  * Dead Signal Studio — accounts, from the command line.
  *
  *   php server/account.php list
- *   php server/account.php add <name> <password>
- *   php server/account.php passwd <name> <new-password>
+ *   php server/account.php add <name>              # asks for the password
+ *   php server/account.php passwd <name>           # asks for the new password
+ *
+ * The password is asked for rather than passed as an argument. An argument is
+ * visible to every user on the box in `ps`, is written verbatim into
+ * ~/.bash_history, and on a shared host is often in the process accounting log
+ * as well — which makes the one command that sets a credential the one command
+ * that leaks it. Passing it anyway still works (scripts exist) but says so.
+ *
+ * For a script, pipe it instead — a pipe is not in `ps` and not in history:
+ *
+ *   printf '%s' "$PASSWORD" | php server/account.php add alice
  *
  * There is no sign-up page: accounts are made by someone with access to the
  * server, either through setup.php or here. On a host with SSH this is the
@@ -27,10 +37,84 @@ require_once __DIR__ . '/StudioInstall.php';
 $usage = <<<TXT
 Usage:
   php server/account.php list
-  php server/account.php add <name> <password>
-  php server/account.php passwd <name> <new-password>
+  php server/account.php add <name>              (asks for the password)
+  php server/account.php passwd <name>           (asks for the new password)
+
+The password can also be piped in, which keeps it out of `ps` and history:
+  printf '%s' "\$PASSWORD" | php server/account.php add <name>
 
 TXT;
+
+/**
+ * The password, from the safest source available.
+ *
+ * In order: an argument (works, warns — see the header), a pipe on stdin (the
+ * scripted path), or a prompt with the terminal's echo turned off. The prompt
+ * asks twice, because a mistyped password that nobody can see is a locked-out
+ * account and the only fix is to run this again.
+ */
+function studio_read_password(?string $fromArgv, string $label): string
+{
+    if ($fromArgv !== null && $fromArgv !== '') {
+        fwrite(STDERR, "Warning: a password given as an argument is visible in `ps` and saved in your\n"
+            . "shell history. Next time, leave it off and type it when asked, or pipe it in.\n");
+        return $fromArgv;
+    }
+
+    /* Not a terminal: something is piping the password in. One line, and the
+       trailing newline `printf`/`echo` adds is not part of it. */
+    if (!stream_isatty(STDIN)) {
+        $line = fgets(STDIN);
+        if ($line === false) {
+            fwrite(STDERR, "No password on stdin.\n");
+            exit(1);
+        }
+        return rtrim($line, "\r\n");
+    }
+
+    $hidden = studio_stty('-echo');
+    if (!$hidden) {
+        fwrite(STDERR, "(This terminal will show the password as you type it.)\n");
+    }
+    try {
+        fwrite(STDOUT, "$label: ");
+        $first = rtrim((string) fgets(STDIN), "\r\n");
+        if ($hidden) fwrite(STDOUT, "\n");
+        fwrite(STDOUT, "Again: ");
+        $again = rtrim((string) fgets(STDIN), "\r\n");
+        if ($hidden) fwrite(STDOUT, "\n");
+    } finally {
+        if ($hidden) studio_stty('echo');
+    }
+
+    if ($first !== $again) {
+        fwrite(STDERR, "Those did not match. Nothing was changed.\n");
+        exit(1);
+    }
+    return $first;
+}
+
+/**
+ * Ask the terminal to stop (or resume) echoing. False if it cannot be asked.
+ *
+ * `stty` is checked for rather than assumed: shell_exec returns the same empty
+ * string whether the command ran or the shell could not find it, so calling it
+ * blind would report success on a host with no stty and then show the password
+ * to the room.
+ */
+function studio_stty(string $flag): bool
+{
+    static $available = null;
+    if (DIRECTORY_SEPARATOR === '\\' || !function_exists('shell_exec')) return false;
+    if ($available === null) {
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+        $available = !in_array('shell_exec', $disabled, true)
+            && trim((string) @shell_exec('command -v stty 2>/dev/null')) !== '';
+    }
+    if (!$available) return false;
+    @shell_exec('stty ' . $flag . ' 2>/dev/null');
+    return true;
+}
 
 $args = array_slice($argv, 1);
 $command = $args[0] ?? '';
@@ -70,16 +154,23 @@ switch ($command) {
 
     case 'add':
         $name = trim((string) ($args[1] ?? ''));
-        $pass = (string) ($args[2] ?? '');
-        if ($name === '' || strlen($pass) < 8) {
-            fwrite(STDERR, "A name and a password of at least 8 characters are required.\n");
+        if ($name === '') {
+            fwrite(STDERR, "A name is required.\n\n" . $usage);
             exit(1);
         }
+        /* The name is checked BEFORE the password is asked for: typing a
+           password twice only to be told the account already exists is a
+           password typed into a terminal for nothing. */
         if (StudioInstall::displayNameTaken($pdo, $name)) {
             // Never silently overwrite: this database may be shared, and
             // `add` quietly resetting someone's password is not something a
             // command called "add" should ever do. `passwd` says what it means.
             fwrite(STDERR, "An account called \"$name\" already exists. Use `passwd` to change its password.\n");
+            exit(1);
+        }
+        $pass = studio_read_password($args[2] ?? null, "Password for \"$name\"");
+        if (strlen($pass) < 8) {
+            fwrite(STDERR, "A password of at least 8 characters is required.\n");
             exit(1);
         }
         $id = StudioInstall::createAccount($pdo, $name, $pass);
@@ -88,9 +179,13 @@ switch ($command) {
 
     case 'passwd':
         $name = trim((string) ($args[1] ?? ''));
-        $pass = (string) ($args[2] ?? '');
-        if ($name === '' || strlen($pass) < 8) {
-            fwrite(STDERR, "A name and a password of at least 8 characters are required.\n");
+        if ($name === '') {
+            fwrite(STDERR, "A name is required.\n\n" . $usage);
+            exit(1);
+        }
+        $pass = studio_read_password($args[2] ?? null, "New password for \"$name\"");
+        if (strlen($pass) < 8) {
+            fwrite(STDERR, "A password of at least 8 characters is required.\n");
             exit(1);
         }
         if (!StudioInstall::resetPassword($pdo, $name, $pass)) {

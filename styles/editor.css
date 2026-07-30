@@ -242,8 +242,11 @@ body.nle .view.active > .tabhelp{ display:none; }
 .nle-chrome{ display:none; }
 body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px solid var(--edge); }
 
+/* Wraps, like every other bar in here. The brand plus five menus is about 450px
+   of min-content, which at a 320px viewport made the whole page scroll sideways
+   to reach HELP. */
 .nle-menubar{
-  display:flex; align-items:center; gap:2px;
+  display:flex; align-items:center; gap:2px; flex-wrap:wrap;
   padding:4px 8px; border-bottom:1px solid var(--edge);
 }
 .nle-brand{
@@ -294,8 +297,12 @@ body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px 
    not a settings page — but present, because hiding a control is not the same
    as replacing it. */
 .nle-settings{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+/* Each label stays on one line (white-space:nowrap), but a group of controls may
+   break across lines rather than push the page wider: the four view buttons —
+   CLASSIC / TABS / SEARCH / EXPLAIN — are 326px in one unbreakable row, which was
+   the last thing forcing a sideways scroll at a 320px viewport. */
 .nle-settings .ctl{
-  display:flex; align-items:center; gap:5px;
+  display:flex; align-items:center; gap:5px; flex-wrap:wrap; min-width:0;
   font-size:12px; color:var(--muted); white-space:nowrap;
 }
 .nle-settings .ctl select,
@@ -463,7 +470,7 @@ body.nle .view.active .panel.stagewrap canvas.stage{
 /* The transport lives under the monitor and is the same in every workspace. */
 .nle-transport{
   grid-area:transport;
-  align-items:center; gap:6px; justify-content:center;
+  align-items:center; gap:6px; justify-content:center; flex-wrap:wrap;
   padding:6px 10px; background:var(--panel); border-top:1px solid var(--edge);
   position:relative; z-index:3;
 }
@@ -489,16 +496,24 @@ body.nle .view.active .panel.stagewrap canvas.stage{
   flex-direction:column; min-height:0;
 }
 body.nle .nle-transport,body.nle .nle-timeline{ display:flex; }
+/* WRAPS. Eleven children in a nowrap row gave this bar a min-content width of
+   about 600px, and because it is a full-width bar that became the whole page's
+   minimum: measured at a 500px viewport, documentElement.scrollWidth was 603, so
+   the editor needed horizontal scrolling to reach its own controls (WCAG 1.4.10
+   asks for none below 320 CSS px). The toolbar above it already wrapped; this one
+   did not. */
 .nle-tl-head{
-  display:flex; align-items:center; gap:8px; padding:5px 10px;
+  display:flex; align-items:center; gap:8px; padding:5px 10px; flex-wrap:wrap;
   border-bottom:1px solid var(--edge); font-size:12px; color:var(--muted);
 }
 /* Vertical only. Two nested scrollers over the SAME axis is the classic editor
    bug where the ruler and the clips disagree about where they are — the lane
    has its own horizontal scroller now (#tl-scroll). */
 .nle-tl-body{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding:8px 10px; min-height:0; }
-.nle-zoom{ display:flex; align-items:center; gap:4px; margin-left:auto; }
-.nle-zoom input{ width:120px; }
+/* min-width:0 so the group can be squeezed rather than forcing the row wider,
+   and the slider shrinks with it instead of holding a hard 120px. */
+.nle-zoom{ display:flex; align-items:center; gap:4px; margin-left:auto; min-width:0; }
+.nle-zoom input{ flex:0 1 120px; width:120px; min-width:56px; max-width:100%; }
 
 /* Track headers down the left of the lane, as in every editor. */
 .nle-tracks{ display:grid; grid-template-columns:88px minmax(0,1fr); gap:0 8px; align-items:start; }

@@ -14,7 +14,7 @@ import { validateVideo, wireLive } from '../ui/shell.js';
 import { initSizing, scaleNumControl, syncFormat } from '../ui/sizing.js';
 import { scaleFilterChainPx } from './filters.js';
 import { exportGif, exportAPNG, exportAnimWebP } from './gif.js';
-import { _persistCanvas, readVideoCfg, renderScaled, renderVideoFrame } from './render.js';
+import { _persistCanvas, readVideoCfg, renderScaled } from './render.js';
 import { ensureVideoSource } from './sources.js';
 
 export let vPreviewRAF=null, vPlaying=true, vScrubT=0, vRecording=false;
@@ -85,7 +85,13 @@ export function startVideoPreview(){ stopVideoPreview(); if(!videoVisible())retu
       // catches a blink code, a fade and a scene cut landing together — which no
       // amount of reading the recipe would reveal.
       const nowMs=performance.now();
-      sampleFlash(c, nowMs); paintFlash($("v-flash"), nowMs);
+      /* The readout repaints quietly; crossing the WCAG limit is announced once,
+         through the log and one toast. See paintFlash. */
+      sampleFlash(c, nowMs); paintFlash($("v-flash"), nowMs, (risky,hz)=>{
+        if(risky){ log("Flash rate "+hz.toFixed(1)+"/s — above the WCAG 2.3.1 limit of 3/s. This clip may trigger seizures.","warn");
+          toast("Flash rate above the WCAG limit","warn"); }
+        else log("Flash rate back under the WCAG limit ("+hz.toFixed(1)+"/s).","info");
+      });
       /* Yield in proportion to what the frame cost.
        *
        * A frame is synchronous main-thread work, and a filter chain at a large
@@ -408,7 +414,12 @@ export async function collectFrames(cfg,count,{maxDim=0,cancelled=null,onProgres
   for(let i=0;i<count;i++){ if(cancelled&&cancelled())break;
     const frac=(count<2?0:(i/(count-1))*0.999); const t=frac*cfg.duration;
     if(isVid) await seekVideo(fvid, frac*vdur);
-    renderVideoFrame(ctx,cfg.W,cfg.H,cfg,t);
+    /* renderScaled, not renderVideoFrame: 2×SS is a checkbox on the same panel
+       as the export buttons, and this path ignored it. The preview honoured it,
+       RECORD honoured it on both paths, the batch honoured it — the four still
+       exporters (.gif, .apng, .webp, frame strip) all came out aliased with the
+       box ticked and said nothing. */
+    renderScaled(ctx,cfg.W,cfg.H,cfg,t);
     const f=document.createElement("canvas"); f.width=ow; f.height=oh; f.getContext("2d").drawImage(c,0,0,ow,oh); out.push(f);
     if(onProgress)onProgress((i+1)/count);
     // Collection is synchronous canvas work — a 240-frame GIF at 640px is

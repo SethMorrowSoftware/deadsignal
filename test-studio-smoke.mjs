@@ -54,9 +54,20 @@ const EXEC = ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome']
   .find(p => existsSync(p));
 
 let pass = 0, fail = 0;
+/* Failures are collected as well as printed, and listed again at the end.
+ *
+ * This suite was the only one of the ten that printed a count and nothing else.
+ * That is fine locally, where the FAIL line is on screen; it is useless in CI,
+ * where scripts/ci-gate.sh captures a suite's output and only echoes its tail —
+ * so a check that failed early left "175 passed, 1 failed" and no name. It duly
+ * happened, on a run whose sibling passed on the same commit, and the flake was
+ * undiagnosable from the log. A gate that cannot say what broke is a gate people
+ * stop reading. */
+const failures = [];
 const check = (name, ok, extra = '') => {
-  if (!ok) fail++; else pass++;
-  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? ' — ' + extra : ''}`);
+  const line = `${name}${extra ? ' — ' + extra : ''}`;
+  if (!ok) { fail++; failures.push(line); } else pass++;
+  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${line}`);
 };
 
 console.log('Dead Signal Studio smoke');
@@ -901,6 +912,54 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   await page.keyboard.press('Escape');
   check('Escape closes the palette', await page.evaluate(() => document.getElementById('palette').hidden));
 
+  /* THE CATALOGUE IS BUILT WHEN THE PALETTE IS OPENED, NOT AT BOOT.
+     It was a snapshot taken in initPalette() and never refreshed, and it listed
+     only the SHIPPED presets — so a look the author saved themselves, the thing
+     they are most likely to search for by name, was the one thing ⌘K could not
+     find, whichever way you came at it. Both faults show up in the same probe:
+     save a preset after boot, then look for it. */
+  const fresh = await page.evaluate(async () => {
+    const R = await import('./src/core/recipes.js');
+    const P = await import('./src/ui/palette.js');
+    const PR = await import('./src/presets/index.js');
+    const labels = () => [...document.querySelectorAll('#pal-list .pal-item .pal-label')]
+      .map((n) => n.textContent);
+    const find = (q) => {
+      const i = document.getElementById('pal-input');
+      i.value = q; i.dispatchEvent(new Event('input', { bubbles: true }));
+      return labels();
+    };
+    for (const n of Object.keys(R.userPresets('video'))) R.deleteUserPreset('video', n);
+
+    P.openPalette();
+    const before = find('MIDNIGHT');
+    P.closePalette();
+
+    const all = R.userPresets('video');
+    all['MIDNIGHT RUN'] = { 'v-scan': '61' };
+    R.lsSet(R.PKEY('video'), all);
+    PR.rebuildPresetSelect('video');
+
+    P.openPalette();
+    const after = find('MIDNIGHT');
+    // Choosing it loads that preset, which is the point of finding it.
+    document.querySelector('#pal-list .pal-item')
+      ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    const picker = document.getElementById('v-preset').value;
+
+    for (const n of Object.keys(R.userPresets('video'))) R.deleteUserPreset('video', n);
+    P.openPalette();
+    const gone = find('MIDNIGHT');
+    P.closePalette();
+    return { before, after, gone, picker };
+  });
+  check('a preset saved after boot is findable in the palette',
+        fresh.before.length === 0 && fresh.after.includes('MIDNIGHT RUN'),
+        JSON.stringify(fresh));
+  check('…and choosing it loads that preset',
+        fresh.picker === 'user:MIDNIGHT RUN', fresh.picker);
+  check('…and a deleted one stops being listed', fresh.gone.length === 0, JSON.stringify(fresh.gone));
+
   // Explain mode must be reachable and usable from the keyboard, not just by
   // hovering for a title tooltip.
   // Focus is still in v-scan from the palette jump, and "?" typed into a field
@@ -1037,13 +1096,29 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
     // window or there is nothing left to be alarmed about. (Jumping ten
     // seconds ahead to dodge the throttle also jumped past the window — it
     // only ever passed because paintFlash was reading a different clock.)
-    S.paintFlash(el, t + 60);
+    /* The crossing is announced through the callback, ONCE — the readout itself
+       must never become a live region. It carried aria-live="polite" while this
+       function rewrote its text four times a second for as long as the preview
+       ran, so a screen reader recited the number continuously over everything
+       else; and the old code's answer to that was to switch it to ASSERTIVE
+       while the rate was over the limit, which turned four rewrites a second
+       into four interrupting alerts a second. */
+    const crossings = [];
+    S.paintFlash(el, t + 60, (risky, hz) => crossings.push({ risky, hz }));
+    // A second paint while still over the limit must not announce again.
+    S.paintFlash(el, t + 400, (risky, hz) => crossings.push({ risky, hz }));
     return { text: el.textContent, risky: el.classList.contains('risky'),
-             role: el.getAttribute('role'), rate: S.currentFlashRate(t + 60) };
+             role: el.getAttribute('role'), live: el.getAttribute('aria-live'),
+             crossings, rate: S.currentFlashRate(t + 60) };
   });
   check('a real strobe is measured over the limit', warned.rate > 3, `${warned.rate.toFixed(1)}/s`);
   check('the readout turns red', warned.risky, warned.text);
-  check('the warning is announced assertively', warned.role === 'alert', String(warned.role));
+  check('the readout is not a live region, so the number is not recited',
+        warned.live === null && warned.role === null,
+        `aria-live=${warned.live} role=${warned.role}`);
+  check('…and crossing the limit is announced exactly once',
+        warned.crossings.length === 1 && warned.crossings[0].risky === true,
+        JSON.stringify(warned.crossings));
   await page.evaluate(() => window.DeadSignalStudio.resetFlashMeter());
 }
 
@@ -1648,10 +1723,96 @@ console.log('\n[first run]');
   await page.waitForTimeout(300);
 }
 
+/* --------------------------------------------------------------- reflow --- */
+/* WCAG 1.4.10: content must not need scrolling in TWO directions. The page
+   scrolls vertically, so nothing may force a horizontal scroll down to 320 CSS
+   px — the width the criterion names.
+ *
+ * It did. Measured at a 500px viewport, documentElement.scrollWidth was 603:
+ * four bars laid their children out in unbreakable rows (the sequence head, the
+ * menubar, the transport, and the view-buttons group), and the OUTPUT fieldset's
+ * W / H / FPS columns could not go below 312px because `.row label` has a 98px
+ * floor — three of those plus gaps, inside a panel narrower than that, turned
+ * three number boxes into a sideways scroll.
+ *
+ * Every tab, in its own narrow page, so a fix on one does not hide a fault on
+ * another. */
+{
+  const narrow = await browser.newPage();
+  await narrow.setViewportSize({ width: 320, height: 900 });
+  await narrow.goto(PAGE, { waitUntil: 'load' });
+  await narrow.waitForFunction(() => !!window.DeadSignalStudio, null, { timeout: 20000 });
+  await narrow.evaluate(() => document.getElementById('welcome-close')?.click());
+
+  const TABS = ['video', 'audio', 'image', 'timeline', 'library', 'cloud', 'help'];
+  const bad = [];
+  for (const t of TABS) {
+    const has = await narrow.evaluate((tab) => {
+      const el = document.querySelector(`.tab[data-view="${tab}"]`);
+      if (el) el.click();
+      return !!el;
+    }, t);
+    if (!has) continue;
+    await narrow.waitForTimeout(250);
+    const r = await narrow.evaluate(() => {
+      const de = document.documentElement;
+      const over = [];
+      /* A wide data table inside its own overflow:auto box is not a 1.4.10
+         failure — the criterion exempts content that genuinely needs a second
+         dimension, and the library table is exactly that. What fails is content
+         past the edge with no way to reach it, so an element is only counted
+         when nothing above it scrolls. */
+      const reachable = (el) => {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          const ox = getComputedStyle(p).overflowX;
+          if (ox === 'auto' || ox === 'scroll') return true;
+        }
+        return false;
+      };
+      for (const el of document.querySelectorAll('body *')) {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const b = el.getBoundingClientRect();
+        if (!b.width && !b.height) continue;
+        if (b.right > de.clientWidth + 1 && !reachable(el)) {
+          over.push((el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+            + (typeof el.className === 'string' && el.className
+               ? '.' + el.className.trim().split(/\s+/)[0] : ''))
+            + '@' + Math.round(b.right));
+        }
+      }
+      return { scroll: de.scrollWidth, client: de.clientWidth, over: over.slice(0, 4) };
+    });
+    if (r.scroll > r.client + 1 || r.over.length) {
+      bad.push(`${t}: scroll ${r.scroll}/${r.client} ${r.over.join(' ')}`);
+    }
+  }
+  check('no tab needs a sideways scroll at 320px (WCAG 1.4.10)',
+        bad.length === 0, bad.slice(0, 3).join(' | '));
+
+  /* And the width it actually broke at, so a partial fix cannot pass. */
+  const widths = [];
+  for (const w of [360, 420, 500, 560, 700]) {
+    await narrow.setViewportSize({ width: w, height: 900 });
+    await narrow.waitForTimeout(200);
+    const r = await narrow.evaluate(() => ({
+      scroll: document.documentElement.scrollWidth,
+      client: document.documentElement.clientWidth,
+    }));
+    if (r.scroll > r.client + 1) widths.push(`${w}px → ${r.scroll}`);
+  }
+  check('…nor at any width from 360 to 700', widths.length === 0, widths.join(', '));
+  await narrow.close();
+}
+
 console.log('-'.repeat(58));
 check('no uncaught page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 await browser.close();
 server.close();
 
 console.log(`\nDead Signal Studio smoke: ${pass} passed, ${fail} failed`);
+if (failures.length) {
+  console.log('\nNeeds attention:');
+  for (const f of failures) console.log('  - ' + f);
+}
 process.exit(fail === 0 ? 0 : 1);

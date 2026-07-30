@@ -123,8 +123,19 @@ export async function exportGif(){ if(!claimExport("GIF export"))return;
 async function exportAnimated(kind){
   const label=kind==="apng"?"APNG":"animated WebP";
   if(!claimExport(label+" export"))return;
-  const stop=$("v-stop");
+  /* THE SAME PROGRESS AND THE SAME STOP AS THE GIF.
+     This path showed no progress bar at all — `v-progress-wrap` was never made
+     visible — and ■ STOP only reached the frame COLLECTOR: once collection
+     finished, the encode ran straight through, so pressing STOP during the half
+     that actually takes the time did nothing and the author had no way to tell
+     whether the tool was working or hung. Rendering is the first half of the
+     bar, encoding the second, exactly as exportGif splits it. */
+  const wrap=$("v-progress-wrap"), bar=$("v-progress"), status=$("v-status"), stop=$("v-stop");
+  const setP=(p,text)=>{ if(bar)bar.style.width=(p*100)+"%"; if(status)status.textContent=text+" "+Math.round(p*100)+"%"; };
+  const bail=()=>{ if(status)status.textContent=label+" export cancelled — nothing saved.";
+    log(label+" export cancelled — discarded.","warn"); toast("Export cancelled","warn"); };
   armStillExportCancel(); stopVideoPreview();
+  if(wrap)wrap.style.display="block";
   if(stop)stop.disabled=false;
   try{
   const cfg=readVideoCfg();
@@ -138,26 +149,33 @@ async function exportAnimated(kind){
           +(N/cfg.duration).toFixed(1)+"fps rather than "+fps+" (same length, fewer frames)"
         : "")
       +(cfg.scene==="videoin"?" (seeking clip)":"")+"…","info");
-  const frames=await collectFrames(cfg,N,{maxDim:GIF_MAX_DIM, cancelled:stillExportCancelled});
-  if(stillExportCancelled()||frames.length<N){ log(label+" export cancelled — discarded.","warn"); toast("Export cancelled","warn"); return; }
+  const frames=await collectFrames(cfg,N,{maxDim:GIF_MAX_DIM, cancelled:stillExportCancelled,
+    onProgress:(p)=>setP(p*0.5,"Rendering frames…")});
+  if(stillExportCancelled()||frames.length<N){ bail(); return; }
   // Milliseconds across the length these N frames actually cover — see animDelay.
   const delayMs=animDelay(cfg.duration,N,1000);
+  const encOpts={ delayMs, cancelled:stillExportCancelled,
+                  onProgress:(p)=>setP(0.5+0.5*p,"Encoding "+label+"…") };
   let blob;
   try{
-    blob = kind==="apng" ? await encodeAPNG(frames,{ delayMs })
-                         : await encodeAnimatedWebP(frames,{ delayMs });
+    blob = kind==="apng" ? await encodeAPNG(frames,encOpts)
+                         : await encodeAnimatedWebP(frames,encOpts);
   }catch(e){ log(label+" failed: "+e.message,"err"); toast(label+" failed","err"); return; }
-  // encodeAnimatedWebP returns null rather than throwing when the browser has
-  // no WebP encoder — that is a capability, not a fault, and it deserves a
-  // sentence rather than a stack trace.
+  /* Both encoders return null for "cancelled" and WebP also returns null for
+     "this browser has no WebP encoder". Asking the flag again separates them —
+     and a cancel has to be reported as a cancel, not as a missing codec. */
+  if(!blob && stillExportCancelled()){ bail(); return; }
+  // A capability, not a fault: it deserves a sentence rather than a stack trace.
   if(!blob){ log("This browser cannot encode WebP — try .apng or .gif.","warn");
     toast("No WebP encoder here","err"); return; }
   const ext = kind==="apng" ? "apng" : "webp";
   const nm=slug(val("v-hud")||cfg.scene||"clip");
   addToLibrary(blob,ext,"image",nm); download(blob,nm+"."+ext);
   toast(label+" → library ("+(blob.size/1024).toFixed(0)+"KB)");
+  if(status)status.textContent=label+" encoded: "+(blob.size/1024).toFixed(0)+" KB.";
   log(label+" encoded: "+(blob.size/1024).toFixed(0)+"KB","ok");
-  } finally { if(stop)stop.disabled=true; releaseExport(); startVideoPreview(); }
+  } finally { if(wrap)wrap.style.display="none"; if(bar)bar.style.width="0%";
+    if(stop)stop.disabled=true; releaseExport(); startVideoPreview(); }
 }
 export const exportAPNG=()=>exportAnimated("apng");
 export const exportAnimWebP=()=>exportAnimated("webp");

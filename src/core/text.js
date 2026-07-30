@@ -148,6 +148,52 @@ export function setFont(ctx,px){ ctx.font=px+'px '+_stack;
   if(_track!==0){ try{ ctx.letterSpacing=(_track*px).toFixed(3)+'px'; }catch(e){} }
   else if(ctx.letterSpacing&&ctx.letterSpacing!=="0px"){ try{ ctx.letterSpacing="0px"; }catch(e){} } }
 export function glowText(ctx,txt,x,y,color,blur){ ctx.save(); ctx.fillStyle=color; if(blur){ctx.shadowColor=color; ctx.shadowBlur=blur;} ctx.fillText(txt,x,y); ctx.restore(); }
+
+/**
+ * Put a 2D context back to the state a brand-new canvas has.
+ *
+ * A scene draws with whatever it needs and does not tidy up after itself, which
+ * is fine on a canvas of its own and wrong on a shared one. Measured across all
+ * 48 scenes: 37 leave `font` changed, 29 `textBaseline`, 26 `fillStyle`, 23
+ * `textAlign`, 21 `strokeStyle`, 1 `lineWidth`. So a scene that does not set a
+ * property — relying, correctly, on the default — inherited whatever ran before
+ * it: text drawn from the wrong baseline, centred when it meant to be
+ * left-aligned, at the previous scene's size. 396 of the 2304 (previous, next)
+ * scene pairs rendered `next` differently depending on `previous`.
+ *
+ * The values here are the specification's defaults, not the tool's, and that is
+ * deliberate: a scene drawn FIRST already gets them, so resetting to them makes
+ * every position in a stack behave like the first one — the behaviour every
+ * preset and every saved project was authored against.
+ *
+ * Pixels are left alone. Callers that want the bitmap cleared as well are
+ * explicit about it (`drawLayers` fills black, because an additive blend has to
+ * drop the background). `ctx.reset()` would do both at once but is not in every
+ * browser the studio otherwise runs in, and it would clear pixels a caller may
+ * still want.
+ */
+export function resetCtxState(ctx){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.globalAlpha=1;
+  ctx.globalCompositeOperation="source-over";
+  ctx.fillStyle="#000"; ctx.strokeStyle="#000";
+  ctx.lineWidth=1; ctx.lineCap="butt"; ctx.lineJoin="miter"; ctx.miterLimit=10;
+  ctx.setLineDash([]); ctx.lineDashOffset=0;
+  ctx.shadowBlur=0; ctx.shadowOffsetX=0; ctx.shadowOffsetY=0;
+  ctx.shadowColor="rgba(0, 0, 0, 0)";
+  ctx.textAlign="start"; ctx.textBaseline="alphabetic";
+  ctx.imageSmoothingEnabled=true;
+  /* Spec default, family included: a scene that draws text without setting a
+     font gets the same 10px sans-serif it gets when it draws first. */
+  ctx.font="10px sans-serif";
+  try{ ctx.filter="none"; }catch(e){}
+  try{ ctx.direction="inherit"; }catch(e){}
+  try{ ctx.imageSmoothingQuality="low"; }catch(e){}
+  /* setFont() leaves this behind whenever a track is in effect, and ctx.font
+     does not clear it. */
+  try{ if(ctx.letterSpacing&&ctx.letterSpacing!=="0px") ctx.letterSpacing="0px"; }catch(e){}
+  return ctx;
+}
 export function corrupt(str,amt){ if(amt<=0)return str; const blk="█▓▒░"; let o=""; for(const ch of str){ o+= (ch!==" "&&rnd()<amt)? blk[rint(0,blk.length-1)] : ch; } return o; }
 
 /**
