@@ -90,6 +90,22 @@ report() {
         PASSED=$((PASSED + 1))
     else
         printf '  FAIL  %-46s (exit %d)\n' "$name" "$status"
+        # THE FAILING CHECKS FIRST, then the tail for context.
+        #
+        # This printed `tail -30` alone, which is the wrong 30 lines whenever the
+        # failure is not at the end — and a suite that ends with two hundred
+        # passes usually isn't. A real run duly reported "175 passed, 1 failed"
+        # with every visible line a PASS, and the name of the broken check was
+        # nowhere in the log. Grep for the FAIL lines and the suites' own
+        # "Needs attention" summary, so the answer is in the first screenful; the
+        # tail stays because a crash has no FAIL line to grep, and that is
+        # exactly when the last lines are the whole story.
+        local fails
+        fails="$(printf '%s\n' "$out" | grep -E '^[[:space:]]*(FAIL|✗|  - )|^Needs attention' || true)"
+        if [ -n "$fails" ]; then
+            printf '%s\n' "$fails" | head -40 | sed 's/^/        ! /'
+            printf '        ! ---- last 30 lines ----\n'
+        fi
         printf '%s\n' "$out" | tail -30 | sed 's/^/        | /'
         FAILED=$((FAILED + 1)); FAILED_NAMES+=("$name")
     fi

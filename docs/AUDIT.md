@@ -309,6 +309,45 @@ under *Investigated and found NOT to be defects*. Two caveats on that, because
 
 ---
 
+## A gate that could not say what broke
+
+Recorded because it is the one problem in here the audit found by *being* the
+user of its own tooling.
+
+A `ci-gate` run went red with **`smoke: 175 passed, 1 failed`** and no way to
+learn which check that was. Two separate gaps, both now closed:
+
+- **`test-studio-smoke.mjs` was the only one of the ten suites that printed a
+  count and never listed its failures.** Fine locally, where the FAIL line is on
+  screen; useless in CI, where the gate captures a suite's output.
+- **`scripts/ci-gate.sh` echoed `tail -30` of a failing suite** — the wrong 30
+  lines whenever the failure is not at the end, and a suite that finishes with two
+  hundred passes never is. Every visible line in that log was a `PASS`.
+
+The gate now greps the FAIL lines and the suites' own *Needs attention* block and
+prints those first, keeping the tail underneath because a crash has no FAIL line
+to grep and that is precisely when the last lines are the whole story. Verified
+by breaking a check ~200 lines from the end: it now names itself in the first
+screenful, where before it appeared nowhere in the log.
+
+**The flake itself is unidentified, and is left that way rather than guessed at.**
+The same commit passed on a second run, and twelve minutes of local runs — three
+of them under 3× CPU oversubscription — stayed green. There is a plausible
+suspect (`the preview redraws at the clip frame rate` measures over 2 s and calls
+`getImageData` on every rAF tick, so under contention the measurement competes
+with the thing it measures) but no evidence against it, so nothing was changed
+there. A recurrence will now name itself.
+
+**The same commit was also being gated twice.** `push: ['**']` alongside
+`pull_request` ran all ten jobs on every push to a branch with a PR open: double
+the CI minutes for no extra coverage, double the exposure to any flake, and the
+reason one SHA in this PR's history carries both a red and a green `ci-gate`.
+`push` is now scoped to the default branch, `pull_request` covers the rest, and
+the concurrency group keys on the head ref so the two events can no longer both
+survive to completion.
+
+---
+
 ## How to re-run any of this
 
 ```bash

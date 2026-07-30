@@ -54,9 +54,20 @@ const EXEC = ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome']
   .find(p => existsSync(p));
 
 let pass = 0, fail = 0;
+/* Failures are collected as well as printed, and listed again at the end.
+ *
+ * This suite was the only one of the ten that printed a count and nothing else.
+ * That is fine locally, where the FAIL line is on screen; it is useless in CI,
+ * where scripts/ci-gate.sh captures a suite's output and only echoes its tail —
+ * so a check that failed early left "175 passed, 1 failed" and no name. It duly
+ * happened, on a run whose sibling passed on the same commit, and the flake was
+ * undiagnosable from the log. A gate that cannot say what broke is a gate people
+ * stop reading. */
+const failures = [];
 const check = (name, ok, extra = '') => {
-  if (!ok) fail++; else pass++;
-  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? ' — ' + extra : ''}`);
+  const line = `${name}${extra ? ' — ' + extra : ''}`;
+  if (!ok) { fail++; failures.push(line); } else pass++;
+  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${line}`);
 };
 
 console.log('Dead Signal Studio smoke');
@@ -1800,4 +1811,8 @@ await browser.close();
 server.close();
 
 console.log(`\nDead Signal Studio smoke: ${pass} passed, ${fail} failed`);
+if (failures.length) {
+  console.log('\nNeeds attention:');
+  for (const f of failures) console.log('  - ' + f);
+}
 process.exit(fail === 0 ? 0 : 1);

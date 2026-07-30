@@ -1,15 +1,32 @@
 name: gate
 
+# EVERY COMMIT IS GATED ONCE, not twice.
+#
+# `push: ['**']` alongside `pull_request` ran the whole gate TWICE on every push
+# to a branch with a PR open — ten duplicate jobs, four of them Chromium suites.
+# That is double the CI minutes for no extra coverage, and it doubles the chance
+# a flake shows up somewhere: one commit in this repo has both a red and a green
+# `ci-gate` against the identical SHA for exactly that reason, which is a
+# confusing thing to leave in a PR's history.
+#
+# Pushes to the default branch are gated by `push`; everything else is gated as a
+# `pull_request`, which fires on open and on every later push to the head. The
+# only uncovered case is a branch with no PR yet, and the gate runs the moment
+# one is opened.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 # A second push to the same branch cancels the first: the gate takes minutes,
 # and a superseded run proves nothing about the commit that replaced it.
+#
+# Keyed on the head ref rather than github.ref, so a push and its pull_request
+# run share one group — otherwise the two events produce different refs, which is
+# how both survived to completion above.
 concurrency:
-  group: gate-${{ github.ref }}
+  group: gate-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
