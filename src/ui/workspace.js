@@ -26,7 +26,12 @@ import { studioSources } from './palette.js';
 const STORAGE_KEY = 'deadsignal.workspace';
 let enabled = false;
 let browserEl = null;
-let sources = [];
+/* The Browser pane's catalogue, and the deps to rebuild it from.
+   It was built once in initWorkspace() and never again — the same staleness the
+   command palette had, in the other place studioSources() is consumed. A preset
+   saved this session was missing from both. Rebuilt on every render, which only
+   happens on a keystroke in the search box or a pane switch. */
+let sources = [], sourceDeps = null;
 
 function score(needle, hay) {
   if (!needle) return 1;
@@ -40,6 +45,7 @@ const KINDS = ['Scene', 'Template', 'Preset', 'Action'];
 function renderBrowser(query = '') {
   const list = $('ws-list');
   if (!list) return;
+  if (sourceDeps) sources = studioSources(sourceDeps);
   list.replaceChildren();
   let shown = 0;
   for (const kind of KINDS) {
@@ -139,6 +145,7 @@ export function setWorkspace(on, { persist = true } = {}) {
 }
 
 export function initWorkspace(deps) {
+  sourceDeps = deps;
   sources = studioSources(deps);
 
   const btn = $('workspace-toggle');

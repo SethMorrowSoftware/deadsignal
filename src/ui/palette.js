@@ -9,12 +9,20 @@
  * lives in.
  */
 import { $, log, setVal } from '../core/dom.js';
+import { userPresets } from '../core/recipes.js';
 import { revealSectionFor } from './sections.js';
 import { PARAMS } from './params.js';
 import { LEVEL_NAMES, applyLevel, getLevel } from './complexity.js';
 import { activateTab } from './shell.js';
 
 let el = null, input = null, list = null, items = [], sel = 0, lastFocus = null;
+/* Kept so the catalogue can be rebuilt. It was built once in initPalette() and
+   never again, which made ⌘K a snapshot of the studio as it looked at boot: a
+   preset saved this session, a variable just defined, a layer just added — none
+   of it findable, and no indication that the list was stale rather than the
+   feature broken. Rebuilding on open costs one walk of a few hundred records,
+   which is nothing next to the keystroke that asked for it. */
+let deps = null;
 
 /* Subsequence match with a score, so "vscan" finds "Video · Scanlines" and
    an exact prefix still wins. */
@@ -52,16 +60,29 @@ export function studioSources(deps) {
       setVal('i-tpl', t.id);
     } });
   }
+  const pick = (tab, value) => {
+    activateTab(tab);
+    const s = $({ video: 'v-preset', audio: 'a-preset', image: 'i-preset' }[tab]);
+    if (s) setVal(s.id, value);
+  };
   for (const [tab, groups] of Object.entries(PRESETS || {})) {
     for (const [group, entries] of Object.entries(groups || {})) {
       for (const name of Object.keys(entries || {})) {
-        out.push({ kind: 'Preset', label: name, hint: `${tab} · ${group}`, run: () => {
-          activateTab(tab);
-          const sel = $({ video: 'v-preset', audio: 'a-preset', image: 'i-preset' }[tab]);
-          if (!sel) return;
-          setVal(sel.id, name);
-        } });
+        out.push({ kind: 'Preset', label: name, hint: `${tab} · ${group}`,
+          run: () => pick(tab, name) });
       }
+    }
+  }
+  /* THE AUTHOR'S OWN PRESETS TOO.
+     Only the shipped PRESETS were listed, so a look you saved yourself — the one
+     you are most likely to be searching for by name — was the one thing ⌘K could
+     not find. The picker addresses them as `user:<name>`, which is why the value
+     and the label differ here. Read at call time from localStorage rather than
+     from a snapshot; see the note on rebuilding in openPalette. */
+  for (const tab of ['video', 'audio', 'image']) {
+    for (const name of Object.keys(userPresets(tab))) {
+      out.push({ kind: 'Preset', label: name, hint: `${tab} · my presets`,
+        run: () => pick(tab, `user:${name}`) });
     }
   }
   for (const p of Object.values(PARAMS)) {
@@ -135,6 +156,7 @@ function choose(it) { closePalette(); try { it.run(); } catch (e) { console.erro
 
 export function openPalette() {
   if (!el) return;
+  if (deps) items = studioSources(deps);      // fresh every time it is opened
   lastFocus = document.activeElement;
   el.hidden = false;
   input.value = '';   /* dom-only: the palette's own search box */
@@ -151,7 +173,8 @@ export function closePalette() {
 
 export function isPaletteOpen() { return el && !el.hidden; }
 
-export function initPalette(deps) {
+export function initPalette(d) {
+  deps = d;
   items = studioSources(deps);
 
   el = document.createElement('div');

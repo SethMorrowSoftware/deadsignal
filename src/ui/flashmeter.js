@@ -106,28 +106,48 @@ export function currentRate(now) { return rate(now ?? performance.now()); }
 export function isRisky(now) { return currentRate(now) > THRESHOLD_HZ; }
 export { THRESHOLD_HZ };
 
+/* Clearing needs a lower bar than warning, or a clip sitting on the limit
+   crosses it back and forth and announces every time it does. */
+const CLEAR_HZ = THRESHOLD_HZ - 0.5;
+
 /**
  * Update the readout. Kept separate from measurement so the sampler can run in
  * the render loop while the DOM is touched at most a few times a second.
+ *
+ * THE READOUT IS NOT A LIVE REGION, and must not become one.
+ *
+ * `#v-flash` carried `aria-live="polite"` in the markup while this function
+ * rewrote its text four times a second, for as long as the preview ran — so a
+ * screen reader recited "flash 0.0/s, flash 1.2/s, flash 0.4/s…" continuously,
+ * over everything else on the page, on a tab whose preview is always running.
+ * The code above meant well ("announce only on the transition") but toggling
+ * between polite and ASSERTIVE could only make it worse: while the rate was
+ * over the limit, every one of those four rewrites a second became an
+ * interrupting alert.
+ *
+ * A number that changes continuously is a readout, not an announcement. It stays
+ * in the heading where it can be read on demand, styled `.risky` so it is
+ * visible, with the explanation in its title. What genuinely is an event — the
+ * clip crossing the WCAG limit — is announced ONCE, through `onCross`, which the
+ * caller wires to the log and a toast (the toast region is already polite and
+ * already the place one-off messages go).
  */
-export function paintFlash(el, now) {
+export function paintFlash(el, now, onCross) {
   if (!el || now - lastPaint < 250) return;
   lastPaint = now;
   // Measured at the caller's `now`, not the wall clock. Two clocks in one
   // function is how this ended up throttling against one timeline while
   // reporting a rate from another.
   const hz = currentRate(now);
-  const risky = hz > THRESHOLD_HZ;
+  const wasRisky = el.dataset.risky === 'true';
+  const risky = wasRisky ? hz > CLEAR_HZ : hz > THRESHOLD_HZ;
   el.textContent = hz > 0 ? `flash ${hz.toFixed(1)}/s` : 'flash 0/s';
   el.classList.toggle('risky', risky);
   el.title = risky
     ? `Above the WCAG 2.3.1 limit of ${THRESHOLD_HZ} flashes per second. This clip may trigger seizures.`
     : `Full-screen luminance changes per second. The WCAG limit is ${THRESHOLD_HZ}.`;
-  // Announce only on the transition, not every 250ms.
-  const wasRisky = el.dataset.risky === 'true';
   if (risky !== wasRisky) {
     el.dataset.risky = String(risky);
-    el.setAttribute('aria-live', risky ? 'assertive' : 'polite');
-    if (risky) el.setAttribute('role', 'alert'); else el.removeAttribute('role');
+    if (typeof onCross === 'function') onCross(risky, hz);
   }
 }

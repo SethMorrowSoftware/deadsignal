@@ -85,7 +85,13 @@ export function startVideoPreview(){ stopVideoPreview(); if(!videoVisible())retu
       // catches a blink code, a fade and a scene cut landing together — which no
       // amount of reading the recipe would reveal.
       const nowMs=performance.now();
-      sampleFlash(c, nowMs); paintFlash($("v-flash"), nowMs);
+      /* The readout repaints quietly; crossing the WCAG limit is announced once,
+         through the log and one toast. See paintFlash. */
+      sampleFlash(c, nowMs); paintFlash($("v-flash"), nowMs, (risky,hz)=>{
+        if(risky){ log("Flash rate "+hz.toFixed(1)+"/s — above the WCAG 2.3.1 limit of 3/s. This clip may trigger seizures.","warn");
+          toast("Flash rate above the WCAG limit","warn"); }
+        else log("Flash rate back under the WCAG limit ("+hz.toFixed(1)+"/s).","info");
+      });
       /* Yield in proportion to what the frame cost.
        *
        * A frame is synchronous main-thread work, and a filter chain at a large

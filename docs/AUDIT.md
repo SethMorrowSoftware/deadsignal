@@ -303,12 +303,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 - Quota counts assets only; project documents and their 50-deep autosave history
   are unbounded and unmetered.
 
-**Client and UI**
-- The command palette's catalogue is frozen at boot, so saved presets are never
-  findable.
-- `#v-flash` is a permanently-live region that rewrites four times a second.
-- The editor layout overflows horizontally below ~500 px (WCAG 1.4.10).
-
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
   should make. Nothing else here is blocked on it, but a beta without one is a
