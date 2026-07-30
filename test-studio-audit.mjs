@@ -7256,6 +7256,44 @@ section('feature seams');
     isolated.liveMarks === 1 && isolated.liveFilters >= 1
     && isolated.recipeMarks === 0 && isolated.recipeFilters === 0,
     JSON.stringify(isolated));
+
+  /* THE SEQUENCE CAP IS A REFUSAL, NOT A SILENT DROP.
+     normalizeClips slices to MAX_CLIPS, but commitClips wrote the DOCUMENT from
+     the unsliced array — so a 65th clip left the store holding 65 while the
+     sequence played 64, a disagreement that survives a save and a reload. And
+     all five add paths then toasted "Clip added (64)": a number that reads as
+     success and is really the count of clips that survived the one just thrown
+     away. Nothing said so. */
+  const cap = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { MAX_CLIPS } = await import('./src/doc/timeline.js');
+    S.clearTimeline();
+    // Fill to exactly the cap through the document, then try to add past it.
+    const one = { kind: 'video', rec: {}, label: 'x', scene: 'terminal',
+                  src: 1, in: 0, out: 1, transition: 'cut', xdur: 0 };
+    S.setTimelineClips(new Array(MAX_CLIPS).fill(0).map(() => ({ ...one })));
+    // Push that state THROUGH commitClips so the document holds it too — the
+    // question below is whether an add past the cap can make the two disagree,
+    // and that is only observable if they agree to begin with.
+    S.editClip(0, { label: 'seed' }, 'seed');
+    const atCap = S.timeline.length;
+    const docAtCap = (S.store.get('timeline.clips') || []).length;
+    S.addTimelineClip();          // the 65th: must be refused, not dropped
+    const runtime = S.timeline.length;
+    /* Read the document with NOTHING in between. commitClips is what writes it,
+       and any further edit would rewrite it from the already-normalised runtime
+       — erasing the very divergence this is looking for. (It did: the first
+       version of this check nudged a clip first and passed with the fix removed.) */
+    const doc = (S.store.get('timeline.clips') || []).length;
+    S.clearTimeline();
+    return { MAX_CLIPS, atCap, docAtCap, runtime, doc };
+  });
+  check('a sequence can be filled to its cap',
+    cap.atCap === cap.MAX_CLIPS && cap.docAtCap === cap.MAX_CLIPS, JSON.stringify(cap));
+  check('a sequence at its cap refuses another clip rather than dropping it',
+    cap.runtime === cap.MAX_CLIPS && cap.doc === cap.MAX_CLIPS, JSON.stringify(cap));
+  check('…so the document can never hold more clips than the sequence plays',
+    cap.doc <= cap.MAX_CLIPS, `doc ${cap.doc} vs cap ${cap.MAX_CLIPS}`);
 }
 
 console.log('-'.repeat(64));

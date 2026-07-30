@@ -2,7 +2,7 @@
 import { $, clamp, escHtml, log, num, toast, val } from '../core/dom.js';
 import { readRecipe } from '../core/recipes.js';
 import { MAX_DIM, MIN_H, MIN_W } from '../core/formats.js';
-import { MAX_CLIP, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf, spineSpans } from '../doc/timeline.js';
+import { MAX_CLIP, MAX_CLIPS, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf, spineSpans } from '../doc/timeline.js';
 import { audioEnd, makeAudioClip, normalizeAudioClips } from '../doc/audioclip.js';
 import { hasSound, mixParts, mixSignature } from '../doc/audiomix.js';
 import { isIdentity, invertPoint, matrixFor } from '../doc/transform.js';
@@ -90,7 +90,14 @@ const plainClip=(c)=>({ kind:c.kind, rec:c.rec, label:c.label, scene:c.scene,
  * of the drag. The caller restarts it once when the pointer comes up.
  */
 export function commitClips(next,label,opts={}){
-  const clips=next.map(plainClip);
+  /* Capped HERE, at the one place every edit funnels through. setTimelineClips
+     runs the list through normalizeClips, which slices to MAX_CLIPS — but the
+     DOCUMENT was written from the unsliced array, so a 65th clip left the store
+     holding 65 while the sequence played 64. A document that disagrees with what
+     is on screen survives a save and a reload, and the extra clip reappears as
+     soon as something else re-normalises. addTimelineClip and friends refuse
+     before they get here (see roomForClip); this is the belt to that braces. */
+  const clips=next.slice(0,MAX_CLIPS).map(plainClip);
   const st=getStore();
   if(st) st.apply(setCmd('timeline.clips',clips,{ label, coalesceKey:opts.coalesceKey }));
   setTimelineClips(clips);
@@ -190,7 +197,22 @@ export function captureClipRecipe(kind){
   return rec;
 }
 
-export function addTimelineClip(){ const rec=captureClipRecipe("video");
+/**
+ * Is there room for another clip?
+ *
+ * Five add paths built a clip, committed it and toasted "Clip added (64)" — a
+ * number that looks like success and is in fact the count of clips that
+ * SURVIVED, because normalizeClips had just dropped the new one. Nothing said
+ * so. A refusal has to be visible or it is a bug report about a button that
+ * does nothing.
+ */
+function roomForClip(){
+  if(timeline.length < MAX_CLIPS) return true;
+  toast("A sequence holds at most "+MAX_CLIPS+" clips","warn");
+  log("Not added: this sequence already has the maximum of "+MAX_CLIPS+" clips.","warn");
+  return false;
+}
+export function addTimelineClip(){ if(!roomForClip())return; const rec=captureClipRecipe("video");
   const cfg=readVideoCfg(rec);
   const sceneName=(SCENES[cfg.scene]||{}).name||cfg.scene; const first=(cfg.text||"").split("\n")[0].trim().slice(0,22);
   const label=sceneName+(first?" · "+first:"");
@@ -214,7 +236,7 @@ export function addTimelineClip(){ const rec=captureClipRecipe("video");
  * the same shape as any other clip; it just draws a screen recipe instead of a
  * scene, and its trim is simply how long it is held.
  */
-export function addStillClip(seconds){
+export function addStillClip(seconds){ if(!roomForClip())return;
   // Marks are captured with the clip, like the video side's keyframes: a still
   // must draw what it was made with, not whatever the SCREEN tab shows by the
   // time the sequence is rendered. See captureClipRecipe.
@@ -246,7 +268,7 @@ export function addStillClip(seconds){
  * no tab to capture from — see doc/clipedit.js. These are the defaults, and the
  * inspector is where they are changed.
  */
-export function addTitleClip(at){
+export function addTitleClip(at){ if(!roomForClip())return;
   const start=clamp(Math.round((at??tlScrubT)*100)/100,0,MAX_START);
   const hold=3;
   const rec={
@@ -271,7 +293,7 @@ export function addTitleClip(at){
  * a shape on the shot. Normal blend rather than screen, because screen would
  * key the dark half out of every stroke.
  */
-export function addGraphicClip(at){
+export function addGraphicClip(at){ if(!roomForClip())return;
   const start=clamp(Math.round((at??tlScrubT)*100)/100,0,MAX_START);
   const hold=3;
   const rec={
@@ -299,7 +321,7 @@ export function addGraphicClip(at){
  * blend would simply replace the picture, which is a cut with extra steps. See
  * doc/timeline.js.
  */
-export function addOverlayClip(at){
+export function addOverlayClip(at){ if(!roomForClip())return;
   const rec=captureClipRecipe("video");
   const cfg=readVideoCfg(rec);
   const sceneName=(SCENES[cfg.scene]||{}).name||cfg.scene;

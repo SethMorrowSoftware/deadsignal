@@ -26,7 +26,7 @@ their output implied:
 
 There was also no CI, so nothing ran any of them on a push.
 
-**Total now: 2224 checks across ten gated suites, plus 93 against a live backend.**
+**Total now: 2227 checks across ten gated suites, plus 93 against a live backend.**
 
 ---
 
@@ -186,6 +186,34 @@ page load 404s — on a subdirectory install, against somebody else's site.
 
 ---
 
+## Medium, fixed
+
+- **A throwing `drawFrame` leaked the `VideoEncoder`.** `drawFrame` is arbitrary
+  caller code — a scene, a filter chain, an author's keyframe curve — and
+  `encoder.close()` sat *after* the loop, so a throw propagated out with the
+  hardware handle still open and configured. Chromium caps how many encoders a
+  page may hold, so a few failed exports in a row stopped being able to export
+  at all — reported as *"WebCodecs is unavailable"*, which is a different problem
+  with a different fix. Now a `try/finally`, with `flush()` still inside so a
+  successful run is ordered exactly as before.
+
+- **A 65th clip diverged the document from the sequence.** `normalizeClips`
+  slices to `MAX_CLIPS`, but `commitClips` wrote the document from the *unsliced*
+  array — so the store held 65 while the sequence played 64, a disagreement that
+  survives a save and a reload. All five add paths then toasted
+  *"Clip added (64)"*: a number that reads as success and is really the count of
+  clips that survived the one just thrown away. The cap is now enforced at
+  `commitClips` (the choke point every edit funnels through) and refused out loud
+  before a clip is built.
+
+  *Worth recording how nearly this test was useless:* the first version nudged a
+  clip after the add to observe the document, and that nudge rewrote it from the
+  already-normalised runtime — erasing the divergence and passing with the fix
+  removed. It now reads the document with nothing in between, and is verified in
+  both directions.
+
+---
+
 ## Investigated and found NOT to be defects
 
 Recorded because "we looked and it was fine" is a result.
@@ -214,8 +242,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 **Export**
 - MP4 muxing throws `RangeError` past roughly 14 minutes and falls back to WebM
   after a full encode.
-- `encodeClip` has no `try/finally` around the encode loop, so a throwing
-  `drawFrame` leaks the `VideoEncoder`.
 - `runBatch` takes no export lock and stops no preview, so it can run
   concurrently with a clip export over the same scratch canvases.
 - STOP does nothing during the APNG/WebP encode phase, which also shows no
@@ -237,8 +263,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 - A trim/reorder drag that pauses for over 600 ms splits into several undo
   entries.
 - Undecodable footage retries the decode on every preview frame.
-- Adding a 65th clip writes it to the document, drops it from the sequence, and
-  reports success.
 - A dip/burn duration is not bounded by the clip it belongs to.
 
 **Backend**
