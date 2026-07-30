@@ -162,10 +162,32 @@ function edit(i, key, value, { redraw = true } = {}) {
   _onChange?.();
 }
 
+/* A NEW LAYER GETS ITS OWN VARIANT.
+ *
+ * Variant 0 means "draw with the base clip's randomness", which for two copies
+ * of the same scene means drawing the same picture twice — the second Digital
+ * Rain lands exactly on the first and only brightens it. Measured: 45 of the 48
+ * scenes stack on themselves as an identical picture at variant 0. That is the
+ * defect withSeedOffset() exists to solve, and every layer this button made
+ * arrived at 0, so it only ever got solved by an author who found the `variant`
+ * box and typed a number into it.
+ *
+ * The lowest unused variant, so the number stays small and legible, a stack
+ * built by clicking ADD is varied by default, and 0 is still available by
+ * typing it when sharing the base's randomness is what you want. Existing
+ * projects are untouched: this changes what a NEW layer starts at, not what a
+ * saved 0 means.
+ */
+function nextLayerVariant(layers) {
+  const taken = new Set(layers.map((l) => l.seed));
+  for (let n = 1; n <= MAX_LAYER_SEED; n++) if (!taken.has(n)) return n;
+  return 1;
+}
+
 export function addLayer() {
   const layers = videoLayers();
   if (layers.length >= MAX_LAYERS) { toast(`${MAX_LAYERS} layers is the limit`, 'err'); return; }
-  if (!writeLayers([...layers, makeLayer({})])) {
+  if (!writeLayers([...layers, makeLayer({ seed: nextLayerVariant(layers) })])) {
     toast('Layers need a project session', 'err');
     return;
   }

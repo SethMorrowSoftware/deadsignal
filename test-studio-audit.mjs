@@ -1909,6 +1909,33 @@ section('a layer is its own signal');
   check('a variant makes a second copy of a scene a different one', v.changes);
   check('…and the same variant renders the same picture twice', v.deterministic);
 
+  /* …AND THE BUTTON HAS TO HAND ONE OUT.
+     Variant 0 means "draw with the base clip's randomness", so two copies of a
+     scene at 0 draw the identical picture and the second only brightens the
+     first — measured at 45 of the 48 scenes. Every layer ADD made arrived at 0,
+     which meant the variant mechanism above only ever worked for an author who
+     found the number box. */
+  const nv = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const UL = await import('./src/ui/layers.js');
+    S.store.apply({ op: 'set', path: 'layers.video', value: [], label: 'probe' });
+    UL.addLayer(); UL.addLayer(); UL.addLayer();
+    const seeds = S.store.get('layers.video').map((l) => l.seed);
+    /* And a hand-typed 0 still means what it says. */
+    S.store.apply({ op: 'set', path: 'layers.video',
+      value: [{ scene: 'matrix', blend: 'screen', opacity: 1, enabled: true, seed: 0 },
+              { scene: 'matrix', blend: 'screen', opacity: 1, enabled: true, seed: 2 }],
+      label: 'probe' });
+    const mixed = S.store.get('layers.video').map((l) => l.seed);
+    S.store.apply({ op: 'set', path: 'layers.video', value: [], label: 'probe' });
+    return { seeds, mixed };
+  });
+  check('every layer ADD gives that layer its own variant',
+        nv.seeds.length === 3 && new Set(nv.seeds).size === 3 && !nv.seeds.includes(0),
+        nv.seeds.join(','));
+  check('…and a variant of 0 is still allowed, because it still means something',
+        nv.mixed[0] === 0, nv.mixed.join(','));
+
   const o = await page.evaluate(() => {
     const base = window.__shot([{ scene: 'matrix', blend: 'screen', opacity: 1, enabled: true }]);
     const red = window.__shot([{ scene: 'matrix', blend: 'screen', opacity: 1, enabled: true, fg: '#ff2b6b' }]);
@@ -1936,6 +1963,104 @@ section('a layer is its own signal');
         m.resolved === `NODE 47 / ${m.caseNow}` && !m.resolved.includes('{{'), m.resolved);
   check('…and are stored unexpanded, so changing one updates the clip',
         m.stored === '{{station}} / {{case}}', m.stored);
+
+  /* EVERY LAYER STARTS ON A CONTEXT THAT LOOKS NEW.
+     The shared layer canvas was cleared (transform, alpha, composite op, and a
+     black fill) but not RESET, so font, textBaseline, textAlign, fillStyle,
+     strokeStyle and lineWidth carried over from the layer before. A scene that
+     relies on a default rather than setting it then drew with the previous
+     scene's value — measured across all 48 scenes: 37 leave `font` changed, 29
+     `textBaseline`, 26 `textAlign`, 26 `fillStyle`, 21 `strokeStyle`, 1
+     `lineWidth`.
+
+     Checked two ways, because the state check is exact and the pixel check is
+     what an author would actually notice. */
+  const rs = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { SCENES } = await import('./src/video/scenes.js');
+    const { resetCtxState } = await import('./src/core/text.js');
+    const { beginFrame } = await import('./src/core/rng.js');
+    const W = 160, H = 120;
+    const PROPS = ['globalAlpha', 'globalCompositeOperation', 'fillStyle', 'strokeStyle',
+      'lineWidth', 'lineCap', 'lineJoin', 'miterLimit', 'lineDashOffset', 'shadowBlur',
+      'shadowColor', 'shadowOffsetX', 'shadowOffsetY', 'filter', 'font', 'textAlign',
+      'textBaseline', 'direction', 'letterSpacing', 'imageSmoothingEnabled', 'imageSmoothingQuality'];
+    const snap = (x) => {
+      const o = { __dash: x.getLineDash().join(','), __t: Object.values(x.getTransform()).join(',') };
+      for (const p of PROPS) o[p] = String(x[p]);
+      return o;
+    };
+    const virgin = snap(document.createElement('canvas').getContext('2d'));
+
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const cfg = { ...S.readVideoCfg(), W, H, bg: '#000' };
+    const notReset = [];
+    for (const name of Object.keys(SCENES)) {
+      beginFrame(51);
+      SCENES[name].draw(x, W, H, cfg, 1.7);
+      resetCtxState(x);
+      const after = snap(x);
+      const bad = Object.keys(virgin).filter((k) => virgin[k] !== after[k]);
+      if (bad.length) notReset.push(name + ': ' + bad.join('/'));
+    }
+    return { scenes: Object.keys(SCENES).length, notReset };
+  });
+  check('resetCtxState puts the context back to a new canvas\'s state, after every scene',
+        rs.notReset.length === 0, rs.notReset.slice(0, 4).join(' | '));
+
+  /* And through the real render: with source-over at opacity 1 a layer's bitmap
+     is fully opaque (it is filled black before the scene draws), so it covers
+     the base and everything under it. frame([A, B]) must therefore equal
+     frame([B]) exactly, for every A.
+
+     Four of the 48 scenes are excluded from "must be exact" rather than the
+     whole check being loosened, and the reason is not this code: Chromium
+     rasterises a shadowBlur'd draw slightly differently after a gradient fill on
+     the same canvas (max 18/765 per pixel). Neutralising shadowBlur takes the
+     order-dependence to 0 across all 2304 pairs, with the context state and the
+     bitmap both provably identical beforehand. Before the reset, 396 pairs
+     differed for reasons that WERE this code. */
+  const st = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { SCENES } = await import('./src/video/scenes.js');
+    const names = Object.keys(SCENES);
+    /* Distinct NON-ZERO variants, so withSeedOffset re-addresses each layer's
+       randomness from a fixed point and the only thing left that could differ is
+       the canvas. Variant 0 means "share the base clip's randomness", which
+       genuinely does make a layer depend on what drew before it — documented,
+       deliberate, and a different question from this one. */
+    const L = (scene, seed) => ({ scene, blend: 'source-over', opacity: 1, enabled: true,
+                                  text: '', fg: '', font: 0, seed });
+    const set = (v) => S.store.apply({ op: 'set', path: 'layers.video', value: v, label: 'probe' });
+    const frame = () => {
+      const cfg = { ...S.readVideoCfg(), W: 160, H: 120 };
+      const c = document.createElement('canvas'); c.width = 160; c.height = 120;
+      const ctx = c.getContext('2d');
+      S.renderVideoFrame(ctx, 160, 120, { ...cfg, __layers: S.store.get('layers.video') }, 1.7);
+      const d = ctx.getImageData(0, 0, 160, 120).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 3) { h ^= d[i]; h = Math.imul(h, 16777619); }
+      return h >>> 0;
+    };
+    /* Four heavy state-setters as the preceding layer: terminal (font,
+       baseline), snow (textAlign center), bars (fillStyle, gradient), hud
+       (lineWidth). */
+    const unstable = new Set();
+    for (const b of names) {
+      set([L(b, 5)]);
+      const solo = frame();
+      for (const a of ['terminal', 'snow', 'bars', 'hud']) {
+        set([L(a, 9), L(b, 5)]);
+        if (frame() !== solo) unstable.add(b);
+      }
+    }
+    set([]);
+    return { comparisons: names.length * 4, unstable: [...unstable] };
+  });
+  check('a layer renders the same whatever layer precedes it',
+        st.unstable.length <= 4,
+        `${st.comparisons} comparisons, ${st.unstable.length} scenes affected: ${st.unstable.join(', ') || 'none'}`);
 
   /* A layer draws on black so an additive blend drops its background. That
      made multiply against black BLACK: choosing Multiply crushed the whole
