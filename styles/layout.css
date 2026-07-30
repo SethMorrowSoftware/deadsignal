@@ -10,7 +10,7 @@ header.top{padding:12px 18px 8px; border-bottom:1px solid var(--edge2); display:
   .tab{background:var(--panel); color:var(--muted); border:1px solid var(--edge2); border-bottom:none;
     padding:7px 15px; cursor:pointer; letter-spacing:2px; font-size:13px; user-select:none}
   .tab:hover{color:var(--text)}
-  .tab.active{color:#031; background:var(--phos); border-color:var(--phos); font-weight:bold}
+  .tab.active{color:var(--on-accent); background:var(--phos); border-color:var(--phos); font-weight:bold}
   main{padding:14px; max-width:1240px; margin:0 auto}
   .view{display:none}
   .view.active{display:block}
@@ -33,9 +33,6 @@ header.top{padding:12px 18px 8px; border-bottom:1px solid var(--edge2); display:
   .row.col{flex-direction:column; align-items:stretch}
   .row label{color:var(--muted); min-width:98px; font-size:13px; letter-spacing:.4px}
   .row .grow{flex:1; min-width:110px}
-  .tabhelp{color:var(--text); font-size:13px; margin:0 0 12px; padding:8px 11px; border:1px solid var(--edge2);
-    border-left:3px solid var(--cyan); border-radius:2px; background:rgba(95,217,255,.05); line-height:1.5}
-  .tabhelp b{color:var(--cyan)}
   code{color:var(--amber); background:rgba(255,179,71,.08); padding:0 3px; border-radius:2px; font-size:.95em}
   .panel h2 .hdr-actions{display:flex; gap:6px}
   .panel h2 .hdr-actions .btn{padding:3px 9px; font-size:12px; letter-spacing:1px}
@@ -64,3 +61,16 @@ header.top{padding:12px 18px 8px; border-bottom:1px solid var(--edge2); display:
    side but must not force a horizontal scroll. */
 .grid2{ display:grid; grid-template-columns:repeat(auto-fit,minmax(20rem,1fr)); gap:1.2rem }
 .grid2 h3{ margin:0 0 .3rem; font-size:.95em; color:var(--phos) }
+
+/* Rules that used to be inline styles in the markup, homed here so the
+   stylesheets stay the one place layout comes from. */
+header .ctl input[type=number]{ width:80px }
+#crt-intensity{ width:70px }
+.banners{ width:100% }
+#tl-stilldur{ width:4.5em }
+.grid .span{ grid-column:1/-1 }
+main > .panel{ margin-top:16px }
+/* The pre-boot fallback keeps the settings column from running the page long:
+   under the editor these panels fill their grid track instead (editor.css
+   declares max-height:none, which an inline style used to defeat). */
+body:not(.nle) .grid > .panel:not(.stagewrap){ max-height:82vh; overflow:auto }

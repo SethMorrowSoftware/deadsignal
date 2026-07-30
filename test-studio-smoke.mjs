@@ -1122,79 +1122,55 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   await page.evaluate(() => window.DeadSignalStudio.resetFlashMeter());
 }
 
-/* -------------------------------------------------------------- workspace -- */
+/* ---------------------------------------------------------- editor-only -- */
+/* The classic tabbed layout and the three-pane workspace are gone, with their
+   toggles. The editor is the studio now, so what there is to prove is the
+   removal itself: no leftover chrome, no escape hatch, and no way for a stale
+   saved preference to resurrect a layout that no longer ships. */
 {
-  const shape = () => page.evaluate(() => {
-    const stage = document.querySelector('.view.active .panel.stagewrap');
-    const insp  = document.querySelector('.view.active .grid > .panel:not(.stagewrap)');
-    const brow  = document.getElementById('ws-browser');
-    const r = (el) => el ? el.getBoundingClientRect() : null;
-    return { on: document.body.classList.contains('workspace'),
-             browser: !!brow, bx: r(brow)?.left, sx: r(stage)?.left, ix: r(insp)?.left,
-             pressed: document.getElementById('workspace-toggle').getAttribute('aria-pressed') };
-  });
-
   await page.click('.tab[data-view="video"]');
-  const tabs = await shape();
-  check('the tabbed layout is the default', !tabs.on && !tabs.browser, JSON.stringify(tabs));
-
-  await page.click('#workspace-toggle');
-  const ws = await shape();
-  check('the toggle switches to workspace', ws.on && ws.browser);
-  check('panes are laid out left-to-right: browser, viewer, inspector',
-        ws.bx < ws.sx && ws.sx < ws.ix, `${ws.bx} < ${ws.sx} < ${ws.ix}`);
-  check('the toggle reports its state', ws.pressed === 'true');
-
-  // The Browser must actually drive the studio, not just list things.
-  const drove = await page.evaluate(async () => {
-    const el = document.getElementById('ws-search');
-    el.value = 'Digital Rain';
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 60));
-    const btn = [...document.querySelectorAll('.ws-item')].find((b) => /Digital Rain/i.test(b.textContent));
-    if (!btn) return { found: false };
-    btn.click();
-    await new Promise((r) => setTimeout(r, 120));
-    return { found: true, scene: window.DeadSignalStudio.store.get('tabs.video.v-scene') };
-  });
-  check('the Browser filters and applies a scene', drove.found && drove.scene === 'matrix',
-        JSON.stringify(drove));
-
-  // Everything built in the tabbed layout must keep working here.
-  await setControl('v-text', 'WORKSPACE MODE');
-  const stillWorks = await page.evaluate(() => ({
-    doc: window.DeadSignalStudio.store.get('tabs.video.v-text'),
-    canvasPainted: (() => {
-      const c = document.getElementById('vcanvas');
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let any = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) { any = 1; break; }
-      return !!any;
-    })(),
+  const shape = await page.evaluate(() => ({
+    nle: document.body.classList.contains('nle'),
+    workspace: document.body.classList.contains('workspace'),
+    browser: !!document.getElementById('ws-browser'),
+    editorToggle: !!document.getElementById('editor-toggle'),
+    workspaceToggle: !!document.getElementById('workspace-toggle'),
+    seam: 'setWorkspace' in window.DeadSignalStudio,
+    chrome: !!document.getElementById('nle-chrome'),
+    status: !!document.getElementById('nle-status'),
   }));
-  check('the document binding still works in workspace', stillWorks.doc === 'WORKSPACE MODE');
-  check('the preview still renders in workspace', stillWorks.canvasPainted);
+  check('the editor is the only layout', shape.nle && !shape.workspace && !shape.browser,
+        JSON.stringify(shape));
+  check('the layout toggles are gone', !shape.editorToggle && !shape.workspaceToggle && !shape.seam,
+        JSON.stringify(shape));
+  check('the editor chrome is on screen', shape.chrome && shape.status);
 
-  await page.keyboard.press('Control+k');
-  const palInWs = await page.evaluate(() => !document.getElementById('palette').hidden);
-  check('the palette still works in workspace', palInWs);
-  await page.keyboard.press('Escape');
-
-  // Turning it off must restore the tabbed layout exactly — the whole point of
-  // shipping this behind a toggle.
-  await page.click('#workspace-toggle');
-  const back = await shape();
-  check('turning it off removes the Browser', !back.on && !back.browser);
-  check('the tabbed layout returns', back.sx !== undefined && back.pressed === 'false');
-  const survived = await page.evaluate(() =>
-    window.DeadSignalStudio.store.get('tabs.video.v-text'));
-  check('nothing was lost switching back', survived === 'WORKSPACE MODE', survived);
-
-  // Ctrl+\ is the keyboard route.
+  // Ctrl+\ used to switch layouts; now it must do nothing at all.
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press('Control+\\');
-  check('Ctrl+\\ toggles the layout',
-        await page.evaluate(() => document.body.classList.contains('workspace')));
-  await page.keyboard.press('Control+\\');
+  check('Ctrl+\\ no longer switches layouts',
+        await page.evaluate(() => document.body.classList.contains('nle')
+          && !document.body.classList.contains('workspace')));
+
+  // A browser that remembers the old preferences must still get the editor:
+  // the stored keys point at layouts that no longer exist.
+  const fresh = await browser.newPage();
+  await fresh.addInitScript(() => {
+    try {
+      localStorage.setItem('deadsignal.studio.welcomed', 'true');
+      localStorage.setItem('deadsignal.editor.mode', '0');
+      localStorage.setItem('deadsignal.workspace', '1');
+    } catch { /* ignore */ }
+  });
+  await fresh.goto(PAGE);
+  await fresh.waitForFunction(() => window.DeadSignalStudio && document.body.classList.contains('nle'));
+  const legacy = await fresh.evaluate(() => ({
+    nle: document.body.classList.contains('nle'),
+    workspace: document.body.classList.contains('workspace'),
+  }));
+  await fresh.close();
+  check('stale layout preferences cannot bring the old layouts back',
+        legacy.nle && !legacy.workspace, JSON.stringify(legacy));
 }
 
 /* ========================================================== keyframes ====== */

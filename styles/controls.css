@@ -1,15 +1,15 @@
 /* Dead Signal Studio — controls.css
    Form controls, buttons, fieldsets, sliders, meters. */
-input[type=text],input[type=number],textarea,select{background:#050a0d; color:var(--phos); border:1px solid var(--edge2);
+input[type=text],input[type=number],textarea,select{background:var(--field-bg); color:var(--phos); border:1px solid var(--edge2); text-overflow:ellipsis;
     border-radius:2px; font-family:var(--mono); font-size:13.5px; padding:5px 7px; width:100%}
   textarea{resize:vertical; min-height:64px; line-height:1.4}
   input[type=range]{width:100%; accent-color:var(--phos)}
-  input[type=color]{background:#050a0d; border:1px solid var(--edge2); width:42px; height:26px; padding:2px; border-radius:2px}
+  input[type=color]{background:var(--field-bg); border:1px solid var(--edge2); width:42px; height:26px; padding:2px; border-radius:2px}
   input[type=checkbox]{accent-color:var(--phos); width:15px; height:15px}
-  select option{background:#050a0d}
+  select option{background:var(--field-bg)}
   .btn{background:#08131a; color:var(--phos); border:1px solid var(--phos-dim); border-radius:2px; font-family:var(--mono);
     font-size:13px; letter-spacing:1px; padding:8px 13px; cursor:pointer}
-  .btn:hover{background:var(--phos); color:#021}
+  .btn:hover:not(:disabled):not([aria-disabled="true"]){background:var(--phos); color:var(--on-accent)}
   /* Both spellings, and they must look identical. A control that is off but
      still reachable by keyboard carries aria-disabled instead of disabled (see
      core/dom.js setEnabled) — if only the first selector were styled, switching
@@ -18,17 +18,19 @@ input[type=text],input[type=number],textarea,select{background:#050a0d; color:va
   .btn[aria-disabled="true"]{opacity:.4; cursor:not-allowed}
   /* It is still focusable, so it still has to show focus. */
   .btn[aria-disabled="true"]:focus-visible{opacity:.6}
-  .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover{background:var(--hot); color:#100}
+  .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover:not(:disabled):not([aria-disabled="true"]){background:var(--hot); color:#100}
   .btn.small{padding:4px 8px; font-size:12px}
-  .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover{background:var(--amber); color:#210}
+  .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover:not(:disabled):not([aria-disabled="true"]){background:var(--amber); color:#210}
   .btns{display:flex; gap:7px; flex-wrap:wrap; margin-top:9px}
   .hint{color:var(--muted); font-size:12px; margin:3px 0 0}
   fieldset{border:1px solid var(--edge2); border-radius:3px; margin:9px 0; padding:7px 9px 9px}
   fieldset legend{color:var(--amber); font-size:12px; letter-spacing:1px; padding:0 6px; display:flex; gap:6px; align-items:center}
-  fieldset legend .rst{cursor:pointer; color:var(--muted); font-size:12.5px}
+  /* padding grows the hit area to ~24px without moving the glyph */
+  fieldset legend .rst{cursor:pointer; color:var(--muted); font-size:12.5px; padding:5px 7px; margin:-5px -7px; border-radius:3px}
+  fieldset legend .rst:hover{color:var(--phos)}
   fieldset legend .lk{cursor:pointer; color:var(--muted)}
   /* collapsible fieldsets: click the legend title to fold a section away */
-  fieldset legend .ttl{cursor:pointer; user-select:none; display:inline-flex; gap:5px; align-items:center}
+  fieldset legend .ttl{cursor:pointer; user-select:none; display:inline-flex; gap:5px; align-items:center; padding:4px 2px; margin:-4px -2px; border-radius:3px}
   fieldset legend .ttl:hover{color:var(--phos)}
   fieldset legend .ttl .caret{color:var(--muted); font-size:12px; transition:transform .12s}
   fieldset.collapsed{padding-bottom:2px}

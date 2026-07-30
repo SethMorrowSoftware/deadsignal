@@ -28,7 +28,6 @@ import { applyLevel, getLevel, initComplexity } from './ui/complexity.js';
 import { getContrast, initContrast, setContrast } from './ui/contrast.js';
 import { MACROS, applyMacro, initMacros } from './ui/macros.js';
 import { currentRate, feedLuminance, paintFlash, resetFlashMeter } from './ui/flashmeter.js';
-import { initWorkspace, isWorkspace, setWorkspace } from './ui/workspace.js';
 import { initEditor } from './ui/nle.js';
 import { activateTab, enhanceFieldsets, foldInactiveAudioLayers, initTablistKeys, randomize, resetView, setResetRefresh, snapshotDefaults, tidyAudioLayers, updateAudioLayerFlags, wireLive } from './ui/shell.js';
 import { clearAllKeyframes, initKeyframes, refreshKeyframes } from './ui/keyframes.js';
@@ -193,8 +192,7 @@ export function boot(){
   /* And makes the reachable-but-off spelling actually refuse. One listener for
      every such control, so no panel has to remember a guard of its own. */
   guardDisabled();
-  // One action list, shared by the palette and the workspace Browser so the
-  // two cannot drift apart.
+  // Every studio-wide action the command palette offers, in one list.
   const studioActions=[
     { label:'Record video',            hint:'video',    run:()=>{ activateTab('video'); recordVideo(); } },
     { label:'Render audio',            hint:'audio',    run:()=>{ activateTab('audio'); doRenderAudio(); } },
@@ -213,13 +211,11 @@ export function boot(){
     { label:'Toggle high contrast',    hint:'a11y',     run:()=>setContrast(getContrast()==='high'?'normal':'high') },
     { label:'Load the sample project', hint:'start here', run:loadSample },
     { label:'Show the welcome card',   hint:'help',     run:openWelcome },
-    { label:'Toggle workspace layout', hint:'Ctrl+\\',  run:()=>setWorkspace(!isWorkspace()) },
     { label:'Manage video presets',    hint:'presets', run:()=>openPresetManager('video') },
     { label:'Manage audio presets',    hint:'presets', run:()=>openPresetManager('audio') },
     { label:'Manage screen presets',   hint:'presets', run:()=>openPresetManager('image') },
   ];
   const palette=initPalette({ SCENES, TEMPLATES, PRESETS, actions:studioActions });
-  initWorkspace({ SCENES, TEMPLATES, PRESETS, actions:studioActions });
   /* The editor shell goes last: it re-layouts what everything above just
      wired, and docks the sequence lane, which has to exist first. */
   initEditor();
@@ -555,7 +551,6 @@ window.DeadSignalStudio = {
   // Deterministic render entry points, so an audit can prove each effect
   // actually changes pixels rather than merely existing.
   readVideoCfg, renderVideoFrame, readImageCfg, readAudioCfg, renderAudio,
-  isWorkspace, setWorkspace,
   feedLuminance, paintFlash, resetFlashMeter, currentFlashRate: currentRate,
   applyLevel, getLevel, applyMacro, MACROS,
   redo: ()=>studioSession?.store.redo(),

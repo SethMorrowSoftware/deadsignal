@@ -1059,7 +1059,7 @@ Every look control in this studio is document-wide. The VIDEO tab describes the
 that differed, and the only way to change one already in it was to delete it and
 build it again.
 
-Select a clip and the **properties column** (top right, in the editor layout)
+Select a clip and the **properties column** (top right)
 shows that clip:
 
 - its **name**, **source length**, **in/out** and a *Whole source* reset;

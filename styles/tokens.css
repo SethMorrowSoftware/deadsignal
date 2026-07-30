@@ -5,6 +5,16 @@
     --phos:#39ff9e; --phos-dim:#1f7d55; --amber:#ffb347; --cyan:#5fd9ff; --red:#ff5a5a;
     --text:#bfeee0; --muted:#96bdb4; --hot:#ff3860; --crt:0.5;
     --mono:"DejaVu Sans Mono","Consolas","Courier New",monospace;
+    /* Every skin defines the full set, so no component ever reads an unset
+       token: text on an accent-coloured fill, field wells, and the timeline
+       lane's own colours (the studio skin retints these to its neutrals). */
+    --on-accent:#021;
+    --field-bg:#050a0d;
+    --lane-bg:#05090b; --lane-rule:#12211d;
+    --clip-bg:#0d2620; --clip-still:#241a2e; --clip-still-edge:#7a5fa8; --clip-overlay:#2b2210;
+    --aclip-bg:#0c1c26;
+    --ui:var(--mono);
+    --radius:3px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
