@@ -361,6 +361,82 @@ section('screen effects change the image');
   check('all 14 screen effects alter the image', deadImg.length === 0, deadImg.join(', '));
   await hashImg(ZERO);
 
+  /* …AND THE INVERT MARK HAS TO LAND ON EVERY TEMPLATE, not just this one.
+     The sweep above pins i-tpl:'terminal', which is dark, and the mark was
+     always white at 4% alpha: +10 per channel there, and nothing at all on light
+     stock. Measured over all 46 templates: Task Manager took NO pixels (white
+     over white) and Prescription, Boarding Pass and Statement took a difference
+     of ONE unit, which no invert reveals and no re-encode survives. */
+  const mark = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    const R = await import('./src/image/render.js');
+    const px = (id, over) => {
+      const W = 320, H = 240;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const cfg = R.readImageCfg();
+      cfg.W = W; cfg.H = H; cfg.tpl = id; cfg.wrap = true;
+      for (const k of ['scan', 'noise', 'vig', 'chroma', 'bloom', 'dead', 'copy',
+        'skew', 'posterize', 'halftone', 'pixsort']) cfg[k] = 0;
+      cfg.duotone = false; cfg.stego = ''; cfg.invert = '';
+      Object.assign(cfg, over);
+      R.drawImageTo(ctx, W, H, cfg);
+      return ctx.getImageData(0, 0, W, H).data;
+    };
+    const faint = [];
+    for (const id of Object.keys(T.TEMPLATES)) {
+      const a = px(id, {}), b = px(id, { invert: 'OBSERVE' });
+      let touched = 0, worst = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        const d = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+        if (d) { touched++; if (d > worst) worst = d; }
+      }
+      // Deliberately faint — it is meant to survive an invert, not be read — but
+      // a single unit is rounding, not a message.
+      if (touched < 50 || worst < 6) faint.push(`${id}: ${touched}px, worst Δ${worst}`);
+    }
+    return { total: Object.keys(T.TEMPLATES).length, faint };
+  });
+  check('the invert mark lands on every template, light stock included',
+        mark.faint.length === 0, `${mark.total} templates; ${mark.faint.slice(0, 5).join(' | ')}`);
+
+  /* A PAYLOAD THAT DID NOT FIT HAS TO SAY SO.
+     The 4096-byte ceiling toasted; the per-frame capacity — the one an author
+     actually hits, because a 120×90 screen holds 1346 bytes — only wrote to the
+     log panel and returned. So the exported PNG carried no payload, nothing said
+     so where anyone was looking, and the in-tool decoder reads the LIVE canvas,
+     so checking it in the tool could not tell you either. */
+  const stego = await page.evaluate(async () => {
+    const St = await import('./src/image/stego.js');
+    const said = () => document.getElementById('toasts')?.textContent || '';
+    const attempt = (W, H, n) => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#123'; ctx.fillRect(0, 0, W, H);
+      const before = said();
+      const ok = St.embedStego(ctx, W, H, 'x'.repeat(n), '#123');
+      return { ok, toasted: said() !== before };
+    };
+    const cap = St.stegoCapacity(120, 90);
+    return {
+      cap, hardMax: St.STEGO_MAX,
+      atCapacity: attempt(120, 90, cap),
+      overCapacity: attempt(120, 90, cap + 1),
+      atHardMax: attempt(1000, 1000, St.STEGO_MAX),
+      overHardMax: attempt(1000, 1000, St.STEGO_MAX + 1),
+    };
+  });
+  check('a stego payload that fits the frame is embedded',
+        stego.atCapacity.ok === true && stego.atHardMax.ok === true,
+        `capacity ${stego.cap} at 120×90, ceiling ${stego.hardMax}`);
+  check('…one byte too big for the frame is refused, out loud',
+        stego.overCapacity.ok === false && stego.overCapacity.toasted === true,
+        JSON.stringify(stego.overCapacity));
+  check('…and so is one past the hard ceiling',
+        stego.overHardMax.ok === false && stego.overHardMax.toasted === true,
+        JSON.stringify(stego.overHardMax));
+  await hashImg(ZERO);
+
   // pixel-sort at 100 on a WHITE template (lum 255 >= the span ceiling) — the
   // sweep above pins i-tpl:'terminal' (lum ~185) and so never hit the hang.
   // Pre-fix this spun the main thread forever; any hash coming back at all is
@@ -4013,6 +4089,66 @@ section('fifteen more screens');
   });
   check('every window template keeps its window inside the frame, down to 120×90',
     fit.length === 0, fit.slice(0, 5).join(' | '));
+
+  /* A DEAD CONTROL HAS TO LOOK DEAD, ONE CONTROL AT A TIME.
+     Ink and Ground were greyed out together, from one list of templates that fix
+     BOTH — so on the nine that fix exactly one, a live control sat beside a dead
+     one with nothing on screen to tell them apart: the very failure the list was
+     added to fix, one level down. Measured behaviour is the authority here, not
+     the list: each control's disabled state is compared against whether changing
+     that colour actually changes the picture. */
+  const palette = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    const R = await import('./src/image/render.js');
+    const shot = (id, over) => {
+      const W = 320, H = 240;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const cfg = R.readImageCfg();
+      cfg.W = W; cfg.H = H; cfg.tpl = id; cfg.wrap = true;
+      for (const k of ['scan', 'noise', 'vig', 'chroma', 'bloom', 'dead', 'copy',
+        'skew', 'posterize', 'halftone', 'pixsort']) cfg[k] = 0;
+      cfg.duotone = false; cfg.stego = ''; cfg.invert = '';
+      Object.assign(cfg, over);
+      R.drawImageTo(ctx, W, H, cfg);
+      const d = ctx.getImageData(0, 0, W, H).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 3) { h ^= d[i]; h = Math.imul(h, 16777619); }
+      return h >>> 0;
+    };
+    const sel = document.getElementById('i-tpl');
+    document.querySelector('.tab[data-view=image]').click();
+    const wrong = [], unexplained = [];
+    for (const id of Object.keys(T.TEMPLATES)) {
+      const base = shot(id, { fg: '#39ff9e', bg: '#050a08' });
+      const inkLive = shot(id, { fg: '#ff2bd6', bg: '#050a08' }) !== base;
+      const groundLive = shot(id, { fg: '#39ff9e', bg: '#7a2b00' }) !== base;
+      /* Dispatched, not just assigned: the template is document state, and
+         readImageCfg reads the document — a bare `sel.value = id` would leave
+         every render in this loop on whatever template the document still held.
+         `input` as well as `change`, because a real <select> fires both and it is
+         the input that wireLive listens for; then render directly rather than
+         waiting out the 70 ms debounce. */
+      sel.value = id;
+      sel.dispatchEvent(new Event('input', { bubbles: true }));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      R.renderImage();
+      const fg = document.getElementById('i-fg').disabled;
+      const bg = document.getElementById('i-bg').disabled;
+      const pal = document.getElementById('i-palette').disabled;
+      const note = document.getElementById('i-palette-note').textContent.trim();
+      if (fg !== !inkLive) wrong.push(`${id}: ink ${inkLive ? 'live' : 'dead'} / control ${fg ? 'off' : 'on'}`);
+      if (bg !== !groundLive) wrong.push(`${id}: ground ${groundLive ? 'live' : 'dead'} / control ${bg ? 'off' : 'on'}`);
+      if (pal !== !(inkLive || groundLive)) wrong.push(`${id}: picker ${pal ? 'off' : 'on'}`);
+      // Anything greyed out has to say why.
+      if ((fg || bg) && !note) unexplained.push(id);
+    }
+    return { total: Object.keys(T.TEMPLATES).length, wrong, unexplained };
+  });
+  check('Ink and Ground are enabled exactly where they do something',
+    palette.wrong.length === 0, `${palette.total} templates; ${palette.wrong.slice(0, 5).join(' | ')}`);
+  check('…and a greyed-out colour control always says why',
+    palette.unexplained.length === 0, palette.unexplained.join(', '));
 }
 
 /* ============================================ sixteen more sounds ==== */

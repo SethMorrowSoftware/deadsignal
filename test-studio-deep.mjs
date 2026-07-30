@@ -284,12 +284,19 @@ section('every screen template, one at a time');
         const titled = D.screen({ ...base, title: 'SOMETHING ELSE ENTIRELY' });
         const bodied = D.screen({ ...base, body: 'different\ncopy here\nand a third' });
         const swapped = D.screen({ ...base, bg: '#204060', fg: '#ffcc00' });
+        /* And one at a time, for the same reason Title and Body are measured
+           separately above: swapping both means a template that reads only one
+           of them still scores a pass, and nine of them read exactly one. */
+        const inked = D.screen({ ...base, fg: '#ffcc00' });
+        const grounded = D.screen({ ...base, bg: '#204060' });
         r.blank = a.lit === 0;
         r.stable = a.h === again.h;
         r.honoursTitle = a.h !== titled.h;
         r.honoursBody = a.h !== bodied.h;
         r.honoursWords = a.h !== worded.h;
         r.honoursColour = a.h !== swapped.h;
+        r.honoursInk = a.h !== inked.h;
+        r.honoursGround = a.h !== grounded.h;
         r.colours = a.colours;
       } catch (e) { r.threw = String(e && e.message || e).slice(0, 90); }
       out[tpl] = r;
@@ -340,6 +347,30 @@ section('every screen template, one at a time');
     nowFixed.join() === FIXED_PALETTE.slice().sort().join(),
     `unexpected: ${nowFixed.filter((t) => !FIXED_PALETTE.includes(t)).join(',') || 'none'} · `
     + `no longer fixed: ${FIXED_PALETTE.filter((t) => !nowFixed.includes(t)).join(',') || 'none'}`);
+
+  /* INK AND GROUND ARE TWO CLAIMS. The list above is the templates that fix
+     BOTH, and the panel used to enable and disable the two controls together on
+     the strength of it — so on the nine templates that fix exactly one, a live
+     control sat beside a dead one with nothing to tell them apart. Three paint
+     their own black ground and take an ink colour; six are paper props printed
+     in black on stock whose colour IS the ground. Named, so a template moving
+     between the groups is a decision rather than a drift. */
+  const INK_FIXED_ONLY = ['boardingpass', 'cdlabel', 'evidence', 'floppy', 'punchcard', 'receipt'];
+  const GROUND_FIXED_ONLY = ['atm', 'boot', 'testpattern'];
+  const inkDead = ids.filter((t) => !results[t].honoursInk && !FIXED_PALETTE.includes(t)).sort();
+  const groundDead = ids.filter((t) => !results[t].honoursGround && !FIXED_PALETTE.includes(t)).sort();
+  check('the templates that fix only their INK are exactly the documented ones',
+    inkDead.join() === INK_FIXED_ONLY.join(), inkDead.join(',') || 'none');
+  check('…and the ones that fix only their GROUND likewise',
+    groundDead.join() === GROUND_FIXED_ONLY.join(), groundDead.join(',') || 'none');
+  const decl = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    return { ink: [...T.FIXED_INK].sort(), ground: [...T.FIXED_GROUND].sort() };
+  });
+  check('…and the code declares the same two sets it measures',
+    decl.ink.join() === [...FIXED_PALETTE, ...INK_FIXED_ONLY].sort().join()
+    && decl.ground.join() === [...FIXED_PALETTE, ...GROUND_FIXED_ONLY].sort().join(),
+    `ink ${decl.ink.length}, ground ${decl.ground.length}`);
 
   const edges = await page.evaluate((ids) => {
     const D = window.__deep;

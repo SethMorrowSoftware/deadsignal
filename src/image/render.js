@@ -11,7 +11,7 @@ import { applyStillFx } from '../fx/still.js';
 import { drawAnnotations, drawSelection } from './annotate.js';
 import { annotations, initAnnotations, setAnnotationBoxes, selectedAnnotation } from '../ui/annotations.js';
 import { decodeStego, embedStego } from './stego.js';
-import { TEMPLATES, hasFixedPalette } from './templates.js';
+import { TEMPLATES, hasFixedGround, hasFixedInk } from './templates.js';
 import { addToLibrary, slug } from '../library/library.js';
 import { loadImageFile } from '../media/import.js';
 import { loadPreset } from '../presets/index.js';
@@ -41,12 +41,41 @@ export function readImageCfg(rec){
      whatever the SCREEN tab happens to show now. */
   __annotations: rec ? (Array.isArray(rec.__annotations)?rec.__annotations:[]) : annotations() }; }
 
+/**
+ * Is the band the invert mark lands in light or dark?
+ *
+ * Sampled on a coarse grid rather than pixel by pixel: ~2000 samples whatever
+ * the frame size, so this costs the same on a 120×90 thumbnail and a
+ * 1080×1920 poster and does not turn a per-frame still into a pixel pass.
+ * A read that throws (a tainted canvas) falls back to the old white, which is
+ * right for the dark screens that were always the common case.
+ */
+function groundIsLight(ctx,W,H){
+  const y0=Math.max(0,Math.round(H*0.42)), h=Math.max(1,Math.min(H-y0,Math.round(H*0.16)));
+  try{
+    const d=ctx.getImageData(0,y0,W,h).data;
+    const step=4*Math.max(1,Math.floor((W*h)/2000));   // stays 4-aligned
+    let sum=0,n=0;
+    for(let i=0;i+2<d.length;i+=step){ sum+=d[i]*0.2126+d[i+1]*0.7152+d[i+2]*0.0722; n++; }
+    return n>0 && sum/n>128;
+  }catch(e){ return false; }
+}
+
 /** Draw a screen recipe into any context at any size. The reusable half. */
 export function drawImageTo(ctx,W,H,c,sel=null){
   beginFrame(0); setFontStack(c.fontFamily); setTracking(c.lspace);
   ctx.clearRect(0,0,W,H); ctx.save(); if(c.skew>0){ ctx.translate(W/2,H/2); ctx.rotate((c.skew-0.5)*0.06); ctx.translate(-W/2,-H/2); }
   (TEMPLATES[c.tpl]||TEMPLATES.terminal).draw(ctx,W,H,c); ctx.restore();
-  if(c.invert){ ctx.save(); ctx.globalAlpha=0.04; ctx.fillStyle="#fff"; setFont(ctx,Math.max(20,c.font*1.5)); ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(c.invert,W/2,H*0.5); ctx.restore(); }
+  /* THE MARK IS INKED AGAINST THE GROUND IT LANDS ON.
+     It was always white at 4% alpha, which is +10 per channel on a dark screen —
+     invisible until you invert the picture, which is the whole feature — and
+     nothing at all on light stock. Measured over all 46 templates: Task Manager
+     took NO pixels (white over white), and Prescription, Boarding Pass and
+     Statement took a difference of ONE unit, which no invert reveals and no
+     re-encode survives. Black at the same alpha is the same −10 the other way,
+     so a paper prop carries the mark exactly as well as a terminal does. */
+  if(c.invert){ ctx.save(); ctx.globalAlpha=0.04; ctx.fillStyle=groundIsLight(ctx,W,H)?"#000":"#fff";
+    setFont(ctx,Math.max(20,c.font*1.5)); ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(c.invert,W/2,H*0.5); ctx.restore(); }
   /* Before the FX, so a mark is ON the screen rather than on the glass in front
      of it: it takes the scanlines, the noise and the vignette with everything
      else. The selection outline goes AFTER, because it is the editor rather
@@ -78,19 +107,29 @@ export function drawImageTo(ctx,W,H,c,sel=null){
  * template it comes back live in the same place.
  */
 function paintPaletteState(tpl){
-  const fixed=hasFixedPalette(tpl);
-  const why=fixed
-    ? 'This screen draws in its own fixed colours — that palette is the thing it recreates.'
-    : '';
+  /* Per control, because nine templates fix exactly one of the two — see
+     FIXED_INK / FIXED_GROUND. Greying both out on those would lie about the one
+     that works; greying neither out is what the list was added to stop. */
+  const inkFixed=hasFixedInk(tpl), groundFixed=hasFixedGround(tpl), both=inkFixed&&groundFixed;
+  const BOTH='This screen draws in its own fixed colours — that palette is the thing it recreates.';
+  const INK='This screen prints in its own ink — the colour below it is the stock, and that does apply.';
+  const GROUND='This screen paints its own background — the ink colour above it does apply.';
+  const why={
+    'i-fg': both?BOTH:(inkFixed?INK:''),
+    'i-bg': both?BOTH:(groundFixed?GROUND:''),
+    // The picker sets both at once, so it is dead only where both are.
+    'i-palette': both?BOTH:'',
+  };
   for(const id of ['i-fg','i-bg','i-palette']){
     const el=$(id); if(!el) continue;
+    const fixed=!!why[id];
     el.disabled=fixed;
     const row=el.closest('.row'); if(row) row.classList.toggle('is-fixed',fixed);
-    el.title=why||el.dataset.title||'';
+    el.title=why[id]||el.dataset.title||'';
     if(!el.dataset.title && !fixed) el.removeAttribute('title');
   }
   const note=$('i-palette-note');
-  if(note) note.textContent=why;
+  if(note) note.textContent=both?BOTH:(inkFixed?INK:(groundFixed?GROUND:''));
 }
 
 export function renderImage(opts){ const c=readImageCfg(); const cv=$("icanvas"); if(!cv)return; cv.width=c.W; cv.height=c.H; const ctx=cv.getContext("2d");

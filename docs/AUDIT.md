@@ -298,12 +298,6 @@ None of these are fixed. They are recorded with enough detail to act on.
   progress.
 - 2×SS is silently ignored by the still exporters.
 
-**Scenes and screens**
-- Ink/Ground are enabled all-or-nothing, so nine templates keep a colour control
-  that does nothing.
-- A stego message too large for the canvas is dropped silently on export.
-- "Invert text" writes nothing on light-stock templates.
-
 **Timeline**
 - A trim/reorder drag that pauses for over 600 ms splits into several undo
   entries.

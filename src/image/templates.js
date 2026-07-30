@@ -32,8 +32,34 @@ export const FIXED_PALETTE = new Set(['autopsy', 'bios', 'blueprint', 'bsod', 'b
   'http404', 'import', 'journal', 'mall', 'map', 'policereport', 'poster', 'prescription',
   'redacted', 'registry', 'shutdown', 'statement', 'taskmgr', 'vapordesktop', 'vhslabel', 'vitals']);
 
-/** True when this template draws in its own fixed colours. */
+/** True when this template draws in its own fixed colours — BOTH ink and ground. */
 export const hasFixedPalette = (id) => FIXED_PALETTE.has(String(id || ''));
+
+/* INK AND GROUND ARE TWO CLAIMS, NOT ONE.
+ *
+ * The list above is the templates that fix both, and the panel enabled and
+ * disabled the two controls together on the strength of it. Nine templates are
+ * neither one thing nor the other, so on every one of them exactly one live
+ * control sat beside one dead one, with nothing on screen to tell them apart —
+ * the same failure the list was added to fix, one level down.
+ *
+ * Measured on 480×360 with the post stack silenced, changing one colour at a
+ * time: three screens paint their own black ground and take an ink colour (a
+ * boot splash, a test card, a cash machine); six are paper props printed in
+ * black on stock whose colour IS the ground (a till receipt, an evidence label,
+ * a boarding pass, a floppy label, a CD label, a punch card).
+ *
+ * The palette PICKER stays tied to the both-fixed list: it sets ink and ground
+ * together, so it still does something wherever either one is live.
+ */
+const INK_ONLY_FIXED = ['receipt', 'evidence', 'boardingpass', 'floppy', 'cdlabel', 'punchcard'];
+const GROUND_ONLY_FIXED = ['boot', 'testpattern', 'atm'];
+export const FIXED_INK = new Set([...FIXED_PALETTE, ...INK_ONLY_FIXED]);
+export const FIXED_GROUND = new Set([...FIXED_PALETTE, ...GROUND_ONLY_FIXED]);
+/** True when this template's INK colour is its own and the control does nothing. */
+export const hasFixedInk = (id) => FIXED_INK.has(String(id || ''));
+/** True when this template's BACKGROUND is its own and the control does nothing. */
+export const hasFixedGround = (id) => FIXED_GROUND.has(String(id || ''));
 export function template(id,name,draw){ TEMPLATES[id]={id,name,draw}; }
 export function baseTerm(ctx,W,H,c){ ctx.fillStyle=c.trans?"rgba(0,0,0,0)":c.bg; if(!c.trans){ctx.fillStyle=c.bg;ctx.fillRect(0,0,W,H);}
   const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"rgba(20,60,45,.10)"); g.addColorStop(1,"rgba(0,0,0,0)"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
