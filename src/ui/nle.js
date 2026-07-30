@@ -15,21 +15,24 @@
  *
  * HOW IT IS BUILT
  *
- * As a re-layout, exactly like ui/workspace.js. The chrome here is new markup,
- * but every control it drives is an existing one: the transport clicks the same
- * play button the VIDEO tab has, the menus call the same functions the buttons
- * call. That is deliberate and it is what makes this safe to ship —
+ * As a re-layout of the page's own markup. The chrome here is new, but every
+ * control it drives is an existing one: the transport clicks the same play
+ * button the VIDEO workspace has, the menus call the same functions the
+ * buttons call. That is deliberate and it is what makes this safe to ship —
  *
  *   - every id survives, so document binding, the palette, Explain mode and the
  *     complexity filter keep working;
- *   - the toggle is honest: turning the editor off restores the tabbed layout,
- *     because nothing was destroyed;
  *   - there is one implementation of every action. A menu item that duplicated
  *     the logic of its button would drift from it within a release.
  *
+ * This shell used to be one of three layouts behind toggles (classic tabs, a
+ * three-pane workspace, the editor). It is the only one now: enterEditor()
+ * runs once at boot and the moves it makes are permanent. The old tab strip
+ * survives as the workspace switcher — same tablist, same keyboard model.
+ *
  * The one real DOM move is the sequence lane (#tl-track), which is docked into
  * the timeline pane so it is visible from every workspace rather than only on
- * the TIMELINE tab. It is put back on exit.
+ * the TIMELINE workspace.
  */
 import { $, toast } from '../core/dom.js';
 import { download } from '../core/blobs.js';
@@ -46,21 +49,14 @@ import {
   clearTimeline, commitAudioClips, commitClips, timeline, tlScrubT,
 } from '../video/timeline.js';
 
-const MODE_KEY = 'deadsignal.editor.mode';
 const SKIN_KEY = 'deadsignal.editor.skin';
 
 let built = false;
-let enabled = false;
-/** Where moved nodes came from, so exiting puts them back exactly. */
-let laneHome = null;
-let logHome = null;
-const ctlHomes = [];
 let tool = 'select';
 
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
 
-export const isEditor = () => enabled;
 export const currentTool = () => tool;
 
 /* ------------------------------------------------------------ timecode -- */
@@ -338,7 +334,6 @@ const ACTIONS = {
   exportVideo: { label: 'Export video clip…', key: '', run: () => { activateTab('video'); $('v-record')?.click(); } },
   palette: { label: 'Search everything…', key: 'Ctrl+K', run: () => $('palette-open')?.click() },
   explain: { label: 'Explain mode', key: '?', run: () => $('explain-toggle')?.click() },
-  classic: { label: 'Classic (tabbed) layout', key: '', run: () => setEditorMode(false) },
   skin: { label: 'Toggle CRT skin', key: '', run: () => toggleSkin() },
   help: { label: 'Help', key: '', run: () => activateTab('help') },
 };
@@ -347,7 +342,7 @@ const MENUS = [
   ['File', ['openProj', 'saveProj', '-', 'exportNow', '-', 'exportVideo', 'record', 'media']],
   ['Edit', ['undo', 'redo', '-', 'copy', 'paste', '-', 'split', 'dup', 'ripple', '-', 'clearSeq']],
   ['Clip', ['addScene', 'addStill', '-', 'addTitle', 'addShape', 'addOverlay', 'addSound']],
-  ['View', ['palette', 'explain', '-', 'skin', 'classic']],
+  ['View', ['palette', 'explain', '-', 'skin']],
   ['Help', ['help']],
 ];
 
@@ -547,7 +542,6 @@ function syncExportButton() {
 /* ------------------------------------------------------------- status -- */
 
 export function refreshStatus() {
-  if (!enabled) return;
   const seq = $('nle-st-seq');
   const sel = $('nle-st-sel');
   const undo = $('nle-st-undo');
@@ -652,11 +646,10 @@ function buildChrome() {
   settings.id = 'nle-settings';
   tb.appendChild(settings);
 
-  /* Only the skin toggle is built here. Search, Explain, the workspace switch
-     and the editor toggle are real buttons in the page header, and the header
-     moves into this toolbar below — building second copies of them would be
-     two controls for one action, which is how a UI starts lying about its own
-     state. */
+  /* Only the skin toggle is built here. Search and Explain are real buttons in
+     the page header, and the header moves into this toolbar below — building
+     second copies of them would be two controls for one action, which is how a
+     UI starts lying about its own state. */
   const quick = el('div', 'nle-tools');
   const skinBtn = el('button', 'nle-tool', '◐');
   skinBtn.type = 'button';
@@ -820,67 +813,49 @@ export function setSkin(skin) {
 
 /* --------------------------------------------------------------- mode -- */
 
-export function setEditorMode(on) {
+/**
+ * Put the page into the editor layout — once, at boot, for good.
+ *
+ * The editor used to be one of three layouts (classic tabs, a three-pane
+ * workspace, and this), each behind a toggle. The editor IS the studio now:
+ * the moves below are permanent, so none of them keeps a way back.
+ */
+function enterEditor() {
   if (!built) build();
-  enabled = !!on;
-  document.body.classList.toggle('nle', enabled);
-  lsSet(MODE_KEY, enabled ? '1' : '0');
+  document.body.classList.add('nle');
 
+  /* The header's settings groups, in the order they read in the header. The
+     button group is deliberately not among them: the menus and the quick bar
+     already reach those, and moving them would put the same control on screen
+     twice. */
+  const settings = $('nle-settings');
+  if (settings) {
+    for (const id of ['aesthetic', 'seed', 'crt-intensity', 'contrast', 'complexity', 'palette-open', 'proj-save']) {
+      const ctl = $(id)?.closest('.ctl');
+      if (!ctl || ctl.parentElement === settings) continue;
+      settings.appendChild(ctl);
+    }
+  }
   const lane = $('tl-track');
   const dock = $('nle-tl-body');
+  if (lane && dock && lane.parentElement !== dock) dock.appendChild(lane);
+  /* An older build wrote the zoom onto this element as an inline width (up to
+     600%), and inline style is not something a stylesheet can take back. Left
+     there it would stretch the new scroller's content box and put the ruler
+     out of step with the lanes. */
+  if (lane) lane.style.width = '';   /* dom-only: clearing a legacy inline layout value */
   /* The activity log is where this tool explains what it just did — which
      container it fell back to, which clip was muxed, why an export refused. It
      moves into the media column rather than being hidden: out of the way, still
      on screen, still readable by anything that reads it. */
   const log = $('console')?.closest('.panel');
   const logDock = $('nle-bin');
-  const settings = $('nle-settings');
-  if (enabled) {
-    /* The header's settings groups, in the order they read in the header. The
-       button group is deliberately not among them: the menus and the quick bar
-       already reach those, and moving them would put the same control on screen
-       twice. */
-    if (settings && !ctlHomes.length) {
-      for (const id of ['aesthetic', 'seed', 'crt-intensity', 'contrast', 'complexity', 'palette-open', 'proj-save']) {
-        const ctl = $(id)?.closest('.ctl');
-        if (!ctl || ctl.parentElement === settings) continue;
-        ctlHomes.push({ node: ctl, parent: ctl.parentElement, next: ctl.nextSibling });
-        settings.appendChild(ctl);
-      }
-    }
-    if (lane && dock && lane.parentElement !== dock) {
-      laneHome = { parent: lane.parentElement, next: lane.nextSibling };
-      dock.appendChild(lane);
-    }
-    /* An older build wrote the zoom onto this element as an inline width (up to
-       600%), and inline style is not something a stylesheet can take back. Left
-       there it would stretch the new scroller's content box and put the ruler
-       out of step with the lanes. */
-    if (lane) lane.style.width = '';   /* dom-only: clearing a legacy inline layout value */
-    if (log && logDock && log.parentElement !== logDock) {
-      logHome = { parent: log.parentElement, next: log.nextSibling };
-      logDock.appendChild(log);
-    }
-    syncWorkspace();
-  } else {
-    if (lane && laneHome?.parent) { laneHome.parent.insertBefore(lane, laneHome.next); laneHome = null; }
-    if (lane) lane.style.width = '';   /* dom-only: clearing a legacy inline layout value */
-    if (log && logHome?.parent) { logHome.parent.insertBefore(log, logHome.next); logHome = null; }
-    while (ctlHomes.length) {
-      const h = ctlHomes.pop();
-      h.parent.insertBefore(h.node, h.next);
-    }
-  }
-  const btn = $('editor-toggle');
-  if (btn) {
-    btn.setAttribute('aria-pressed', String(enabled));
-    btn.textContent = enabled ? '▤ CLASSIC' : '▦ EDITOR';
-  }
+  if (log && logDock && log.parentElement !== logDock) logDock.appendChild(log);
+  syncWorkspace();
   /* The lane just changed host, and its viewport width came with the host. The
      scale is measured, so it has to be re-measured or every block is laid out
      against the width of the container it used to be in. */
   renderTrack();
-  window.dispatchEvent(new CustomEvent('studio:layout', { detail: { editor: enabled } }));
 }
 
 function build() {
@@ -923,7 +898,6 @@ function build() {
      while a field has focus — it is a command, not a transport key, and an
      author who has just typed a filename should not have to click away first. */
   document.addEventListener('keydown', (e) => {
-    if (!enabled) return;
     if (!((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey)) return;
     const k = e.key.toLowerCase();
     if (k === 'e') { e.preventDefault(); exportCurrent(); return; }
@@ -937,7 +911,6 @@ function build() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (!enabled) return;
     const t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -973,22 +946,19 @@ function build() {
 /**
  * Wire the editor up.
  *
- * Called once at boot. The mode and the skin are remembered per browser; a
- * first-time visitor gets the editor, because that is the tool this is now.
+ * Called once at boot. The skin is remembered per browser; everyone gets the
+ * editor, because that is the tool this is now.
  */
 export function initEditor() {
   build();
   initInspector();
   setSkin(lsGet(SKIN_KEY, 'studio'));
-  setEditorMode(lsGet(MODE_KEY, '1') === '1');
-
-  const btn = $('editor-toggle');
-  if (btn) btn.addEventListener('click', () => setEditorMode(!enabled));
+  enterEditor();
 
   // Keep the status bar honest without polling the document: every commit the
   // store makes is a reason to re-read it.
   syncExportButton();
   getStore()?.subscribe?.('', () => refreshStatus());
-  setInterval(() => { if (enabled) refreshStatus(); }, 250);
+  setInterval(() => refreshStatus(), 250);
   refreshStatus();
 }

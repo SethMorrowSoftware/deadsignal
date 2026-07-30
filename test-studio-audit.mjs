@@ -2817,18 +2817,14 @@ section('a timeline that is a timeline');
     const grown = { src: S.timeline[otherIdx].src, dur: S.timeline[otherIdx].rec['v-dur'] };
     S.editClip(otherIdx, { ...was, rec: { ...S.timeline[otherIdx].rec, 'v-dur': was.dur } }, 'restore');
 
-    /* The classic layout is meant to be exactly what it was: these panes belong
-       to the editor, and with the layout off there is no grid for them to sit
-       in. They used to fall out of it and stack under the tabbed page — a media
-       bin, a transport bar and an empty sequence pane below the sign-off. */
-    const toggle = document.getElementById('editor-toggle');
-    toggle.click();
-    const classicLeak = ['nle-bin', 'nle-transport', 'nle-timeline', 'nle-inspector']
+    /* The editor is the only layout now, so every one of its panes must be a
+       live grid item. (Before the classic layout was removed, this asserted
+       the reverse: that turning the editor off left none of them behind.) */
+    const paneGone = ['nle-bin', 'nle-transport', 'nle-timeline', 'nle-inspector']
       .filter((id) => {
         const n = document.getElementById(id);
-        return n && getComputedStyle(n).display !== 'none';
+        return !n || getComputedStyle(n).display === 'none';
       });
-    toggle.click();
 
     const pane = document.getElementById('nle-inspector');
     const stage = document.querySelector('.view.active .panel.stagewrap');
@@ -2838,7 +2834,7 @@ section('a timeline that is a timeline');
       mine, tabAfter: document.getElementById('v-text').value, tabBefore,
       neighbourBefore, neighbourAfter: S.timeline[otherIdx].rec['v-text'],
       entries, mineBefore, afterUndo, noop, firstTransition, laterTransition, grown,
-      classicLeak, editor: document.body.classList.contains('nle'),
+      paneGone, editor: document.body.classList.contains('nle'),
       visible: pane ? getComputedStyle(pane).display !== 'none' : false,
       rightOfStage: !!(pr && sr) && pr.left >= sr.right - 1,
     };
@@ -2861,8 +2857,8 @@ section('a timeline that is a timeline');
     JSON.stringify({ first: insp.firstTransition, later: insp.laterTransition }));
   check('setting a clip’s source length lengthens the recipe inside it too',
     insp.grown.src === 12 && insp.grown.dur === '12', JSON.stringify(insp.grown));
-  check('turning the editor off leaves no editor pane behind in the tabbed layout',
-    insp.classicLeak.length === 0, insp.classicLeak.join(', ') || 'none');
+  check('the editor layout is permanent and every editor pane is live',
+    insp.editor && insp.paneGone.length === 0, insp.paneGone.join(', ') || 'all live');
   /* ------------------------------------------------- the overlay track -- */
   /* A second track is only worth having if what it draws is composited with
      what is underneath. These scenes are bright marks on a near-black ground

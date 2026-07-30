@@ -2497,7 +2497,7 @@ section('canvas state hygiene, one draw routine at a time');
    So: at seven window sizes, walk every rendered control on every tab and ask
    the browser what is actually at its centre. Occlusion, zero size and a
    control pushed outside its own scroll container all fail the same way. */
-section('every control is reachable at every window size, in every layout');
+section('every control is reachable at every window size');
 {
   const SIZES = [
     [1920, 1080], [1600, 900], [1440, 900], [1366, 768],
@@ -2505,19 +2505,10 @@ section('every control is reachable at every window size, in every layout');
     // The two that break layouts: a short window and a narrow one.
     [1280, 620], [960, 700],
   ];
-  /* All three layouts, because the bug this section exists to catch was in
-     exactly one of them. The editor is the default and gets every size; the
-     other two get the widest, a common laptop and the short window, which is
-     where a layout gives out. */
-  const LAYOUTS = [
-    { name: 'editor', sizes: SIZES, set: () => { /* the default */ } },
-    { name: 'workspace', sizes: [[1920, 1080], [1366, 768], [1280, 620]],
-      set: () => { document.getElementById('editor-toggle')?.click();
-                   document.getElementById('workspace-toggle')?.click(); } },
-    { name: 'classic', sizes: [[1920, 1080], [1366, 768], [1280, 620]],
-      set: () => { if (document.body.classList.contains('workspace')) document.getElementById('workspace-toggle')?.click();
-                   if (document.body.classList.contains('nle')) document.getElementById('editor-toggle')?.click(); } },
-  ];
+  /* One layout now — the editor is the studio, the classic and workspace
+     layouts are gone — so every size runs against it. The bug this section
+     exists to catch (the monitor frame lying over the transport) was an
+     editor bug, and the editor is exactly what is measured. */
   const TABS = ['video', 'audio', 'image', 'timeline', 'library', 'bundle', 'cloud', 'help'];
   const problems = [];
   const overflow = [];
@@ -2532,13 +2523,9 @@ section('every control is reachable at every window size, in every layout');
     if (el && el.getClientRects().length) el.hidden = true;
   });
 
-  const modesSeen = [];
-  for (const layout of LAYOUTS) {
-   await page.evaluate((fn) => { (new Function('return ' + fn))()(); }, layout.set.toString());
-   await page.waitForTimeout(150);
-   const mode = await page.evaluate(() => document.body.className.trim() || '(classic)');
-   modesSeen.push(`${layout.name}=${mode}`);
-   for (const [w, h] of layout.sizes) {
+  const mode = await page.evaluate(() => document.body.className.trim() || '(none)');
+  {
+   for (const [w, h] of SIZES) {
     await page.setViewportSize({ width: w, height: h });
     for (const tab of TABS) {
       await page.evaluate((t) => document.getElementById('tab-' + t)?.click(), tab);
@@ -2609,18 +2596,11 @@ section('every control is reachable at every window size, in every layout');
     }
    }
   }
-  // Back to the layout everything else in this file assumes.
-  await page.evaluate(() => {
-    if (document.body.classList.contains('workspace')) document.getElementById('workspace-toggle')?.click();
-    if (!document.body.classList.contains('nle')) document.getElementById('editor-toggle')?.click();
-  });
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  /* Asserted, not assumed. If the toggles had not fired, all three passes would
-     have measured the same layout and every check below would have passed by
-     testing one thing three times. */
-  check('all three layouts were actually entered — the checks below are not one layout thrice',
-    new Set(modesSeen.map((m) => m.split('=')[1])).size === 3, modesSeen.join(' · '));
+  /* Asserted, not assumed: the sweep above must have measured the editor —
+     the one layout that ships — not some half-booted page. */
+  check('the sweep measured the editor layout', /\bnle\b/.test(mode), mode);
   check('no two panels are laid one on top of another — a covered panel takes every control in it',
     stacked.length === 0, stacked.slice(0, 6).join(' | ') + (stacked.length > 6 ? ` … +${stacked.length - 6}` : ''));
   check('no control is covered by something else, at any window size or layout the tool offers',

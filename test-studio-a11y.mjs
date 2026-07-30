@@ -383,57 +383,43 @@ section('reflow');
   await page.setViewportSize({ width: 1280, height: 900 });
 }
 
-/* ========================================================== workspace ==== */
-section('workspace layout');
+/* ===================================================== editor-only ==== */
+section('the editor is the only layout');
 {
-  // The new layout must clear the same bar as the old one, or the toggle is
-  // just a way to opt out of accessibility.
-  await page.evaluate(() => window.DeadSignalStudio.setWorkspace(true));
-  await page.waitForTimeout(120);
-
-  const unnamed = await page.evaluate(() =>
-    [...document.querySelectorAll('input, select, textarea, button')]
-      .filter((el) => el.type !== 'hidden' && !window.__a11y.name(el))
-      .map((el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')));
-  check('every control still has a name in workspace', unnamed.length === 0, unnamed.slice(0, 8).join(', '));
-
-  const bad = await page.evaluate(() => {
-    const out = new Set();
-    for (const el of document.querySelectorAll('body *')) {
-      if (!window.__a11y.visible(el)) continue;
-      const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-      if (!own) continue;
-      const cs = getComputedStyle(el);
-      const fg = window.__a11y.parse(cs.color);
-      if (!fg || fg.a === 0) continue;
-      const bg = window.__a11y.bgOf(el);
-      const ratio = window.__a11y.ratio(window.__a11y.over(fg, bg), bg);
-      const px = parseFloat(cs.fontSize);
-      const need = (px >= 24 || (px >= 18.66 && parseInt(cs.fontWeight, 10) >= 700)) ? 3 : 4.5;
-      if (ratio < need) out.add(`${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]} ${ratio.toFixed(2)}:1`);
-    }
-    return [...out];
-  });
-  check('contrast still passes in workspace', bad.length === 0, bad.slice(0, 6).join(' | '));
+  /* The classic tabbed and three-pane workspace layouts are gone, along with
+     their toggles. Everything the suite measured above was measured IN the
+     editor, so what is left to assert is the removal itself: no escape hatch
+     back to a layout nobody audits, and the invariants that survived the old
+     layouts' deletion. */
+  const editorOnly = await page.evaluate(() => ({
+    nle: document.body.classList.contains('nle'),
+    workspaceClass: document.body.classList.contains('workspace'),
+    editorToggle: !!document.getElementById('editor-toggle'),
+    workspaceToggle: !!document.getElementById('workspace-toggle'),
+    seam: 'setWorkspace' in (window.DeadSignalStudio || {}),
+  }));
+  check('the editor layout is on', editorOnly.nle);
+  check('no toggle back to a layout nobody audits',
+    !editorOnly.editorToggle && !editorOnly.workspaceToggle
+    && !editorOnly.workspaceClass && !editorOnly.seam,
+    JSON.stringify(editorOnly));
 
   const tabsOk = await page.evaluate(() => {
     const tabs = [...document.querySelectorAll('[role="tab"]')];
     return tabs.length >= 7 && tabs.filter((t) => t.tabIndex === 0).length === 1;
   });
-  check('the tablist contract holds in workspace', tabsOk);
+  check('the tablist contract holds as the workspace switcher', tabsOk);
 
   const overflow = await page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  check('no horizontal scroll in workspace at 1280px', overflow <= 1, `${overflow}px`);
+  check('no horizontal scroll in the editor at 1280px', overflow <= 1, `${overflow}px`);
 
   await page.setViewportSize({ width: 900, height: 900 });
   await page.waitForTimeout(120);
   const narrow = await page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  check('workspace falls back to a stacked layout when narrow', narrow <= 1, `${narrow}px`);
+  check('the editor falls back to a stacked layout when narrow', narrow <= 1, `${narrow}px`);
   await page.setViewportSize({ width: 1280, height: 900 });
-
-  await page.evaluate(() => window.DeadSignalStudio.setWorkspace(false));
 }
 
 /* ===================================================== high contrast ======= */

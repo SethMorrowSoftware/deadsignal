@@ -18,10 +18,10 @@
    phosphor look is the identity of the *media this tool makes*, and it should
    be a choice for the chrome rather than a tax on it.
 
-   Like workspace.css, the layout is a RE-LAYOUT of the existing DOM. Panels
-   keep their ids and their markup, so the document binding, the command
-   palette, Explain mode and the complexity filter all work untouched, and
-   turning the mode off restores the tabbed layout exactly.
+   The layout is a RE-LAYOUT of the existing DOM. Panels keep their ids and
+   their markup, so the document binding, the command palette, Explain mode
+   and the complexity filter all work untouched. The editor is the only
+   layout now — body.nle is applied once at boot and never removed.
    ========================================================================= */
 
 /* ---------------------------------------------------------------- skin -- */
@@ -92,8 +92,9 @@
 
 body.nle{ height:100vh; overflow:hidden; }
 
-/* The original chrome is replaced, not deleted: the toggle has to be able to
-   put it back, and every control inside it is still bound to the document. */
+/* The original chrome is replaced, not deleted: every control inside it is
+   still bound to the document, and its settings groups are rehoused in the
+   toolbar (see enterEditor). */
 body.nle > header.top{ display:none; }
 
 /* The view switcher IS the page's tablist, restyled — not a second control
@@ -138,7 +139,7 @@ body.nle main{
 
 /* The sign-off is page furniture and has no place in an editor. The activity
    log is the opposite — it is where the tool explains what it just did — so it
-   is docked into the media column (see setEditorMode) rather than hidden. */
+   is docked into the media column (see enterEditor) rather than hidden. */
 body.nle .foot{ display:none; }
 body.nle .nle-console{ margin:8px; border-radius:var(--radius); }
 body.nle .nle-console .console{ max-height:26vh; overflow:auto; }
@@ -298,9 +299,9 @@ body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px 
    as replacing it. */
 .nle-settings{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 /* Each label stays on one line (white-space:nowrap), but a group of controls may
-   break across lines rather than push the page wider: the four view buttons —
-   CLASSIC / TABS / SEARCH / EXPLAIN — are 326px in one unbreakable row, which was
-   the last thing forcing a sideways scroll at a 320px viewport. */
+   break across lines rather than push the page wider — an unbreakable row of
+   view buttons was the last thing forcing a sideways scroll at a 320px
+   viewport. */
 .nle-settings .ctl{
   display:flex; align-items:center; gap:5px; flex-wrap:wrap; min-width:0;
   font-size:12px; color:var(--muted); white-space:nowrap;
@@ -310,25 +311,12 @@ body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px 
 .nle-settings .ctl input[type="range"]{ width:64px; }
 .nle-settings .ctl .btn{ padding:3px 8px; font-size:12px; }
 
-/* Workspace presets read as segmented control, because that is what they are. */
-.nle-workspaces{ display:flex; border:1px solid var(--edge2); border-radius:5px; overflow:hidden; }
-.nle-ws{
-  background:transparent; border:0; border-right:1px solid var(--edge2);
-  color:var(--muted); font:inherit; font-size:12px; letter-spacing:.06em;
-  text-transform:uppercase; padding:5px 12px; cursor:pointer;
-}
-.nle-ws:last-child{ border-right:0; }
-.nle-ws[aria-selected="true"]{ background:var(--panel2); color:var(--phos); }
-
 /* -------------------------------------------------------------- panes -- */
 
-/* Off unless the editor layout is on — the same base-hidden rule the chrome and
-   the status bar use, and for the same reason. These panes are built once and
-   kept (the toggle has to be able to bring them back), but with `body.nle`
-   removed there is no grid for `grid-area:bin` to resolve against, so they
-   stopped being columns and became three blocks stacked under the tabbed page:
-   a media bin, a transport bar and an empty sequence pane below the sign-off.
-   The classic layout is meant to be exactly what it was. */
+/* Off until boot applies body.nle — the same base-hidden rule the chrome and
+   the status bar use. Without it, in the moment before the editor enters,
+   there is no grid for `grid-area:bin` to resolve against, so these panes
+   would briefly stack as loose blocks under the page. */
 .nle-pane,.nle-transport,.nle-timeline{ display:none; }
 body.nle .nle-pane{
   background:var(--panel); overflow:auto; min-height:0;

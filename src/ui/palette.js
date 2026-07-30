@@ -40,8 +40,7 @@ function score(needle, hay) {
   return i === n.length ? s : -1;
 }
 
-/** Everything insertable or runnable, as flat records. Shared with the
-    workspace Browser pane so the two cannot drift apart. */
+/** Everything insertable or runnable, as flat records. */
 export function studioSources(deps) {
   const out = [];
   const { SCENES, TEMPLATES, PRESETS, actions } = deps;
