@@ -4680,6 +4680,53 @@ section('batch export');
   check('…and video items can be written in either container',
     panel.containers.join() === 'webm,mp4', JSON.stringify(panel.containers));
 
+  /* THE BATCH TAKES THE SAME TOKEN AS EVERY OTHER EXPORT.
+     It was the one entry point of six that never asked. `running` only stopped a
+     second BATCH, so a batch beside a clip RECORD or a .gif interleaved two
+     encoders over the same module-level scratch canvases (_persistCanvas, _ss,
+     _tlA) and the same shared imported <video> — exactly the corruption
+     claimExport() exists to prevent. Driven through the real button, and the
+     token is checked from the outside by asking whether another export can start
+     while the batch holds it. */
+  const locked = await page.evaluate(async () => {
+    const C = await import('./src/video/capture.js');
+    const B = await import('./src/export/batch.js');
+    const S = window.DeadSignalStudio;
+    document.querySelector('.tab[data-view=library]').click();
+    S.clearLibrary();
+
+    document.getElementById('bx-source').value = 'screen-presets';
+    document.getElementById('bx-source').dispatchEvent(new Event('change', { bubbles: true }));
+    /* The handler is async, but everything up to its first await runs during
+       dispatch — and the claim is in that part. So the moment .click() returns,
+       the token is either held or it never was. */
+    document.getElementById('bx-run').click();
+    /* Buttons read BEFORE the probe claim: a probe that succeeds would itself
+       grey them, and the check would then be measuring the probe. */
+    const stillBtnsDisabled = ['v-gif', 'v-apng', 'v-awebp', 'v-strip']
+      .every((x) => document.getElementById(x).disabled);
+    const probe = C.claimExport('probe');
+    const heldDuringRun = probe === false;
+    // And hand it straight back if it was free, or every later export refuses.
+    if (probe) C.releaseExport();
+    // Wait for the panel to report it finished.
+    for (let i = 0; i < 300 && document.getElementById('bx-run').disabled; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const afterwards = C.claimExport('probe-after');
+    if (afterwards) C.releaseExport();
+    S.clearLibrary();
+    void B;
+    return { heldDuringRun, stillBtnsDisabled, releasedAfterwards: afterwards,
+             ran: document.getElementById('bx-status')?.textContent || '' };
+  });
+  check('a running batch holds the one export token',
+    locked.heldDuringRun === true, JSON.stringify(locked));
+  check('…so the four still-export buttons are greyed while it runs',
+    locked.stillBtnsDisabled === true);
+  check('…and it gives the token back when it is done',
+    locked.releasedAfterwards === true);
+
   /* The screens batch first: it is a single frame per item, so it exercises the
      whole path in a fraction of the time and can afford to check the output. */
   const screens = await page.evaluate(async () => {
@@ -5108,6 +5155,100 @@ section('animated stills beyond GIF');
   }));
   check('both sit beside the .gif button, sharing its frame rate',
     wired.apng && wired.awebp && wired.label === 'Anim fps', JSON.stringify(wired));
+
+  /* 2×SS IS A CHECKBOX ON THE SAME PANEL AS THESE BUTTONS.
+     collectFrames — the frame source for all four still exporters (.gif, .apng,
+     .webp, frame strip) — called renderVideoFrame directly instead of
+     renderScaled, so the box did nothing here while the preview, both RECORD
+     paths and the batch all honoured it. Measured on a scene with a diagonal:
+     supersampling changes the anti-aliasing, so the frames differ. */
+  const ss = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const C = await import('./src/video/capture.js');
+    const set = (id, v) => { const e = document.getElementById(id); e.value = v;
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true })); };
+    const tick = (id, on) => { const e = document.getElementById(id); e.checked = on;
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.dispatchEvent(new Event('change', { bubbles: true })); };
+    document.querySelector('.tab[data-view=video]').click();
+    set('v-scene', 'radar'); set('v-w', '160'); set('v-h', '120'); set('v-dur', '2');
+    const grab = async () => {
+      const frames = await C.collectFrames(S.readVideoCfg(), 3, {});
+      return frames.map((f) => {
+        const d = f.getContext('2d').getImageData(0, 0, f.width, f.height).data;
+        let h = 2166136261;
+        for (let i = 0; i < d.length; i += 3) { h ^= d[i]; h = Math.imul(h, 16777619); }
+        return h >>> 0;
+      }).join(',');
+    };
+    tick('v-ss', false);
+    const plain = await grab();
+    const plainAgain = await grab();
+    tick('v-ss', true);
+    const supersampled = await grab();
+    tick('v-ss', false);
+    return { plain, plainAgain, supersampled };
+  });
+  check('the still exporters honour 2×SS',
+    ss.supersampled !== ss.plain, `${ss.plain} vs ${ss.supersampled}`);
+  check('…and are otherwise deterministic, so that difference is the SS and not noise',
+    ss.plain === ss.plainAgain, `${ss.plain} vs ${ss.plainAgain}`);
+
+  /* ■ STOP HAS TO REACH THE ENCODE, WHICH IS THE SLOW HALF.
+     The frame collector honoured the cancel flag and these two encoders did not,
+     so pressing STOP once collection had finished did nothing at all — and this
+     path never showed a progress bar either, so there was no way to tell the
+     difference between working and hung. Both now poll between frames and
+     report, and a cancelled encode returns null (the caller tells that apart
+     from "no encoder for this format" by asking the flag again). */
+  const stoppable = await page.evaluate(async (mk) => {
+    const A = await import('./src/export/anim.js');
+    const frames = eval(mk)(12, 32, 24);
+    const out = {};
+    for (const [name, fn] of [['apng', A.encodeAPNG], ['webp', A.encodeAnimatedWebP]]) {
+      if (name === 'webp' && !await A.webpSupported()) { out[name] = { skipped: true }; continue; }
+      const seen = [];
+      // Cancels after the third frame, the way ■ STOP does mid-encode.
+      const blob = await fn(frames, { delayMs: 60,
+        onProgress: (p) => seen.push(p),
+        cancelled: () => seen.length >= 3 });
+      // And a run with the same options but never cancelled still produces a file.
+      const full = await fn(frames, { delayMs: 60, onProgress: () => {}, cancelled: () => false });
+      out[name] = { cancelledToNull: blob === null, framesBeforeStop: seen.length,
+                    progressRose: seen.length > 1 && seen[seen.length - 1] > seen[0],
+                    lastProgress: seen[seen.length - 1],
+                    completesWhenNotCancelled: !!(full && full.size > 0) };
+    }
+    return out;
+  }, MK);
+  for (const kind of ['apng', 'webp']) {
+    const r = stoppable[kind];
+    if (r.skipped) { check(`${kind}: skipped, no encoder here`, true); continue; }
+    check(`a cancel lands inside the ${kind} encode, not after it`,
+      r.cancelledToNull === true && r.framesBeforeStop < 12,
+      `${r.framesBeforeStop} of 12 frames`);
+    check(`…and the ${kind} encode reports where it is`,
+      r.progressRose === true, `progress rose to ${r.lastProgress}`);
+    check(`…while an uncancelled ${kind} encode still writes a file`,
+      r.completesWhenNotCancelled === true);
+  }
+
+  /* And the panel wires both halves of the bar to it: rendering is the first
+     half, encoding the second, exactly as the GIF exporter splits it. */
+  const wiredStop = await page.evaluate(async () => {
+    const src = await (await fetch('./src/video/gif.js')).text();
+    const fn = src.slice(src.indexOf('async function exportAnimated'));
+    const body = fn.slice(0, fn.indexOf('\nexport const exportAPNG'));
+    return {
+      showsBar: /v-progress-wrap"\)/.test(body) && /wrap\.style\.display="block"/.test(body),
+      halves: /setP\(p\*0\.5/.test(body) && /setP\(0\.5\+0\.5\*p/.test(body),
+      passesCancel: /cancelled:stillExportCancelled/.test(body),
+    };
+  });
+  check('the animated-still exporter shows a progress bar and splits it in two',
+    wiredStop.showsBar && wiredStop.halves, JSON.stringify(wiredStop));
+  check('…and hands the cancel flag to the encoder', wiredStop.passesCancel);
 }
 
 /* ================================================ sound per clip ========= */

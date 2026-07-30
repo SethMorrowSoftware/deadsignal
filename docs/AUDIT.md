@@ -292,11 +292,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 **Export**
 - MP4 muxing throws `RangeError` past roughly 14 minutes and falls back to WebM
   after a full encode.
-- `runBatch` takes no export lock and stops no preview, so it can run
-  concurrently with a clip export over the same scratch canvases.
-- STOP does nothing during the APNG/WebP encode phase, which also shows no
-  progress.
-- 2×SS is silently ignored by the still exporters.
 
 **Timeline**
 - A trim/reorder drag that pauses for over 600 ms splits into several undo

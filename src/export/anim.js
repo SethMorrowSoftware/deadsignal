@@ -114,13 +114,26 @@ function rawScanlines(rgba, w, h) {
 /**
  * Encode canvases as an APNG.
  *
+ * INTERRUPTIBLE, AND IT SAYS WHERE IT IS. The encode is the slow half — one
+ * zlib pass per frame — and it used to run straight through: ■ STOP raised the
+ * flag, the frame collector honoured it, and this loop did not, so pressing STOP
+ * during the encode did nothing at all and the progress bar sat wherever
+ * collection had left it. Both encoders here now check between frames and
+ * report.
+ *
+ * A cancelled encode returns null, the same as a browser with no encoder for
+ * this format. The caller separates the two by asking `cancelled()` again, which
+ * is cheap and keeps one return type.
+ *
  * @param {HTMLCanvasElement[]} canvases  every frame, all the same size
  * @param {object} [opts]
  * @param {number} [opts.delayMs]  per frame
  * @param {number} [opts.loops]    0 = forever
- * @returns {Promise<Blob>}
+ * @param {function} [opts.onProgress]  called with 0..1 after each frame
+ * @param {function} [opts.cancelled]   polled between frames; true stops it
+ * @returns {Promise<Blob|null>}  null when cancelled
  */
-export async function encodeAPNG(canvases, { delayMs = 100, loops = 0 } = {}) {
+export async function encodeAPNG(canvases, { delayMs = 100, loops = 0, onProgress = null, cancelled = null } = {}) {
   if (!canvases || !canvases.length) throw new Error('nothing to encode');
   const w = canvases[0].width, h = canvases[0].height;
   if (!w || !h) throw new Error('zero-sized frame');
@@ -142,8 +155,10 @@ export async function encodeAPNG(canvases, { delayMs = 100, loops = 0 } = {}) {
 
   let seq = 0;
   for (let i = 0; i < canvases.length; i++) {
+    if (cancelled && cancelled()) return null;
     const ctx = canvases[i].getContext('2d');
     const data = await zlib(rawScanlines(ctx.getImageData(0, 0, w, h).data, w, h));
+    onProgress?.((i + 1) / canvases.length);
     parts.push(fcTL(seq++, delayMs));
     // The first frame is an ordinary IDAT, which is what makes an APNG open as
     // a still PNG in anything that does not know the animation chunks.
@@ -207,20 +222,24 @@ function frameBitstream(bytes) {
  * @param {number} [opts.quality]   0..1, passed to the browser's encoder
  * @returns {Promise<Blob|null>}
  */
-export async function encodeAnimatedWebP(canvases, { delayMs = 100, loops = 0, quality = 0.85 } = {}) {
+export async function encodeAnimatedWebP(canvases,
+    { delayMs = 100, loops = 0, quality = 0.85, onProgress = null, cancelled = null } = {}) {
   if (!canvases || !canvases.length) throw new Error('nothing to encode');
   const w = canvases[0].width, h = canvases[0].height;
   if (!w || !h) throw new Error('zero-sized frame');
 
   const frames = [];
   let anyAlpha = false;
-  for (const c of canvases) {
-    const blob = await new Promise((res) => c.toBlob(res, 'image/webp', quality));
+  for (let i = 0; i < canvases.length; i++) {
+    // Interruptible and reported, for the reason written above encodeAPNG.
+    if (cancelled && cancelled()) return null;
+    const blob = await new Promise((res) => canvases[i].toBlob(res, 'image/webp', quality));
     if (!blob || !blob.type.includes('webp')) return null;   // no WebP encoder here
     const bs = frameBitstream(new Uint8Array(await blob.arrayBuffer()));
     if (!bs) return null;
     anyAlpha = anyAlpha || bs.alpha;
     frames.push(bs.data);
+    onProgress?.((i + 1) / canvases.length);
   }
 
   const anmf = frames.map((data) => riffChunk('ANMF', concat(
