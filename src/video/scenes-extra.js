@@ -198,13 +198,25 @@ export function registerExtraScenes() {
     const flash = Math.floor(t * 2) % 2 === 0;
     ctx.fillStyle = flash ? '#ff2b2b' : '#8b0f0f';
     ctx.fillRect(0, bh, W, Math.max(3, H * 0.02));
-    const msg = (macros(cfg.text || 'THIS IS NOT A TEST') + '   ///   ').repeat(4);
+    /* A CRAWL IS A LOOP, so it has to be tiled rather than repeated.
+       This drew one string of four copies starting at `W - (travelled % width)`,
+       which put its LEFT edge at the right-hand edge of the frame at the top of
+       every cycle: the band started completely empty and filled in from the
+       right over the next three and a half seconds, then snapped back to empty.
+       Measured at 400×300: coverage climbing 0 → 255 of 400 columns across 3.5 s,
+       under half the width for 4.8 s in every 20 — on the one scene in the set
+       whose whole point is that it is an urgent interruption.
+       One copy, tiled from just off the left edge to past the right one, is
+       seamless: at the moment the offset wraps the picture is identical, and
+       there is no part of the cycle with nothing on screen. */
+    const one = macros(cfg.text || 'THIS IS NOT A TEST') + '   ///   ';
     const size = Math.max(11, H * 0.09);
     setFont(ctx, size);
     ctx.textBaseline = 'middle';
-    const wpx = ctx.measureText(msg).width;
-    const x = W - ((t * W * 0.28) % (wpx || W));
-    glowText(ctx, msg, x, bh + (H - bh) * 0.45, flash ? '#fff' : cfg.fg, 6);
+    const unit = Math.max(1, ctx.measureText(one).width);
+    const off = (t * W * 0.28) % unit;
+    const cy = bh + (H - bh) * 0.45;
+    for (let x = -off; x < W; x += unit) glowText(ctx, one, x, cy, flash ? '#fff' : cfg.fg, 6);
     setFont(ctx, size * 0.62);
     ctx.textAlign = 'center';
     glowText(ctx, 'EMERGENCY ALERT SYSTEM', W / 2, H - size * 0.6, '#ffb347', 4);

@@ -299,11 +299,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 - 2×SS is silently ignored by the still exporters.
 
 **Scenes and screens**
-- Emergency Alert's crawl leaves the screen empty for 3.6 s of every 15.7 s.
-- The shared layer canvas is not reset between layers, so a scene renders
-  differently depending on which layer precedes it.
-- Error Dialog hard-codes a 140 px window height, so its title bar leaves the
-  top of a short frame.
 - Ink/Ground are enabled all-or-nothing, so nine templates keep a colour control
   that does nothing.
 - A stego message too large for the canvas is dropped silently on export.

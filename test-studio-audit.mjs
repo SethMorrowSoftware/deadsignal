@@ -3807,6 +3807,47 @@ section('sixteen more scenes');
   check('picking a new scene reaches the document and survives a reload',
     wired.doc === 'teletext' && wired.afterLoad === 'teletext' && wired.cfg === 'teletext',
     JSON.stringify(wired));
+
+  /* A CRAWL IS A LOOP.
+     Emergency Alert drew one string of four copies starting at
+     `W - (travelled % width)`, which put its LEFT edge at the right-hand edge of
+     the frame at the top of every cycle: the band started completely empty and
+     filled in from the right over the next three and a half seconds, then
+     snapped back to empty. Measured at 400×300 over 20 s: coverage climbing
+     0 → 255 of 400 columns, under half the width for 4.8 s of every 20 — on the
+     one scene in the set whose whole point is that it is an urgent
+     interruption. Sampled every 100 ms across more than one full cycle. */
+  const crawl = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const { beginFrame } = await import('./src/core/rng.js');
+    const W = 400, H = 300;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const cfg = { ...S.readVideoCfg(), W, H, bg: '#000', text: 'THIS IS NOT A TEST' };
+    // The crawl band: below the colour bars (H*0.42) and above the footer.
+    const y0 = Math.round(H * 0.44), rows = Math.round(H * 0.72) - y0;
+    let worst = W, empty = 0, thin = 0, n = 0;
+    for (let t = 0; t < 20; t += 0.1) {
+      x.setTransform(1, 0, 0, 1, 0, 0);
+      x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+      beginFrame(Math.round(t * 12));
+      S.SCENES.alert.draw(x, W, H, cfg, t);
+      const d = x.getImageData(0, y0, W, rows).data;
+      let cols = 0;
+      for (let px = 0; px < W; px++) {
+        for (let r = 0; r < rows; r++) {
+          const i = (r * W + px) * 4;
+          if (d[i] + d[i + 1] + d[i + 2] > 90) { cols++; break; }
+        }
+      }
+      n++; if (cols === 0) empty++; if (cols < W * 0.5) thin++;
+      if (cols < worst) worst = cols;
+    }
+    return { W, samples: n, empty, thin, worst };
+  });
+  check('the alert crawl is never off the screen', crawl.empty === 0, `${crawl.empty} of ${crawl.samples} frames`);
+  check('…and always covers most of the band', crawl.thin === 0,
+    `worst ${crawl.worst} of ${crawl.W} columns, ${crawl.thin} thin frames`);
 }
 
 /* ============================================ fifteen more screens ==== */
@@ -3929,6 +3970,49 @@ section('fifteen more screens');
   });
   check('picking a new template reaches the document and survives a reload',
     wired.doc === 'blueprint' && wired.afterLoad === 'blueprint', JSON.stringify(wired));
+
+  /* A WINDOW HAS TO FIT INSIDE THE PICTURE.
+     Error Dialog hard-coded a 140px window height, and `y = (H - h) / 2` goes
+     negative below that: at 520×120 — an ordinary banner shape, and the tab
+     accepts any size from 120×90 up — the title bar sat above the top edge, the
+     close buttons were gone and the OK button hung off the bottom. Every other
+     window template sizes from the frame; this one was the exception, so the
+     check covers all of them rather than just the one that was wrong. */
+  const fit = await page.evaluate(async () => {
+    const T = await import('./src/image/templates.js');
+    await import('./src/image/templates-extra.js');
+    const R = await import('./src/image/render.js');
+    const WINDOWED = ['dialog', 'explorer', 'taskmgr', 'registry', 'vapordesktop', 'chat', 'filecabinet'];
+    const bad = [];
+    for (const id of WINDOWED) {
+      for (const [W, H] of [[520, 420], [520, 120], [400, 100], [120, 90]]) {
+        const c = document.createElement('canvas'); c.width = W; c.height = H;
+        const ctx = c.getContext('2d');
+        const cfg = R.readImageCfg();
+        cfg.W = W; cfg.H = H; cfg.tpl = id; cfg.wrap = true;
+        for (const k of ['scan', 'noise', 'vig', 'chroma', 'bloom', 'dead', 'copy',
+          'skew', 'posterize', 'halftone', 'pixsort']) cfg[k] = 0;
+        cfg.duotone = false; cfg.stego = ''; cfg.invert = '';
+        R.drawImageTo(ctx, W, H, cfg);
+        /* The chrome is #c0c0c0. Find its topmost and bottommost row: a window
+           that fits leaves at least one row of desktop above and below it. */
+        const d = ctx.getImageData(0, 0, W, H).data;
+        let top = -1, bot = -1;
+        for (let row = 0; row < H; row++) {
+          let grey = 0;
+          for (let px = 0; px < W; px++) {
+            const i = (row * W + px) * 4;
+            if (Math.abs(d[i] - 192) < 10 && Math.abs(d[i + 1] - 192) < 10 && Math.abs(d[i + 2] - 192) < 10) grey++;
+          }
+          if (grey > 8) { if (top < 0) top = row; bot = row; }
+        }
+        if (top < 1 || bot > H - 2) bad.push(`${id}@${W}×${H}: rows ${top}–${bot}`);
+      }
+    }
+    return bad;
+  });
+  check('every window template keeps its window inside the frame, down to 120×90',
+    fit.length === 0, fit.slice(0, 5).join(' | '));
 }
 
 /* ============================================ sixteen more sounds ==== */
