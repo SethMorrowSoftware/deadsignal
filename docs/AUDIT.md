@@ -489,6 +489,40 @@ so a keyboard-only reader never lands on it and hears neither title. Fixing that
 means moving these to `aria-disabled` and making every handler refuse for
 itself — a larger change than this round, and recorded under *Still open*.
 
+### A sweep for the rest of the silent failures
+
+Every finding above is the same shape — the tool doing something the author
+would want to know about and keeping it to a `log()` line in a console panel
+that is collapsed by default. So the last pass of this round was a sweep for
+the rest of that shape: **22 fully-swallowing `catch` blocks, 26 that log
+without a toast, 8 `.catch(() => {})`**.
+
+Most are correct. The swallowing ones are almost entirely feature detection
+(`ctx.letterSpacing`, `ctx.filter`, media-element teardown) where there is
+genuinely nothing to say. Three were not:
+
+- **An export that loses its sound.** Four sites — offline and real-time, video
+  and sequence — where `prepareBed` throwing means the file is written *silent*
+  and the only trace is `Audio bed failed … — exporting silent` in the console.
+  The artefact is wrong in the way the author is least likely to notice: it
+  looks right and plays back mute somewhere else, later. Now toasted. The
+  export still completes, which is the correct behaviour — a clip without its
+  bed beats no clip.
+- **RECORD failing at `MediaRecorder`.** Both `new MediaRecorder(stream, opts)`
+  and the bare-options retry can throw, and the handler logged and returned. The
+  button un-greyed and nothing happened. Two lines above it, the "capture not
+  supported" branch has always toasted; these two now agree.
+- **A library row whose bytes never reached disk.** `setAssetPersister`'s
+  failure path logged one `warn`. A browser out of room showed the row, showed
+  the thumbnail, and lost the file on the next reload — first noticed as a
+  bundle export missing half its media. Announced once per run of failures
+  rather than once per asset, the same hysteresis as the autosave readout.
+
+The export check is made by serving `audio/bed.js` as a module that re-exports
+the real one and shadows `prepareBed` alone, so boot is untouched and only the
+bed fails; the asset check rejects `backend.putAsset` for four writes and counts
+the announcements.
+
 ### Investigated and found NOT to be defects
 
 - **Layout at every width from 375 to 1440.** No sideways scroll at any of them,

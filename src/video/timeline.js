@@ -1005,7 +1005,8 @@ async function recordTimelineFast(sched){
        sound with the picture rather than leaving it where it was. */
     bed=await sequenceMix(s);
   }
-  catch(e){ log("Audio bed failed ("+e.message+") — exporting silent.","warn"); }
+  catch(e){ log("Audio bed failed ("+e.message+") — exporting silent.","warn");
+         toast("No sound in this export — the audio bed failed","warn"); }
 
   let res=null, err=null;
   try{
@@ -1073,10 +1074,12 @@ export async function recordTimeline(){ if(tlRecording)return; if(!timeline.leng
       if(AC){ bedCtx=new AC(); const dest=bedCtx.createMediaStreamDestination();
         const src=bedCtx.createBufferSource(); src.buffer=bed; src.connect(dest); src.start();
         const tr=dest.stream.getAudioTracks()[0]; if(tr) stream.addTrack(tr); } }
-  }catch(e){ log("Audio bed failed ("+e.message+") — recording silent.","warn"); }
+  }catch(e){ log("Audio bed failed ("+e.message+") — recording silent.","warn");
+             toast("No sound in this recording — the audio bed failed","warn"); }
   const hasAudio=stream.getAudioTracks().length>0;
   const mime=bestMime(val("v-codec"),hasAudio); let opts={}; if(mime)opts.mimeType=mime;
-  let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message,"err"); return; } }
+  let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
+                                                   toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
   stopTimelinePreview(); tlRecording=true; $("tl-record").disabled=true; $("tl-stop").disabled=false; $("tl-progress-wrap").style.display="block";
   /* STOP discards and an error is an error — same contract as the offline

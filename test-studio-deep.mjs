@@ -3137,6 +3137,90 @@ section('when the tool cannot use what it was given, it says so where you can se
     `kept ${stash.kept} · toast ${stash.toasted}`);
   check('…and the message says what to do instead',
     /save it to a file/i.test(stash.logged || ''), (stash.logged || '').slice(-90));
+
+  /* AN EXPORT THAT LOSES ITS SOUND SAID SO ONLY IN THE CLOSED CONSOLE.
+     Four sites, all `log(..., 'warn')` and nothing else: the author asks for a
+     clip with an audio bed, prepareBed throws, and they get a silent file with
+     no indication anywhere they are looking. The artefact is wrong in a way
+     they will not notice until they play it back somewhere else.
+
+     prepareBed is made to throw by serving audio/bed.js as a module that
+     re-exports the real one and shadows that single name — everything else in
+     the module keeps working, so boot is untouched and only the bed fails. */
+  const silentExport = await (async () => {
+    const ctx = await browser.newContext();
+    try {
+      const p4 = await ctx.newPage();
+      await p4.route(
+        (url) => url.pathname.endsWith('/src/audio/bed.js') && !url.search,
+        (route) => route.fulfill({ status: 200, contentType: 'text/javascript',
+          body: `export * from './bed.js?real=1';
+                 export async function prepareBed(){ throw new Error('deliberate bed failure'); }` }));
+      await p4.goto(PAGE, { waitUntil: 'domcontentloaded' });
+      await p4.waitForFunction(() => document.documentElement.dataset.studio === 'ready',
+        null, { timeout: 30000 });
+      return await p4.evaluate(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const toasts = () => document.getElementById('toasts').textContent;
+        const set = (id, v) => { const e = document.getElementById(id); if (!e) return;
+          e.value = String(v);
+          e.dispatchEvent(new Event('input', { bubbles: true }));
+          e.dispatchEvent(new Event('change', { bubbles: true })); };
+        document.querySelector('.tab[data-view=video]').click();
+        await sleep(200);
+        set('v-dur', 1); set('v-fps', 8); set('v-w', 160); set('v-h', 120);
+        await sleep(300);
+        const t0 = toasts().length;
+        document.getElementById('v-record').click();
+        for (let i = 0; i < 90; i++) {
+          await sleep(300);
+          if (/audio bed failed/i.test(toasts())) break;
+        }
+        await sleep(400);
+        return { toasted: toasts().slice(t0).replace(/\s+/g, ' ').trim(),
+                 logged: document.getElementById('console').textContent.replace(/\s+/g, ' ') };
+      });
+    } finally { await ctx.close(); }
+  })();
+  check('an export whose audio bed failed says so where the author is looking',
+    /audio bed failed/i.test(silentExport.toasted || ''),
+    (silentExport.toasted || '(no toast)').slice(0, 90));
+  check('…and the file is still produced rather than the export being abandoned',
+    /Exported \d+ frames/.test(silentExport.logged || ''),
+    (silentExport.logged || '').slice(-70));
+
+  /* A LIBRARY ROW WHOSE BYTES NEVER REACHED DISK.
+     setAssetPersister's failure path logged one warn line. So a browser out of
+     room showed the row, showed the thumbnail, and lost the file on reload —
+     first noticed as a bundle export missing half its media. Announced once per
+     run of failures, not once per asset. */
+  const assetWrite = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const toasts = () => document.getElementById('toasts').textContent;
+    const real = S.backend.putAsset.bind(S.backend);
+    S.backend.putAsset = () => Promise.reject(new Error('deliberate quota failure'));
+    const t0 = toasts().length;
+    const c0 = document.getElementById('console').textContent.length;
+    for (let i = 0; i < 4; i++) {
+      S.addToLibrary(new Blob(['x'.repeat(32)], { type: 'image/png' }), 'png', 'image', 'persist-probe-' + i);
+      await sleep(150);
+    }
+    await sleep(500);
+    const said = toasts().slice(t0).replace(/\s+/g, ' ').trim();
+    S.backend.putAsset = real;
+    S.clearLibrary();
+    return { said,
+      announcements: (said.match(/not being saved/g) || []).length,
+      logged: document.getElementById('console').textContent.slice(c0).replace(/\s+/g, ' ') };
+  });
+  check('an asset that could not be stored is announced, not left as a row that vanishes',
+    /not being saved/.test(assetWrite.said || ''), (assetWrite.said || '(no toast)').slice(0, 70));
+  check('…once for the run of failures, not once per file',
+    assetWrite.announcements === 1, `${assetWrite.announcements} announcements for 4 failed writes`);
+  check('…and the log says the rows will not survive a reload',
+    /will not survive a reload/.test(assetWrite.logged || ''),
+    (assetWrite.logged || '').slice(0, 90));
 }
 
 console.log('-'.repeat(64));

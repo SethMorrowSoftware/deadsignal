@@ -344,8 +344,20 @@ async function initPersistence(session, { arrivedByShareLink=false }={}){
   // Every generated blob goes to the asset store from here on. The store was
   // built for exactly this and nothing called it, so "generated assets are
   // lost on refresh" was still true however good the autosave was.
+  /* A failed asset write leaves a library row whose bytes are not on disk: the
+     row is there, the thumbnail is there, and after a reload the file is gone.
+     It said so only in a line of the closed console, so the first anyone knew
+     was a bundle export missing half its media. `first` keeps a browser that
+     has run out of room from producing one toast per generated asset — the same
+     hysteresis the autosave readout uses. */
+  let assetWritesFailing=false;
   setAssetPersister((key,blob)=>{
-    backend.putAsset(key,blob,{}).catch((e)=>log("Could not store asset: "+e.message,"warn"));
+    backend.putAsset(key,blob,{})
+      .then(()=>{ assetWritesFailing=false; })
+      .catch((e)=>{
+        log("Could not store asset: "+e.message+" — this item is in the library for now, but will not survive a reload. Download anything you need to keep.","warn");
+        if(!assetWritesFailing){ assetWritesFailing=true; toast("Generated files are not being saved","warn"); }
+      });
   });
   let restoreFailed=false;
   try{
