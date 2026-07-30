@@ -287,12 +287,25 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-None of these are fixed. They are recorded with enough detail to act on.
+One item, and it is not a code defect.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
-  should make. Nothing else here is blocked on it, but a beta without one is a
-  beta nobody can legally build on.
+  should make, and it is deliberately left out. Nothing else here is blocked on
+  it, but a beta without one is a beta nobody can legally build on.
+
+Every other finding this audit raised has been either fixed above or recorded
+under *Investigated and found NOT to be defects*. Two caveats on that, because
+"the list is empty" is a weaker claim than it looks:
+
+- **40 of the 128 workflow agents died on API 529s.** The findings they had
+  already filed were worked through; whatever they had not yet filed was never
+  seen. This is an audit of what was looked at, not a proof that nothing else
+  exists.
+- **Two of the reported numbers did not reproduce**, and both are recorded as
+  measured rather than as filed: the MP4 ceiling is around 66 minutes rather than
+  14, and the editor's reflow broke at about 600 px rather than 500. A finding
+  worth fixing can still be wrong about its own detail.
 
 ---
 
