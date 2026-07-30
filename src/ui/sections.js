@@ -106,6 +106,17 @@ function build(entry) {
   /* Above everything the panel holds, and sticky: scrolling a long section must
      not take the way back out of the panel with it. */
   entry.panel.insertBefore(strip, entry.panel.firstChild);
+  /* The strip is sticky INSIDE the panel's scrollport, so everything that
+     scrolls a control into view — keyboard focus, the palette's jump, a
+     suite's scrollIntoView — must aim below it, or on a short pane the
+     control lands exactly under the strip. scroll-padding is how a scroll
+     container declares that, and it is set from measurement rather than a
+     constant because the strip wraps to more rows as the pane narrows. */
+  const declare = () => {
+    entry.panel.style.scrollPaddingTop = strip.offsetHeight + 'px';   /* dom-only: measured chrome height */
+  };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(declare).observe(strip);
+  declare();
 }
 
 let _entries = [];

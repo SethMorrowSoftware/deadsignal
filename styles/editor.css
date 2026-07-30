@@ -414,7 +414,14 @@ body.nle .nle-pane{
    turns these on once boot applies body.nle. */
 .nle-inspector{
   grid-area:clip; border-left:1px solid var(--edge);
-  max-height:46vh;
+  /* Capped so the settings pane below keeps a working share of the column.
+     A flat 46vh read fine on a tall window and starved the pane on a short
+     one: at 620px the clip pane took 285px and left the settings pane 78px —
+     a scrollport shorter than its own sticky section strip. The calc term
+     hands the fixed chrome (menubar, transport, status, timeline minimum)
+     and ~200px of settings their height first; the clip pane caps at what
+     is left, and never below 96px so it stays readable rather than vanishing. */
+  max-height:clamp(96px, calc(100vh - 420px), 46vh);
 }
 .nle-inspector .insp-body{ overflow:auto; padding:8px 10px; }
 .insp-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }

@@ -1033,7 +1033,7 @@ function enterEditor() {
      twice. */
   const settings = $('nle-settings');
   if (settings) {
-    for (const id of ['aesthetic', 'seed', 'crt-intensity', 'contrast', 'complexity', 'palette-open', 'proj-save']) {
+    for (const id of ['aesthetic', 'seed', 'crt-intensity', 'save-state', 'build-tag', 'contrast', 'complexity', 'palette-open', 'proj-save']) {
       const ctl = $(id)?.closest('.ctl');
       if (!ctl || ctl.parentElement === settings) continue;
       settings.appendChild(ctl);
