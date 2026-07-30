@@ -31,6 +31,21 @@ import { log } from '../core/dom.js';
 const _pool = new Map();
 /** Keys being loaded, so a render loop asking sixty times a second loads once. */
 const _loading = new Set();
+/**
+ * Keys that would not decode, against the bytes that would not decode.
+ *
+ * `_loading` stops CONCURRENT attempts, and nothing stopped the next one: a
+ * failure revoked its URL, wrote a line to the log and left no trace, so the
+ * synchronous lookup in videoSource() asked again on the very next preview
+ * frame. At 12fps that is twelve new `<video>` elements a second, each holding a
+ * blob URL through an 8-second timeout, and a log line for every one — while the
+ * docblock below promised the failure was "reported once".
+ *
+ * Held against the blob rather than as a bare key so re-importing the file
+ * genuinely retries: a row whose bytes have been replaced is a different
+ * question, and answering the old one forever would be its own bug.
+ */
+const _failed = new Map();    // key → the blob that failed
 
 /**
  * Browsers stop decoding somewhere around a dozen simultaneous media elements.
@@ -80,6 +95,8 @@ export async function ensureVideoSource(choice) {
 
   const row = library.find((it) => it.key === key);
   if (!row?.blob) return null;
+  // Asked and answered — unless the bytes have changed since.
+  if (_failed.get(key) === row.blob) return null;
 
   _loading.add(key);
   const url = URL.createObjectURL(row.blob);
@@ -100,6 +117,7 @@ export async function ensureVideoSource(choice) {
     return el;
   } catch {
     URL.revokeObjectURL(url);
+    _failed.set(key, row.blob);
     log(`Footage "${row.name}.${row.ext}" could not be decoded here`, 'warn');
     return null;
   } finally {
@@ -119,6 +137,15 @@ function evict() {
   }
 }
 
+/** How many keys are remembered as undecodable. For the suites. */
+export const failedVideoSources = () => _failed.size;
+/** Forget a remembered failure, so the next ask tries again. */
+export function retryVideoSource(choice) {
+  const key = bare(choice);
+  if (key) _failed.delete(key);
+  else _failed.clear();
+}
+
 /** Release one source's decoder and its object URL. */
 export function dropVideoSource(key) {
   const hit = _pool.get(key);
@@ -134,6 +161,10 @@ export function dropVideoSource(key) {
 export function clearVideoSources() {
   for (const key of [...
     _pool.keys()]) dropVideoSource(key);
+  /* The failure memory goes too: it is keyed on rows that no longer exist, and a
+     project load or a library clear is exactly the moment "this file will not
+     decode" stops being a statement about anything. */
+  _failed.clear();
 }
 
 /** Load every key a sequence needs, so the first frame is not black. */

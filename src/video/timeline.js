@@ -2,7 +2,7 @@
 import { $, clamp, escHtml, log, num, toast, val } from '../core/dom.js';
 import { readRecipe } from '../core/recipes.js';
 import { MAX_DIM, MIN_H, MIN_W } from '../core/formats.js';
-import { MAX_CLIP, MAX_CLIPS, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf, spineSpans } from '../doc/timeline.js';
+import { MAX_CLIP, MAX_CLIPS, MAX_START, MIN_CLIP, TRANSITIONS, clipLength, clipSpeed, flashHalf, footageKeyOf, isFirstOnTrack, isOverlay, isTrimmed, normalizeClips, overlaps, scheduleOf, sourceTimeOf, spineSpans } from '../doc/timeline.js';
 import { audioEnd, makeAudioClip, normalizeAudioClips } from '../doc/audioclip.js';
 import { hasSound, mixParts, mixSignature } from '../doc/audiomix.js';
 import { isIdentity, invertPoint, matrixFor } from '../doc/transform.js';
@@ -633,13 +633,16 @@ export function renderTimelineFrame(ctx,T,sched){ const {clips,starts,tl}=sched;
        the next. Drawn from BOTH sides of the join — this clip's own entry and
        the next clip's entry seen from here — which is what makes it
        symmetrical without either clip knowing about the other. */
+    /* Bounded by the clips it sits between, like every other transition here —
+       a 4s dip on a 1s clip used to wash the whole clip and never complete. See
+       doc/timeline.js flashHalf. */
     let flash=0; let flashColour="#000000";
     if(p>0 && isFlash(clips[i].transition) && clips[i].xdur>0){
-      const hd=clips[i].xdur/2;
-      if(localT<hd){ flash=Math.max(flash,1-localT/hd); flashColour=FLASH[clips[i].transition]; } }
+      const hd=flashHalf(clips[i].xdur,len,clipLength(clips[spine[p-1]]));
+      if(hd>0 && localT<hd){ flash=Math.max(flash,1-localT/hd); flashColour=FLASH[clips[i].transition]; } }
     if(nxt && isFlash(nxt.transition) && nxt.xdur>0){
-      const hd=nxt.xdur/2; const left=len-localT;
-      if(left<hd && (1-left/hd)>=flash){ flash=1-left/hd; flashColour=FLASH[nxt.transition]; } }
+      const hd=flashHalf(nxt.xdur,len,clipLength(nxt)); const left=len-localT;
+      if(hd>0 && left<hd && (1-left/hd)>=flash){ flash=1-left/hd; flashColour=FLASH[nxt.transition]; } }
     if(flash>0){
       const a=clamp(flash,0,1);
       const rgb=flashColour==="#000000"?"0,0,0":flashColour==="#ffffff"?"255,255,255":"255,217,160";

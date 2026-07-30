@@ -27,6 +27,17 @@ export const insert = (path, value, index = -1, opts = {}) =>
 export const remove = (path, index, opts = {}) =>
   ({ op: 'remove', path, index, ...opts });
 
+/* How long after the previous command a same-keyed one still folds into it.
+ *
+ * A time window is the right rule for a keyboard repeat or a slider nudged in
+ * bursts, where there is no signal for when the gesture ends. It is the wrong
+ * rule for a POINTER DRAG, which has an exact beginning and end: hold a trim
+ * handle still for two thirds of a second in the middle of a drag — or let a
+ * heavy filter chain stall the main thread for that long, which it can — and one
+ * gesture became two, three, four undo entries. Undoing the drag then took as
+ * many presses as there happened to be pauses in it, a number the author has no
+ * way to know. Hence beginGesture(): while a gesture is open, its key folds
+ * regardless of elapsed time. */
 const COALESCE_WINDOW_MS = 600;
 
 export class Store {
@@ -45,7 +56,23 @@ export class Store {
     this._limit = opts.limit ?? 200;
     this._now = opts.now ?? (() => Date.now());
     this._muted = 0;
+    this._gesture = null;
   }
+
+  /* -------------------------------------------------------- gestures -- */
+
+  /**
+   * Open a gesture: every command carrying `key` folds into one undo entry
+   * until endGesture(), however long the pointer rests mid-drag.
+   *
+   * Idempotent and last-one-wins — a pointerdown inside an unfinished gesture
+   * (a lost pointerup, a cancelled drag) replaces it rather than nesting, so a
+   * dropped end event cannot glue two unrelated gestures together forever.
+   */
+  beginGesture(key) { this._gesture = key || null; return this._gesture; }
+  /** Close the gesture. Commands after this coalesce by the time window again. */
+  endGesture() { this._gesture = null; }
+  get gestureKey() { return this._gesture; }
 
   get doc() { return this._doc; }
   get canUndo() { return this._undo.length > 0; }
@@ -87,8 +114,9 @@ export class Store {
       const top = this._undo.at(-1);
       // Dragging a slider emits a command per pixel; collapse them into one
       // undo entry while keeping the ORIGINAL before-value.
-      if (top && entry.coalesceKey && top.coalesceKey === entry.coalesceKey &&
-          entry.at - top.at <= COALESCE_WINDOW_MS) {
+      const sameKey = top && entry.coalesceKey && top.coalesceKey === entry.coalesceKey;
+      const inGesture = sameKey && this._gesture === entry.coalesceKey;
+      if (sameKey && (inGesture || entry.at - top.at <= COALESCE_WINDOW_MS)) {
         top.steps.push(...steps);
         top.at = entry.at;
       } else {

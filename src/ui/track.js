@@ -15,6 +15,7 @@
  * dragging at it, and the two write the same clips.
  */
 import { $, escHtml } from '../core/dom.js';
+import { getStore } from '../doc/session.js';
 import { MAX_CLIP, MAX_START, MAX_TRANSITION, clipLength, isFirstOnTrack, isOverlay, overlaps } from '../doc/timeline.js';
 import { clampScroll, clampZoom, pxPerSecond, pxToTime, snapCandidates, snapMove, snapTime,
          tickLabel, tickStep, tickTimes, timeToPx } from './timescale.js';
@@ -492,6 +493,16 @@ function wire(box) {
     return r ? clientX - r.left - LANE_INSET : 0;
   };
 
+  /* ONE DRAG IS ONE UNDO ENTRY, however long the pointer rests.
+     Every drag here already shares one coalesceKey for its whole gesture, but
+     the store folded on a 600ms window — so holding a trim handle still for two
+     thirds of a second, or a heavy filter chain stalling the main thread for
+     that long, split one gesture into several entries. Undoing the drag then
+     took as many presses as it happened to contain pauses. pointerdown opens
+     the gesture, pointerup / pointercancel closes it. */
+  const openGesture = (key) => { getStore()?.beginGesture(key); };
+  const closeGesture = () => { getStore()?.endGesture(); };
+
   box.addEventListener('pointerdown', (e) => {
     /* Before the trim grips, because it sits inside the block and overlaps the
        left one: a transition is measured from the clip's start, so its handle
@@ -503,6 +514,7 @@ function wire(box) {
       if (!c) return;
       setSelected(k, 'V');
       drag = { kind: 'xdur', i: k, x0: e.clientX, dur0: Number(c.xdur) || 0, key: `tl-x-${dragSeq++}` };
+      openGesture(drag.key);
       try { box.setPointerCapture?.(e.pointerId); } catch { /* no active pointer */ }
       _dragging = true;
       e.preventDefault();
@@ -530,6 +542,7 @@ function wire(box) {
       : isOverlay(clips[i])
         ? { kind: 'slip', i, x0: e.clientX, at0: clips[i].at ?? 0, moved: false, key }
         : { kind: 'move', i, x0: e.clientX, moved: false, key };
+    openGesture(key);
     // Throws if the pointer is already gone by the time the handler runs; that
     // is a lost capture, not a lost drag, and the move/up listeners sit on the
     // container anyway.
@@ -555,6 +568,7 @@ function wire(box) {
     drag = grip
       ? { lane: 'A', kind: 'atrim', i: k, edge: grip.dataset.edge, x0: e.clientX, in0: c.in, out0: c.out, key }
       : { lane: 'A', kind: 'aslip', i: k, x0: e.clientX, at0: c.at ?? 0, moved: false, key };
+    openGesture(key);
     try { box.setPointerCapture?.(e.pointerId); } catch { /* no active pointer */ }
     node.classList.add('dragging');
     _dragging = true;
@@ -678,6 +692,7 @@ function wire(box) {
 
   const end = () => {
     _dragging = false;
+    closeGesture();
     if (!drag) return;
     const wasClick = (drag.kind === 'move' || drag.kind === 'slip' || drag.kind === 'aslip') && !drag.moved;
     drag = null;

@@ -293,12 +293,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 - MP4 muxing throws `RangeError` past roughly 14 minutes and falls back to WebM
   after a full encode.
 
-**Timeline**
-- A trim/reorder drag that pauses for over 600 ms splits into several undo
-  entries.
-- Undecodable footage retries the decode on every preview frame.
-- A dip/burn duration is not bounded by the clip it belongs to.
-
 **Backend**
 - Quota counts assets only; project documents and their 50-deep autosave history
   are unbounded and unmetered.

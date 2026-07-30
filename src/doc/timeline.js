@@ -374,6 +374,30 @@ export function scheduleOf(clips) {
   return { starts, duration: round2(Math.max(acc, overlayEnd)) };
 }
 
+/**
+ * Half of a dip/burn flash, bounded by the two clips it sits between.
+ *
+ * A flash does not overlap: it shows one clip, a colour, then the next, so half
+ * of it is drawn at the tail of the outgoing clip and half at the head of the
+ * incoming one. The overlapping transitions clamp their overlap to
+ * `min(xdur, len, prevLen)`; the flash branch used `xdur / 2` raw, and nothing
+ * stopped that being longer than either clip.
+ *
+ * With the maximum 4s dip on a 1s clip that made `hd` 2s, so `localT < hd` held
+ * for the clip's entire length: the whole clip was washed to black at an alpha
+ * that started at 1 and never got below 0.5, the dip never completed, and the
+ * picture the author trimmed was never visible at all. The tail side did the
+ * same to the clip before it.
+ *
+ * Half of the SHORTER neighbour, so the flash stays symmetrical about the join
+ * and neither side can take more than half of the clip it is drawn in.
+ */
+export function flashHalf(xdur, lenA, lenB) {
+  const half = Math.max(0, num(xdur, 0)) / 2;
+  const room = Math.max(0, Math.min(num(lenA, 0), num(lenB, 0))) / 2;
+  return Math.min(half, room);
+}
+
 /** The indices of the V1 clips, in order. The spine, skipping every overlay. */
 export function spineOf(clips) {
   const out = [];

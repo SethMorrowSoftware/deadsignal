@@ -22,7 +22,7 @@ import { fileOf, installedFiles, mergeEntries, normalizeExisting, parseIndex, pa
   from './src/library/merge.js';
 import { FORMATS, MAX_DIM, fitRatio, formatFor } from './src/core/formats.js';
 import { MAX_CLIP, MAX_CLIPS, MAX_SPEED, MAX_START, MIN_CLIP, MIN_SPEED, TRACKS, TRANSITIONS,
-         clipLength, clipSpeed, isFirstOnTrack, isOverlay, isTrimmed, makeClip, normalizeClips,
+         clipLength, clipSpeed, flashHalf, isFirstOnTrack, isOverlay, isTrimmed, makeClip, normalizeClips,
          overlaps, scheduleOf, sourceTimeOf, speedSummary, spineSpans }
   from './src/doc/timeline.js';
 import { REC_DURATION, SOURCE_TAB, SOURCE_VIEW, fieldsFor, isLookKey, patchFor, patchForTrack,
@@ -233,6 +233,32 @@ section('patch / insert / remove');
   })());
 }
 
+section('a flash transition is bounded by its clips');
+{
+  /* dip / dipwhite / burn do not overlap: half is drawn at the tail of the
+     outgoing clip and half at the head of the incoming one. The overlapping
+     kinds clamp to min(xdur, len, prevLen); this branch used xdur / 2 raw. With
+     the maximum 4s dip on a 1s clip that made the half 2s, so the wash covered
+     the clip's whole length, never completed, and the picture the author trimmed
+     was never once visible. Measured in the browser suite: 0 of 10 sampled
+     instants inside the clip showed it, and its mean peaked at 42 of the 93 it
+     renders as with a cut. */
+  check('a flash is half the shorter neighbour, not half its own duration',
+        flashHalf(4, 1, 1) === 0.5, String(flashHalf(4, 1, 1)));
+  check('…so it always finishes inside the clip it enters',
+        flashHalf(4, 1, 1) < 1 && flashHalf(10, 0.5, 3) < 0.5,
+        `${flashHalf(4, 1, 1)} / ${flashHalf(10, 0.5, 3)}`);
+  check('…a duration that fits is left alone', flashHalf(0.6, 5, 5) === 0.3,
+        String(flashHalf(0.6, 5, 5)));
+  check('…the shorter of the two clips decides', flashHalf(4, 6, 0.4) === 0.2,
+        String(flashHalf(4, 6, 0.4)));
+  check('…zero and nonsense are zero, not NaN',
+        flashHalf(0, 5, 5) === 0 && flashHalf('x', 5, 5) === 0 && flashHalf(4, 0, 5) === 0,
+        `${flashHalf(0, 5, 5)} ${flashHalf('x', 5, 5)} ${flashHalf(4, 0, 5)}`);
+  check('…and a negative duration cannot make it negative', flashHalf(-4, 5, 5) === 0,
+        String(flashHalf(-4, 5, 5)));
+}
+
 section('coalescing + transactions');
 {
   const s = new Store(newDoc(), { now: () => 1000 });   // frozen clock: same window
@@ -247,6 +273,50 @@ section('coalescing + transactions');
   s2.apply(set('tabs.video.v-scan', '10', { coalesceKey: 'v-scan' }));
   s2.apply(set('tabs.video.v-scan', '20', { coalesceKey: 'v-scan' }));
   check('a pause between changes breaks coalescing', s2.undoDepth === 2, `depth ${s2.undoDepth}`);
+
+  /* A POINTER DRAG IS NOT A TIME WINDOW.
+     The 600ms rule is right for a keyboard repeat, where nothing says when the
+     gesture ends. A drag says exactly when: pointerdown and pointerup. Hold a
+     trim handle still for two thirds of a second mid-drag — or let a heavy filter
+     chain stall the main thread for that long, which it can — and one gesture
+     became several undo entries, so undoing the drag took as many presses as it
+     happened to contain pauses, a number the author cannot know. */
+  const s2b = new Store(newDoc(), { now: (() => { let t = 0; return () => (t += 5000); })() });
+  s2b.beginGesture('tl-drag-1');
+  for (const v of ['0.1', '0.4', '0.9', '1.4']) {
+    s2b.apply(set('timeline.clips.0.in', v, { coalesceKey: 'tl-drag-1' }));
+  }
+  check('an open gesture folds however long the pointer rests',
+        s2b.undoDepth === 1, `depth ${s2b.undoDepth}`);
+  check('…and the gesture key is readable while it is open',
+        s2b.gestureKey === 'tl-drag-1', String(s2b.gestureKey));
+  s2b.endGesture();
+  s2b.apply(set('timeline.clips.0.in', '2.0', { coalesceKey: 'tl-drag-1' }));
+  check('…and a change after pointerup is its own entry', s2b.undoDepth === 2, `depth ${s2b.undoDepth}`);
+  s2b.undo();
+  check('…so one undo puts the whole drag back', s2b.get('timeline.clips.0.in') === '1.4',
+        String(s2b.get('timeline.clips.0.in')));
+  s2b.undo();
+  check('…and the next undo reverses the drag entirely',
+        s2b.get('timeline.clips.0.in') === undefined, String(s2b.get('timeline.clips.0.in')));
+
+  /* A DIFFERENT key must not be swallowed by an open gesture, or a drag would
+     absorb any unrelated edit that landed during it. */
+  const s2c = new Store(newDoc(), { now: () => 1000 });
+  s2c.beginGesture('tl-drag-9');
+  s2c.apply(set('timeline.clips.0.in', '0.5', { coalesceKey: 'tl-drag-9' }));
+  s2c.apply(set('tabs.video.v-scan', '44', { coalesceKey: 'v-scan' }));
+  check('an open gesture only folds its own key', s2c.undoDepth === 2, `depth ${s2c.undoDepth}`);
+
+  /* A lost pointerup must not glue the next gesture onto the last one. */
+  const s2d = new Store(newDoc(), { now: () => 1000 });
+  s2d.beginGesture('tl-drag-a');
+  s2d.apply(set('timeline.clips.0.in', '0.5', { coalesceKey: 'tl-drag-a' }));
+  s2d.beginGesture('tl-drag-b');                 // pointerdown with no pointerup
+  s2d.apply(set('timeline.clips.0.out', '3.5', { coalesceKey: 'tl-drag-b' }));
+  check('a second pointerdown replaces the open gesture rather than nesting',
+        s2d.undoDepth === 2 && s2d.gestureKey === 'tl-drag-b',
+        `depth ${s2d.undoDepth}, key ${s2d.gestureKey}`);
 
   const s3 = new Store(newDoc(), { now: clock });
   s3.transaction(() => {

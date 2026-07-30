@@ -30,6 +30,7 @@
  * that reads as "sometimes it feels sticky" rather than as an error.
  */
 import { $, toast } from '../core/dom.js';
+import { getStore } from '../doc/session.js';
 import { clipLength } from '../doc/timeline.js';
 import { HANDLE_PX, ROT_ARM_PX, handlesFor, hitHandle, invertPoint, isIdentity, makeTransform,
          matrixFor, moveBy, rotAt, scaleAt } from '../doc/transform.js';
@@ -235,6 +236,9 @@ export function initMonitor() {
   _wired = true;
 
   const end = () => {
+    // Closed unconditionally: a pointerup that arrives with no live drag still
+    // has to leave the store's gesture flag clear. See Store.beginGesture.
+    getStore()?.endGesture();
     if (!_drag) return;
     _drag = null;
     _seq++;
@@ -274,6 +278,9 @@ export function initMonitor() {
     const b = _mode === 'mask' ? invertPoint(t.clip, t.W, t.H, p.x, p.y) : null;
     _drag = { kind, i: t.i, W: t.W, H: t.H, x0: p.x, y0: p.y,
       bx0: b ? b.x : 0, by0: b ? b.y : 0, mask: _mode === 'mask', from: v, key: `mon-${_seq}` };
+    /* One transform drag is one undo entry, however long the pointer rests
+       mid-gesture — the 600ms window alone was splitting it. */
+    getStore()?.beginGesture(_drag.key);
     try { canvas.setPointerCapture?.(e.pointerId); } catch { /* no active pointer */ }
     e.preventDefault();
   });

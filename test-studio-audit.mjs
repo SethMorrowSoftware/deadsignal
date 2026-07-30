@@ -2681,6 +2681,42 @@ section('a timeline that is a timeline');
   check('…the whole drag is ONE undo entry', drag.entries === 1, String(drag.entries));
   check('…and undoing it restores the pre-drag trim', drag.afterUndo === drag.before, String(drag.afterUndo));
 
+  /* …INCLUDING A DRAG THAT PAUSES.
+     The check above runs twelve pointermoves in one tick, which no 600ms window
+     could split. A real drag rests: the pointer stops on a snap, or a heavy
+     filter chain stalls the main thread. Coalescing was purely time-based, so a
+     pause longer than 600ms started a new undo entry — one gesture became
+     several, and undoing it took as many presses as it happened to contain
+     pauses. This drives the same gesture with a real wait in the middle, which
+     is the only version of it that ever failed. */
+  const paused = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    S.editClip(0, { in: 0, out: 6 }, 'reset');
+    const box = document.getElementById('tl-track');
+    const grip = box.querySelector('.tl-clip[data-i="0"] .tl-grip.r');
+    const r = grip.getBoundingClientRect();
+    const before = S.timeline[0].out;
+    const depth0 = S.store.undoDepth;
+    const at = (x) => ({ bubbles: true, clientX: x, clientY: r.top + r.height / 2, pointerId: 12 });
+    grip.dispatchEvent(new PointerEvent('pointerdown', at(r.left + 2)));
+    for (let k = 1; k <= 4; k++) box.dispatchEvent(new PointerEvent('pointermove', at(r.left - k * 5)));
+    await new Promise((res) => setTimeout(res, 800));      // longer than the window
+    for (let k = 5; k <= 8; k++) box.dispatchEvent(new PointerEvent('pointermove', at(r.left - k * 5)));
+    await new Promise((res) => setTimeout(res, 800));
+    for (let k = 9; k <= 12; k++) box.dispatchEvent(new PointerEvent('pointermove', at(r.left - k * 5)));
+    box.dispatchEvent(new PointerEvent('pointerup', at(r.left - 60)));
+    const dragged = S.timeline[0].out;
+    const entries = S.store.undoDepth - depth0;
+    S.undo();
+    return { before, dragged, entries, afterUndo: S.timeline[0].out,
+             gestureOpen: S.store.gestureKey };
+  });
+  check('a drag that rests twice is still ONE undo entry',
+        paused.entries === 1, `${paused.entries} entries`);
+  check('…and one undo still restores the pre-drag trim',
+        paused.dragged < paused.before && paused.afterUndo === paused.before, JSON.stringify(paused));
+  check('…and pointerup closed the gesture', paused.gestureOpen === null, String(paused.gestureOpen));
+
   const reorder = await page.evaluate(() => {
     const S = window.DeadSignalStudio;
     const order = () => S.timeline.map((c) => c.label);
@@ -3499,6 +3535,75 @@ section('a timeline that is a timeline');
     check('…and the decoder pool stays within its cap',
       footage.pool.count > 0 && footage.pool.count <= footage.pool.cap, JSON.stringify(footage.pool));
   }
+
+  /* FOOTAGE THAT WILL NOT DECODE IS ASKED ONCE.
+     `_loading` stopped a CONCURRENT second attempt and nothing stopped the next
+     one, so a failure left no trace and the synchronous lookup in videoSource()
+     asked again on the following preview frame: a new <video>, a new blob URL
+     held through an 8-second timeout, and a log line, every frame — while the
+     docblock promised the failure was "reported once". Measured over twenty
+     frames of preview: 20 extra elements before, 0 after.
+
+     Driven one frame at a time WITH THE GAP ELAPSING, which matters: asking
+     sixty times inside one tick is suppressed by `_loading` and hides the whole
+     defect. The first version of this check did exactly that and saw one extra
+     element instead of twenty. */
+  const undecodable = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const V = await import('./src/video/sources.js');
+    const L = await import('./src/library/library.js');
+    V.clearVideoSources();
+    S.clearLibrary();
+
+    const junk = () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'video/mp4' });
+    const keyOf = (name) => {
+      L.addToLibrary(junk(), 'mp4', 'video', name, 2);
+      return L.library.at(-1).key;
+    };
+    const key = keyOf('undecodable');
+
+    let made = 0;
+    const realCreate = document.createElement.bind(document);
+    document.createElement = (tag, ...rest) => {
+      if (String(tag).toLowerCase() === 'video') made++;
+      return realCreate(tag, ...rest);
+    };
+    try {
+      await V.ensureVideoSource(key);
+      const first = made;
+      for (let i = 0; i < 20; i++) {
+        V.videoSource(key);
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      const afterFrames = made;
+      // Different bytes are a different question, so they get asked.
+      const key2 = keyOf('undecodable-2');
+      await V.ensureVideoSource(key2);
+      const afterSecondRow = made;
+      // And an explicit retry asks again.
+      V.retryVideoSource(key);
+      await V.ensureVideoSource(key);
+      const afterRetry = made;
+      const remembered = V.failedVideoSources();
+      V.clearVideoSources();
+      return { first, extraOverTwentyFrames: afterFrames - first,
+               secondRowTried: afterSecondRow - afterFrames,
+               retryTried: afterRetry - afterSecondRow,
+               remembered, forgottenOnClear: V.failedVideoSources() };
+    } finally {
+      document.createElement = realCreate;
+      S.clearLibrary();
+    }
+  });
+  check('undecodable footage is tried once, not once per frame',
+    undecodable.first === 1 && undecodable.extraOverTwentyFrames === 0,
+    JSON.stringify(undecodable));
+  check('…a different file is still a different question',
+    undecodable.secondRowTried === 1, String(undecodable.secondRowTried));
+  check('…an explicit retry asks again', undecodable.retryTried === 1, String(undecodable.retryTried));
+  check('…and clearing the sources forgets what failed',
+    undecodable.remembered === 2 && undecodable.forgottenOnClear === 0,
+    `${undecodable.remembered} → ${undecodable.forgottenOnClear}`);
 
   check('the pane sits in the properties column, right of the picture',
     insp.editor && insp.visible && insp.rightOfStage,
@@ -6642,6 +6747,50 @@ section('wipe, slide, key marks and a draggable transition length');
      the ones that are no longer inside the window. */
   check('…and trimming the clip drops the keys that fall outside it',
     marks.afterTrim === 2, `${marks.afterTrim} of 3`);
+
+  /* A DIP HAS TO FINISH INSIDE THE CLIP IT ENTERS.
+     The overlapping transitions clamp to min(xdur, len, prevLen); the flash
+     branch (dip / dipwhite / burn) used xdur / 2 raw, and nothing stopped that
+     being longer than either clip. With the maximum 4s dip on a 1s clip the half
+     was 2s, so the wash covered the clip's entire length: it never completed,
+     and the picture the author trimmed was never once seen. Measured against the
+     same pair joined with a CUT, which is what the clip looks like undipped. */
+  const dip = await page.evaluate(() => {
+    const S = window.DeadSignalStudio;
+    const build = (transition, xdur) => {
+      S.setTimelineClips([
+        { kind: 'scene', label: 'A', rec: { 'v-scene': 'bars' }, in: 0, out: 1, transition: 'cut', xdur: 0 },
+        { kind: 'scene', label: 'B', rec: { 'v-scene': 'bars' }, in: 0, out: 1, transition, xdur },
+      ]);
+      return S.buildSchedule();
+    };
+    const meansInB = (sched) => {
+      const { W, H } = sched.tl;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const out = [];
+      for (let T = 1.0; T <= 1.951; T += 0.1) {
+        S.renderTimelineFrame(ctx, T, sched);
+        const d = ctx.getImageData(0, 0, W, H).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+        out.push(Math.round(sum / (d.length / 4) / 3));
+      }
+      return out;
+    };
+    const cut = meansInB(build('cut', 0));
+    const long = meansInB(build('dip', 4));
+    const ok = meansInB(build('dip', 0.4));
+    const settled = (rows) => rows.filter((m, i) => Math.abs(m - cut[i]) <= 1).length;
+    S.setTimelineClips([]);
+    return { cut, long, ok, settledLong: settled(long), settledOk: settled(ok), of: cut.length };
+  });
+  check('a dip longer than its clip still finishes inside it',
+    dip.settledLong >= 4, `${dip.settledLong} of ${dip.of} instants clear · ${JSON.stringify(dip.long)}`);
+  check('…and it does start from the flash, so it is still a dip',
+    dip.long[0] < dip.cut[0] / 4, `${dip.long[0]} vs ${dip.cut[0]}`);
+  check('…while a dip that already fitted is unchanged',
+    dip.settledOk >= 7, `${dip.settledOk} of ${dip.of} · ${JSON.stringify(dip.ok)}`);
 
   await page.evaluate(() => document.getElementById('tl-clear').click());
 }
