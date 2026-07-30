@@ -116,7 +116,19 @@ export function docIsDefault(st){
 }
 export function stashPreviousProject(st){
   if(!st || docIsDefault(st)) return false;   // never clobber a real stash with an empty doc
-  if(!lsSet(PREVIOUS_PROJECT_KEY, st.doc)) return false;
+  /* The write can fail — a full localStorage, a private window with storage
+     off, a document larger than the 5 MB quota. It returned false into a caller
+     that ignored it, so the net came off the one irreversible click in the tool
+     and said so only in a line of the closed console. The author would have
+     pressed LOAD, watched their project vanish, and been told nothing. It still
+     cannot refuse the load (every programmatic caller would break), but it can
+     stop being quiet about it: the toast is the same channel that announces the
+     load itself, so the two arrive together. */
+  if(!lsSet(PREVIOUS_PROJECT_KEY, st.doc)){
+    log("Could not keep a copy of the outgoing project — this browser's local storage is full or unavailable. Save it to a file before loading over it.","err");
+    toast("No backup copy could be kept","err");
+    return false;
+  }
   log('Previous project kept — restore it with DeadSignalStudio.applyProject(JSON.parse(localStorage.getItem("'+PREVIOUS_PROJECT_KEY+'")))',"info");
   return true;
 }

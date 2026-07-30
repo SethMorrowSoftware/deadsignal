@@ -2,7 +2,7 @@
 import { CONTAINERS, encodeClip, encoderSupport, fillContainerSelect } from '../export/encoder.js';
 import { sampleFlash, paintFlash, resetFlashMeter } from '../ui/flashmeter.js';
 import { download } from '../core/blobs.js';
-import { $, clamp, log, num, setVal, toast, val } from '../core/dom.js';
+import { $, clamp, log, num, setEnabled, setVal, toast, val } from '../core/dom.js';
 import { applyPalette } from '../core/palettes.js';
 import { saveUserPreset } from '../core/recipes.js';
 import { addToLibrary, slug } from '../library/library.js';
@@ -72,13 +72,44 @@ export function startVideoPreview(){ stopVideoPreview(); if(!videoVisible())retu
    * Quantising to the frame index fixes both. It is also what makes a heavy
    * filter chain usable: at 12fps the main thread does a fifth of the work, so
    * the sliders keep responding while the picture is being ground out. */
-  let lastFrame=-1, cooldown=0, throttled=false;
-  (function loop(){ let t; if(vPlaying){ t=((performance.now()-start)/1000)%cfg.duration; vScrubT=t; if($("v-scrub"))$("v-scrub").value=Math.round(t/cfg.duration*1000);   /* dom-only: playhead readout, written every frame — this reports the preview position, it is not a setting */ }
-    else t=vScrubT;
-    const fps=cfg.fps||12, frame=Math.round(t*fps);
+  /* AND IT MUST NOT SKIP A FRAME THE EXPORT WILL WRITE.
+   *
+   * Quantising above fixed the frame GRID. The playhead was still read from the
+   * wall clock, which meant that whenever a frame cost more than 1/fps to draw
+   * — a real output size with any chain on it — the next read had already moved
+   * past one or more frame indices, and those frames were never drawn at all.
+   * Measured on a stock build: 1280×720, 10fps, six filters — the export writes
+   * 30 frames and the preview drew 14. Sixteen frames the author never saw.
+   *
+   * That is not a cosmetic loss. The effects that live on PARTICULAR frames are
+   * exactly the ones it eats: the subliminal insert (one or two frames by
+   * definition), a blink code, the reveal, a one-frame glitch, the fade at each
+   * end. The author sets one, watches the preview, sees nothing — and then finds
+   * it in the exported file. Which is the complaint this fixes.
+   *
+   * So the playhead advances by AT MOST one frame per drawn frame. Keeping up,
+   * that is real-time playback and nothing changes. Behind, the preview plays
+   * slower than real time instead of dropping content — which is what an editor
+   * does when it cannot keep up, and the right way round for a tool whose whole
+   * job is "what will my file look like". lastAdvance is resynced rather than
+   * accumulated, so it never tries to catch up by skipping after a slow frame.
+   *
+   * The throttle below is untouched: it still hands the main thread real idle
+   * time, which is what keeps the interface responsive. It just no longer buys
+   * that with frames of the author's clip. */
+  const FPS=cfg.fps||12, TOTAL=Math.max(1,Math.round(cfg.duration*FPS));   // exactly the frame set recordVideo encodes
+  let lastFrame=-1, cooldown=0, throttled=false, playFrame=0, lastAdvance=start;
+  (function loop(){ let frame;
+    if(vPlaying){ const now=performance.now();
+      if(lastFrame<0){ frame=0; lastAdvance=now; }
+      else if(now-lastAdvance>=1000/FPS){ frame=(playFrame+1)%TOTAL; lastAdvance=now; }
+      else frame=playFrame;
+      playFrame=frame; vScrubT=frame/FPS;
+      if($("v-scrub"))$("v-scrub").value=Math.round(frame/TOTAL*1000);   /* dom-only: playhead readout, written every frame — this reports the preview position, it is not a setting */ }
+    else { frame=Math.min(TOTAL-1,Math.max(0,Math.round(vScrubT*FPS))); playFrame=frame; }
     if(frame!==lastFrame){
       lastFrame=frame;
-      const qt=frame/fps;                       // the exact instant the export will encode
+      const qt=frame/FPS;                       // the exact instant the export will encode
       const t0=performance.now();
       renderScaled(ctx,cfg.W,cfg.H,cfg,qt); if($("v-time"))$("v-time").textContent=qt.toFixed(1)+"s";
       // Photosensitivity measurement runs on the frames actually shown, so it
@@ -159,8 +190,12 @@ export function updateVideoEst(cfg, throttled){ syncRecordLabel(); const est=$("
           : "~"+(secs<90?secs+"s":Math.round(secs/60)+" min")+" to export";
   } else speed="faster than real time";
   est.textContent=cfg.W+"×"+cfg.H+" · "+speed+" · ~"+mb.toFixed(1)+"MB"
-    // Say so rather than letting a stuttering preview read as a broken tool.
-    +(throttled?" · preview eased off (export unaffected)":""); }
+    /* Say so rather than letting a slow preview read as a broken tool — and say
+       the true thing, which changed when the loop stopped dropping frames: the
+       preview now runs BELOW real time and shows every frame, where before it
+       held real time and skipped them. "Eased off" was fair for the old
+       behaviour and would be misleading for this one. */
+    +(throttled?" · preview slower than real time, every frame shown (export unaffected)":""); }
 export function pickVideoCodecs(){ const s=$("v-codec"); s.replaceChildren(); const opts=[["auto",""],["VP9","video/webm;codecs=vp9"],["VP8","video/webm;codecs=vp8"],["AV1","video/webm;codecs=av01"],["H264","video/mp4;codecs=h264"]];
   opts.forEach(([label,m])=>{ if(m==="" || (window.MediaRecorder&&MediaRecorder.isTypeSupported(m))){ const o=document.createElement("option"); o.value=m; o.textContent=label+(m===""?"":" ✓"); s.appendChild(o); } }); }
 /* `withAudio` asks for a mime that declares an audio codec too. Without it
@@ -231,14 +266,15 @@ async function recordVideoFast(cfg){
      project twice produced different files. The real-time path and
      collectFrames() both reset it by resizing; this one never did. */
   _persistCanvas().width=cfg.W; _persistCanvas().height=cfg.H;
-  $("v-record").disabled=true; $("v-stop").disabled=false; $("v-progress-wrap").style.display="block";
+  $("v-record").disabled=true; setEnabled($("v-stop"),true); $("v-progress-wrap").style.display="block";
   log("Exporting "+cfg.duration+"s @ "+cfg.fps+"fps "+cfg.W+"×"+cfg.H+" via WebCodecs ("+support.label+")…","info");
 
   // Resolved before the picture starts so a missing bed is reported up front
   // rather than after a minute of encoding.
   let bed=null;
   try{ bed=await prepareBed(cfg.audioBed, cfg.duration); }
-  catch(e){ log("Audio bed failed ("+e.message+") — exporting silent.","warn"); }
+  catch(e){ log("Audio bed failed ("+e.message+") — exporting silent.","warn");
+         toast("No sound in this export — the audio bed failed","warn"); }
 
   let res=null, err=null;
   try{
@@ -254,7 +290,7 @@ async function recordVideoFast(cfg){
   }catch(e){ err=e; }
 
   $("v-progress-wrap").style.display="none";
-  vRecording=false; $("v-record").disabled=false; $("v-stop").disabled=true;
+  vRecording=false; $("v-record").disabled=false; setEnabled($("v-stop"),false);
 
   // STOP means stop. The encoder hands back the frames it managed, and saving
   // those would put a silently truncated clip in the library announced as a
@@ -338,13 +374,15 @@ export async function recordVideo(){
       if(AC){ bedCtx=new AC(); const dest=bedCtx.createMediaStreamDestination();
         const src=bedCtx.createBufferSource(); src.buffer=bed; src.connect(dest); src.start();
         const tr=dest.stream.getAudioTracks()[0]; if(tr) stream.addTrack(tr); } }
-  }catch(e){ log("Audio bed failed ("+e.message+") — recording silent.","warn"); }
+  }catch(e){ log("Audio bed failed ("+e.message+") — recording silent.","warn");
+             toast("No sound in this recording — the audio bed failed","warn"); }
   const hasAudio=stream.getAudioTracks().length>0;
   const mime=bestMime(val("v-codec"),hasAudio);
   let opts={}; if(mime)opts.mimeType=mime; if(cfg.bitrate>0)opts.videoBitsPerSecond=cfg.bitrate*1000000;
-  let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message,"err"); return; } }
+  let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
+                                                   toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  stopVideoPreview(); vRecording=true; $("v-record").disabled=true; $("v-stop").disabled=false; $("v-progress-wrap").style.display="block";
+  stopVideoPreview(); vRecording=true; $("v-record").disabled=true; setEnabled($("v-stop"),true); $("v-progress-wrap").style.display="block";
   /* Why the recording ended decides what finish() does with the chunks. The
      fast path's contract holds here too: STOP means stop, and a recorder error
      is an error — saving either as a normal clip put a silently truncated file
@@ -353,7 +391,7 @@ export async function recordVideo(){
   let done=false; const finish=()=>{ if(done)return; done=true; try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
     try{ bedCtx&&bedCtx.close(); }catch(e){}
     $("v-progress-wrap").style.display="none";
-    vRecording=false; releaseExport(); $("v-record").disabled=false; $("v-stop").disabled=true;
+    vRecording=false; releaseExport(); $("v-record").disabled=false; setEnabled($("v-stop"),false);
     if(endReason!=="done"){
       const stopped=endReason==="stopped";
       $("v-status").textContent=stopped?"Recording cancelled — nothing saved.":"Recorder failed — nothing saved.";

@@ -55,7 +55,7 @@ await page.addInitScript(() => {
 });
 
 await page.goto(PAGE);
-await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
 /* Helpers injected once; used by several checks below. */
 await page.addScriptTag({ content: `
@@ -283,7 +283,7 @@ section('reduced motion');
   const ctx = await browser.newContext({ reducedMotion: 'reduce' });
   const p2 = await ctx.newPage();
   await p2.goto(PAGE);
-  await p2.waitForFunction(() => document.querySelectorAll('#v-scene option').length > 0);
+  await p2.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   const r = await p2.evaluate(() => {
     const cs = getComputedStyle(document.body, '::after');
     return { opacity: parseFloat(cs.opacity), anim: cs.animationName };
@@ -598,6 +598,77 @@ section('generated panels');
   });
   check('the nudge keys do not steal arrows from the rest of the tab',
     other.kept && other.value, JSON.stringify(other));
+}
+
+/* ------------------------------- controls that are off but still reachable -- */
+section('a control that is switched off can still be reached and still explains itself');
+{
+  /* `disabled` takes an element OUT OF THE TAB ORDER. Right for a control nobody
+     needs to know about; wrong for one whose entire problem is that the author
+     does not know what would switch it on.
+
+     Measured on a stock build: on the AUDIO panel, Tab from ◆ RENDER walked
+     a-savepreset → the section strip → a-tidy → a-reset → the macros → a-preset
+     → a-gallery-btn → a-preset-manage → a-dur, and never landed on ▶ PLAY,
+     ⤓ .wav or NORMALIZE at all. So the tooltips added for exactly the question
+     "what turns this on?" were unreachable by exactly the people who cannot see
+     a greyed-out button and guess. */
+  await page.evaluate(() => document.querySelector('.tab[data-view=audio]').click());
+  await page.waitForTimeout(400);
+  await page.evaluate(() => document.getElementById('a-render').focus());
+  const walk = [];
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press('Tab');
+    walk.push(await page.evaluate(() => document.activeElement?.id || '(none)'));
+  }
+  check('Tab reaches the audio buttons that are waiting on ◆ RENDER',
+    ['a-play', 'a-dl', 'a-norm'].every((id) => walk.includes(id)), walk.join(' → '));
+
+  const shape = await page.evaluate(() => {
+    const ids = ['a-play', 'a-dl', 'a-norm', 'a-region-add', 'v-stop', 'tl-stop', 'bx-stop'];
+    return ids.map((id) => {
+      const el = document.getElementById(id);
+      return { id, hard: !!el?.disabled, aria: el?.getAttribute('aria-disabled'),
+               focusable: !!el && !el.disabled && el.tabIndex >= 0,
+               explains: !!(el?.title || '').trim() };
+    });
+  });
+  check('…and every one of them says unavailable the reachable way, not the hidden way',
+    shape.every((s) => s.aria === 'true' && !s.hard && s.focusable && s.explains),
+    shape.filter((s) => !(s.aria === 'true' && !s.hard && s.focusable && s.explains))
+      .map((s) => s.id).join(', ') || `${shape.length} controls`);
+  /* Reachable has to mean announced-as-unavailable AND inert. aria-disabled
+     carries no behaviour of its own, so without the guard in core/dom.js the
+     button would look off and fire anyway — worse than where this started. */
+  const pressed = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const play = document.getElementById('a-play');
+    const label = play.textContent;
+    const t0 = document.getElementById('toasts').textContent.length;
+    play.focus();
+    const focused = document.activeElement === play;
+    play.click();
+    await sleep(400);
+    return { focused, labelUnchanged: play.textContent === label,
+             stillOff: play.getAttribute('aria-disabled') === 'true',
+             said: document.getElementById('toasts').textContent.slice(t0).replace(/\s+/g, ' ').trim() };
+  });
+  check('…pressing one refuses rather than running the action anyway',
+    pressed.focused && pressed.labelUnchanged && pressed.stillOff,
+    JSON.stringify({ focused: pressed.focused, label: pressed.labelUnchanged, off: pressed.stillOff }));
+  check('…and answers the question the press was asking',
+    /RENDER/.test(pressed.said), pressed.said || '(said nothing)');
+
+  const back = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    document.getElementById('a-render').click();
+    const play = document.getElementById('a-play');
+    for (let i = 0; i < 80; i++) { await sleep(250); if (play.getAttribute('aria-disabled') !== 'true') break; }
+    await sleep(300);
+    return { aria: play.getAttribute('aria-disabled'), hard: play.disabled, title: play.title };
+  });
+  check('…and it comes back on cleanly once the sound is rendered',
+    back.aria === null && back.hard === false && !/RENDER/.test(back.title), JSON.stringify(back));
 }
 
 console.log('-'.repeat(58));

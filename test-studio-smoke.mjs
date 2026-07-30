@@ -100,7 +100,7 @@ await page.addInitScript(() => {
 
 await page.goto(PAGE);
 // <option> elements are never "visible" to Playwright — wait on the DOM instead.
-await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
 /* Is a canvas actually drawn on? Counts distinct pixels so a flat fill and an
    all-transparent canvas both read as "blank". */
@@ -364,7 +364,7 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   await setControl('v-hud', 'SURVIVES RELOAD');
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   // Restore is async (it opens the database first).
   await page.waitForFunction(
     () => document.getElementById('v-hud').value === 'SURVIVES RELOAD',
@@ -430,7 +430,7 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
 
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   await page.waitForFunction(
     () => (window.DeadSignalStudio.store?.get('timeline.clips') || []).length === 2,
     null, { timeout: 8000 },
@@ -768,7 +768,7 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   await setControl('v-hud', 'AFTER IMPORT');
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   const restored = await page.waitForFunction(
     () => document.getElementById('v-hud').value === 'AFTER IMPORT',
     null, { timeout: 8000 },
@@ -1330,8 +1330,7 @@ console.log('\n[first run]');
   const first = await browser.newPage();
   first.on('pageerror', (e) => errors.push('first-run: ' + String(e)));
   await first.goto(PAGE);
-  await first.waitForFunction(() => window.DeadSignalStudio
-    && document.querySelectorAll('#v-scene option').length > 0);
+  await first.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
   const shown = await first.evaluate(() => {
     const el = document.getElementById('welcome');
@@ -1342,6 +1341,96 @@ console.log('\n[first run]');
   check('the welcome card appears on a cold start', shown.visible);
   check('…with the primary action focused', shown.focused === 'welcome-sample', shown.focused);
   check('…and declares itself modal', shown.modal === 'true', shown.modal);
+
+  /* AND IT DOES NOT FLASH AT SOMEONE WHO HAS ALREADY DISMISSED IT.
+     The card is visible in the markup so a cold start shows it without waiting
+     for the module graph; initWelcome(), which hides it again for a returning
+     author, used to run two hundred lines into boot, after every panel was
+     built. So a returning author got a flash of a modal dialog on every load —
+     and every click during that flash landed on the dialog rather than the
+     tool, which is how this was found: an intermittent CI failure where a tab
+     click was intercepted by #welcome. Sampled from the first paint. */
+  {
+    const returning = await browser.newPage();
+    returning.on('pageerror', (e) => errors.push('returning: ' + String(e)));
+    await returning.addInitScript(() => {
+      try { localStorage.setItem('deadsignal.studio.welcomed', 'true'); } catch { /* ignore */ }
+      // Sample #welcome on every frame from the very first one, so a card that
+      // is up for two frames is still caught.
+      window.__welcomeFrames = { seen: 0, visible: 0, builtAtReady: null };
+      const tick = () => {
+        const el = document.getElementById('welcome');
+        if (el) {
+          window.__welcomeFrames.seen++;
+          if (getComputedStyle(el).display !== 'none') window.__welcomeFrames.visible++;
+        }
+        if (document.documentElement.dataset.studio === 'ready') {
+          // What was actually on the page the first frame the flag was up.
+          window.__welcomeFrames.builtAtReady = {
+            scenes: document.querySelectorAll('#v-scene option').length,
+            templates: document.querySelectorAll('#i-tpl option').length,
+            containers: document.querySelectorAll('#v-container option').length,
+            sections: document.querySelectorAll('.sec-strip').length,
+            said: /DEAD SIGNAL STUDIO ready/.test(document.getElementById('console')?.textContent || ''),
+          };
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await returning.goto(PAGE);
+    await returning.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
+    const flash = await returning.evaluate(() => ({
+      ...window.__welcomeFrames,
+      displayNow: getComputedStyle(document.getElementById('welcome')).display,
+    }));
+    check('…and never flashes at an author who has already dismissed it',
+      flash.visible === 0, `${flash.visible} of ${flash.seen} frames during boot`);
+    const built = flash.builtAtReady || {};
+    check('…and by the time it is up, every picker boot fills is filled',
+      built.scenes > 40 && built.templates > 40 && built.containers > 0 && built.sections > 0,
+      JSON.stringify(built));
+    await returning.close();
+  }
+
+  /* THE READY FLAG HAS TO BE WORTH WAITING ON.
+     Every suite here waits on data-studio="ready" before it touches anything.
+     What it replaced — "the global exists and #v-scene has options" — was true
+     a dozen lines into a boot() that is two hundred and fifty long, so a boot
+     that threw part way still satisfied it and the suite went on clicking at a
+     half-wired page. That is not a hypothetical: it is how the intermittent
+     failure above presented, as a tab click swallowed by a #welcome that
+     initWelcome() never got to close.
+
+     Proven by breaking boot on purpose. One module is served as a stub whose
+     initSections() throws; everything before it still runs, so the old gate
+     would still be satisfied. The flag must not be. */
+  {
+    const broken = await browser.newPage();
+    const raised = [];
+    broken.on('pageerror', (e) => raised.push(String(e.message).slice(0, 60)));
+    await broken.route('**/src/ui/sections.js', (route) => route.fulfill({
+      status: 200, contentType: 'text/javascript',
+      body: `export function initSections(){ throw new Error('deliberate boot failure'); }
+             export function activeSection(){ return null; }
+             export function sectionsOf(){ return []; }
+             export function showSection(){}
+             export function revealSectionFor(){}`,
+    }));
+    await broken.goto(PAGE);
+    // The gate the suites used to use, and the one they use now.
+    const oldGate = await broken.waitForFunction(
+      () => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0,
+      null, { timeout: 8000 }).then(() => true).catch(() => false);
+    const newGate = await broken.waitForFunction(
+      () => document.documentElement.dataset.studio === 'ready',
+      null, { timeout: 4000 }).then(() => true).catch(() => false);
+    check('a boot that throws part way still satisfies the OLD readiness test', oldGate);
+    check('…but never raises the ready flag the suites wait on now', newGate === false,
+      raised[0] || '(boot did not throw — the stub is no longer reached)');
+    await broken.close();
+  }
 
   await first.click('#welcome-sample');
   const after = await first.evaluate(() => {
@@ -1508,7 +1597,7 @@ console.log('\n[first run]');
 
   await page.evaluate(() => window.DeadSignalStudio.flushAutosave());
   await page.reload();
-  await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+  await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
   await page.waitForFunction(() => (window.DeadSignalStudio.store?.get('filters.video') || []).length > 0,
                              null, { timeout: 8000 }).catch(() => {});
   check('the chain survives a reload', (await chain()).length >= 2, (await chain()).join(','));
@@ -1673,9 +1762,64 @@ console.log('\n[first run]');
   });
   // Generous: the point is seconds vs not-seconds, and CI machines vary.
   check('a heavy filter chain does not lock the interface', latency < 2500, `${latency}ms for 10 turns`);
-  check('…and says the preview eased off rather than looking broken',
-        /eased off/.test(await page.evaluate(() => document.getElementById('v-est').textContent)),
+  check('…and says the preview is running slow rather than looking broken',
+        /slower than real time/.test(await page.evaluate(() => document.getElementById('v-est').textContent)),
         await page.evaluate(() => document.getElementById('v-est').textContent));
+
+  /* AND IT GIVES WAY BY RUNNING SLOW, NOT BY DROPPING THE AUTHOR'S FRAMES.
+     The playhead used to be read from the wall clock, so once a frame cost more
+     than 1/fps to draw — a real output size with any chain on it, exactly the
+     state set up above — the next read had already moved past one or more frame
+     indices and those frames were never drawn. Measured on a stock build at
+     1280×720/10fps with six filters: the export writes 30 frames, the preview
+     drew 14, stepping 14→17→20→23→26. Sixteen frames the author never saw.
+
+     Not cosmetic: the effects that live on PARTICULAR frames are the ones it
+     eats — the subliminal insert (one or two frames by definition), a blink
+     code, the reveal, a one-frame glitch, the fade at each end. Set one, watch
+     the preview, see nothing, then find it in the exported file.
+
+     Measured on the STEP between consecutive drawn frames rather than on a
+     count, so it holds however slowly the preview happens to be running: #v-time
+     is written once per drawn frame, so a MutationObserver on it sees the exact
+     sequence. Every step must be +1, wrapping at the end. */
+  /* At 10fps and no other rate: #v-time is written as toFixed(1), so the frame
+     index is only recoverable from it when one frame is exactly one tenth of a
+     second. At the 12fps this panel was left on, 0.1667 and 0.25 land in
+     neighbouring tenths and the reconstruction invents a 2→4 that the loop
+     never made — which is how this check first failed against a correct build. */
+  await setControl('v-fps', 10);
+  await page.waitForTimeout(700);
+  const skipping = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const cfg = S.readVideoCfg();
+    const total = Math.max(1, Math.round(cfg.duration * cfg.fps));
+    const el = document.getElementById('v-time');
+    const order = [];
+    /* One push per RECORD, not per callback. MutationObserver batches, so a
+       callback that reads el.textContent once collapses two fast frames into
+       one and reports a skip the loop never made — which is exactly how this
+       check first failed against a correct build. */
+    const mo = new MutationObserver((recs) => {
+      for (const r of recs) order.push(r.addedNodes[0]?.textContent ?? el.textContent);
+    });
+    mo.observe(el, { childList: true, characterData: true, subtree: true });
+    const pp = document.getElementById('v-playpause');
+    if (pp.textContent.trim() === '▶') pp.click();
+    await new Promise((r) => setTimeout(r, 4000));
+    mo.disconnect();
+    const idx = order.map((v) => Math.round(parseFloat(v) * cfg.fps));
+    const gaps = [];
+    for (let i = 1; i < idx.length; i++) {
+      const step = (idx[i] - idx[i - 1] + total) % total;
+      if (step !== 1 && step !== 0) gaps.push(`${idx[i - 1]}→${idx[i]}`);
+    }
+    return { draws: idx.length, total, gaps: gaps.slice(0, 6), gapCount: gaps.length };
+  });
+  check('…and shows every frame the export will write, rather than skipping ahead',
+        skipping.draws > 3 && skipping.gapCount === 0,
+        skipping.gapCount ? `${skipping.gapCount} skipped: ${skipping.gaps.join(', ')}`
+                          : `${skipping.draws} draws, every step +1 of ${skipping.total}`);
 
   // Leaving the tab must clear BOTH schedulers, or a throttled loop keeps
   // running after its tab is gone (cancelAnimationFrame cannot clear a timeout).
@@ -1697,6 +1841,62 @@ console.log('\n[first run]');
   await setControl('v-w', 320);
   await setControl('v-h', 240);
   await page.waitForTimeout(300);
+}
+
+/* ------------------------------------------------------------- autosave --- */
+/* The tool's promise is that the session comes back. Nothing on screen said
+   whether that was true, and a failing autosave wrote one CONSOLE line per edit
+   — ten ordinary edits, ten identical lines — and was otherwise invisible. So
+   the author's work could stop being kept without a word they would notice. */
+{
+  const state = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const el = () => document.getElementById('save-state');
+    S.store.apply({ op: 'set', path: 'tabs.video.v-text', value: 'autosave probe', label: 'probe' });
+    await new Promise((r) => setTimeout(r, 1500));
+    const healthy = { text: el()?.textContent || '', cls: el()?.className || '',
+                      role: el()?.getAttribute('role') };
+
+    /* A backend that has stopped accepting writes: a full quota, a closed
+       database, a private window that revoked it mid-session. */
+    const St = await import('./src/platform/storage.js');
+    let fail = true, writes = 0;
+    const firsts = [], recovers = [];
+    const flaky = { async putDoc() { writes++; if (fail) throw new Error('QuotaExceededError'); },
+                    async getDoc() { return null; } };
+    const a = St.autosave(S.store, flaky, { delay: 30,
+      onError: (e, o) => firsts.push(!!(o && o.first)),
+      onSave: (at, o) => recovers.push(!!(o && o.recovered)) });
+    for (let i = 0; i < 10; i++) {
+      S.store.apply({ op: 'set', path: 'tabs.video.v-text', value: 'e' + i, label: 'probe' });
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    await new Promise((r) => setTimeout(r, 150));
+    const failing = { writes, errors: firsts.length, announced: firsts.filter(Boolean).length,
+                      reportsFailing: a.failing === true };
+    fail = false;
+    S.store.apply({ op: 'set', path: 'tabs.video.v-text', value: 'back', label: 'probe' });
+    await new Promise((r) => setTimeout(r, 200));
+    const recovery = { saves: recovers.length, announced: recovers.filter(Boolean).length,
+                       reportsFailing: a.failing };
+    a.stop();
+    return { healthy, failing, recovery };
+  });
+  check('the header says whether this session is being saved',
+        /saved/i.test(state.healthy.text) && /\bok\b/.test(state.healthy.cls),
+        `${state.healthy.text} · ${state.healthy.cls}`);
+  check('…as a status, not a live region reciting every save',
+        state.healthy.role === 'status', String(state.healthy.role));
+  /* The point of the transition flags: a broken backend fails on EVERY edit, and
+     what the author needs is not that the eighth one failed — it is that saving
+     stopped working, once, loudly. */
+  check('a failing autosave is announced once, not once per edit',
+        state.failing.errors === 10 && state.failing.announced === 1,
+        `${state.failing.errors} failures, ${state.failing.announced} announced`);
+  check('…and it knows it is failing while it is', state.failing.reportsFailing === true);
+  check('…and recovery is announced once too',
+        state.recovery.announced === 1 && state.recovery.reportsFailing === false,
+        JSON.stringify(state.recovery));
 }
 
 /* --------------------------------------------------------------- reflow --- */

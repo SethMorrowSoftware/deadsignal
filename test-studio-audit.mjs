@@ -88,7 +88,7 @@ await page.addInitScript(() => {
 });
 
 await page.goto(PAGE);
-await page.waitForFunction(() => window.DeadSignalStudio && document.querySelectorAll('#v-scene option').length > 0);
+await page.waitForFunction(() => document.documentElement.dataset.studio === 'ready');
 
 /* ==================================================== every control wired == */
 section('wiring');
@@ -6803,7 +6803,14 @@ section('the waveform is an editor now');
     document.querySelector('.tab[data-view=audio]').click();
     const sel = document.getElementById('a-region-op');
     return { ops: [...(sel?.options || [])].map((o) => o.value),
-             addDisabled: document.getElementById('a-region-add')?.disabled,
+             /* Either spelling counts as off. ＋ APPLY carries aria-disabled
+                rather than disabled so a keyboard author can still reach it and
+                hear why — see core/dom.js setEnabled — and asserting on the
+                `disabled` property alone would read that as "live". */
+             addOff: (() => { const b = document.getElementById('a-region-add');
+               return !!b && (b.disabled || b.getAttribute('aria-disabled') === 'true'); })(),
+             addReachable: (() => { const b = document.getElementById('a-region-add');
+               return !!b && !b.disabled && b.tabIndex >= 0; })(),
              overlay: !!document.getElementById('a-selection'),
              list: !!document.getElementById('a-regions-list') };
   });
@@ -6812,7 +6819,9 @@ section('the waveform is an editor now');
     JSON.stringify(panel.ops));
   /* Applying needs something to apply TO. A live button with no selection can
      only produce a confusing no-op or an edit over a range nobody chose. */
-  check('…with APPLY disabled until something is selected', panel.addDisabled === true);
+  check('…with APPLY unavailable until something is selected', panel.addOff === true);
+  check('…but still reachable, so it can say what a selection would be for',
+    panel.addReachable === true);
 
   const dragged = await page.evaluate(async () => {
     const S = window.DeadSignalStudio;

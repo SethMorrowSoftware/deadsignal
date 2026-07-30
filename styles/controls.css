@@ -9,11 +9,18 @@ input[type=text],input[type=number],textarea,select{background:var(--field-bg); 
   select option{background:var(--field-bg)}
   .btn{background:#08131a; color:var(--phos); border:1px solid var(--phos-dim); border-radius:2px; font-family:var(--mono);
     font-size:13px; letter-spacing:1px; padding:8px 13px; cursor:pointer}
-  .btn:hover:not(:disabled){background:var(--phos); color:var(--on-accent)}
-  .btn:disabled{opacity:.4; cursor:not-allowed}
-  .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover:not(:disabled){background:var(--hot); color:#100}
+  .btn:hover:not(:disabled):not([aria-disabled="true"]){background:var(--phos); color:var(--on-accent)}
+  /* Both spellings, and they must look identical. A control that is off but
+     still reachable by keyboard carries aria-disabled instead of disabled (see
+     core/dom.js setEnabled) — if only the first selector were styled, switching
+     a button to the reachable form would silently un-grey it. */
+  .btn:disabled,
+  .btn[aria-disabled="true"]{opacity:.4; cursor:not-allowed}
+  /* It is still focusable, so it still has to show focus. */
+  .btn[aria-disabled="true"]:focus-visible{opacity:.6}
+  .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover:not(:disabled):not([aria-disabled="true"]){background:var(--hot); color:#100}
   .btn.small{padding:4px 8px; font-size:12px}
-  .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover:not(:disabled){background:var(--amber); color:#210}
+  .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover:not(:disabled):not([aria-disabled="true"]){background:var(--amber); color:#210}
   .btns{display:flex; gap:7px; flex-wrap:wrap; margin-top:9px}
   .hint{color:var(--muted); font-size:12px; margin:3px 0 0}
   fieldset{border:1px solid var(--edge2); border-radius:3px; margin:9px 0; padding:7px 9px 9px}

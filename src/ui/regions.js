@@ -12,7 +12,7 @@
  * costs one repaint of one absolutely-positioned div rather than a redraw of
  * the wave.
  */
-import { $, escHtml, log, toast } from '../core/dom.js';
+import { $, escHtml, log, setEnabled, toast } from '../core/dom.js';
 import { MAX_REGIONS, REGION_OPS, editedSeconds, makeRegion, normalizeRegions } from '../doc/regions.js';
 import { getStore } from '../doc/session.js';
 import { set } from '../doc/store.js';
@@ -113,7 +113,7 @@ export function renderRegions() {
   const sel = $('a-region-op');
   // Applying needs something to apply to; saying so beats a dead button.
   const ready = !!_sel;
-  if ($('a-region-add')) $('a-region-add').disabled = !ready;
+  setEnabled($('a-region-add'), !!ready);
   const hint = $('a-selinfo');
   if (hint && !_sel) hint.textContent = _seconds ? 'Drag on the wave to select a range.' : 'Render something first.';
   const amt = $('a-region-amount');
