@@ -1786,9 +1786,64 @@ console.log('\n[first run]');
   });
   // Generous: the point is seconds vs not-seconds, and CI machines vary.
   check('a heavy filter chain does not lock the interface', latency < 2500, `${latency}ms for 10 turns`);
-  check('…and says the preview eased off rather than looking broken',
-        /eased off/.test(await page.evaluate(() => document.getElementById('v-est').textContent)),
+  check('…and says the preview is running slow rather than looking broken',
+        /slower than real time/.test(await page.evaluate(() => document.getElementById('v-est').textContent)),
         await page.evaluate(() => document.getElementById('v-est').textContent));
+
+  /* AND IT GIVES WAY BY RUNNING SLOW, NOT BY DROPPING THE AUTHOR'S FRAMES.
+     The playhead used to be read from the wall clock, so once a frame cost more
+     than 1/fps to draw — a real output size with any chain on it, exactly the
+     state set up above — the next read had already moved past one or more frame
+     indices and those frames were never drawn. Measured on a stock build at
+     1280×720/10fps with six filters: the export writes 30 frames, the preview
+     drew 14, stepping 14→17→20→23→26. Sixteen frames the author never saw.
+
+     Not cosmetic: the effects that live on PARTICULAR frames are the ones it
+     eats — the subliminal insert (one or two frames by definition), a blink
+     code, the reveal, a one-frame glitch, the fade at each end. Set one, watch
+     the preview, see nothing, then find it in the exported file.
+
+     Measured on the STEP between consecutive drawn frames rather than on a
+     count, so it holds however slowly the preview happens to be running: #v-time
+     is written once per drawn frame, so a MutationObserver on it sees the exact
+     sequence. Every step must be +1, wrapping at the end. */
+  /* At 10fps and no other rate: #v-time is written as toFixed(1), so the frame
+     index is only recoverable from it when one frame is exactly one tenth of a
+     second. At the 12fps this panel was left on, 0.1667 and 0.25 land in
+     neighbouring tenths and the reconstruction invents a 2→4 that the loop
+     never made — which is how this check first failed against a correct build. */
+  await setControl('v-fps', 10);
+  await page.waitForTimeout(700);
+  const skipping = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const cfg = S.readVideoCfg();
+    const total = Math.max(1, Math.round(cfg.duration * cfg.fps));
+    const el = document.getElementById('v-time');
+    const order = [];
+    /* One push per RECORD, not per callback. MutationObserver batches, so a
+       callback that reads el.textContent once collapses two fast frames into
+       one and reports a skip the loop never made — which is exactly how this
+       check first failed against a correct build. */
+    const mo = new MutationObserver((recs) => {
+      for (const r of recs) order.push(r.addedNodes[0]?.textContent ?? el.textContent);
+    });
+    mo.observe(el, { childList: true, characterData: true, subtree: true });
+    const pp = document.getElementById('v-playpause');
+    if (pp.textContent.trim() === '▶') pp.click();
+    await new Promise((r) => setTimeout(r, 4000));
+    mo.disconnect();
+    const idx = order.map((v) => Math.round(parseFloat(v) * cfg.fps));
+    const gaps = [];
+    for (let i = 1; i < idx.length; i++) {
+      const step = (idx[i] - idx[i - 1] + total) % total;
+      if (step !== 1 && step !== 0) gaps.push(`${idx[i - 1]}→${idx[i]}`);
+    }
+    return { draws: idx.length, total, gaps: gaps.slice(0, 6), gapCount: gaps.length };
+  });
+  check('…and shows every frame the export will write, rather than skipping ahead',
+        skipping.draws > 3 && skipping.gapCount === 0,
+        skipping.gapCount ? `${skipping.gapCount} skipped: ${skipping.gaps.join(', ')}`
+                          : `${skipping.draws} draws, every step +1 of ${skipping.total}`);
 
   // Leaving the tab must clear BOTH schedulers, or a throttled loop keeps
   // running after its tab is gone (cancelAnimationFrame cannot clear a timeout).

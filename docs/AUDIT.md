@@ -287,7 +287,7 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-Three items. None blocks the beta.
+Four items. None blocks the beta.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
@@ -301,6 +301,14 @@ Three items. None blocks the beta.
   type *renders differently* rather than crashing), WebCodecs, `captureStream`,
   IndexedDB in Safari private mode, and H.264/MP4. `⎘ COPY DIAGNOSTICS` reports
   each of these, so a beta tester on another engine can say which are missing.
+
+**Interface**
+- **`grade` and `levels` do nothing at their default parameters.** They are
+  adjustment filters and identity defaults are the defensible choice, but an
+  author who adds one and sees no change cannot tell that from a filter that is
+  broken. Every other filter in the set changes the picture on sight. Either a
+  non-identity default or a word in the row would fix it; both are product
+  decisions rather than audit findings.
 
 **Accessibility**
 - **Disabled buttons are unreachable by keyboard.** `disabled` removes an
@@ -581,6 +589,63 @@ every announcement carries the same text and the rail collapses repeats into
 `×N`, so "no new toast text" cannot tell absence from collapse. Two neighbouring
 checks caught what it missed. It measures the fault list now, and goes red when
 the listener is made capturing.
+
+### The preview box did not show every frame the export writes
+
+Reported from use: *"some FX are not being applied to the preview, but show in
+the exported videos."*
+
+Not the filter chain, and not any individual effect — both paths call the same
+`renderScaled`. It was the **playhead**. Quantising the preview to the clip's
+frame grid (recorded earlier in this audit) fixed the frame *grid*, but the
+position was still read from the wall clock: `t = (now − start) / 1000`. So the
+moment a frame cost more than `1/fps` to draw — a real output size with any
+chain on it — the next read had already moved past one or more frame indices,
+and those frames were never drawn.
+
+Measured on `main`, 1280×720 at 10fps with six filters: the export writes 30
+frames, the preview drew 14, stepping **14→17→20→22→25→29→2→5→8**. Sixteen
+frames the author never saw.
+
+That is not a cosmetic loss, because of *which* frames it eats. The effects that
+live on particular frames are exactly the vulnerable ones: the subliminal insert
+(one or two frames by definition), a blink code, the reveal, a one-frame glitch,
+the fade at each end. Set one, watch the preview, see nothing — then find it in
+the exported file. Which is the report.
+
+The throttle itself was right and is untouched: a heavy chain must slow the
+picture, not the interface. What changed is *how* it gives way. The playhead now
+advances by **at most one frame per drawn frame**, so keeping up is real-time
+playback and nothing changes, and falling behind plays slower than real time
+instead of dropping content — which is what an editor does when it cannot keep
+up, and the right way round for a tool whose whole job is "what will my file
+look like". The estimate's note changed with it, because the old wording
+described the old behaviour: *preview slower than real time, every frame shown
+(export unaffected)*.
+
+Verified on the STEP between consecutive drawn frames rather than on a count, so
+it holds however slowly the preview is running. Reverted to the wall-clock
+playhead it reads `8→15→23→30→37→45`; with the fix every step is +1.
+
+Two measurement mistakes on the way to this, both worth recording because both
+produced a confident wrong answer:
+
+- **The first sweep found nothing.** It compared the preview against
+  `renderVideoFrame`, but the exporter calls `renderScaled` — so 2×SS showed as
+  a divergence that was the probe's, and phosphor persistence shares a
+  module-level canvas that every export path resets and the probe did not. Both
+  "findings" were artifacts; all 45 filters and all 48 scenes actually agree.
+- **`MutationObserver` batches.** Reading `el.textContent` once per callback
+  rather than once per record collapses two fast frames into one and reports a
+  skip the loop never made. And `#v-time` is written as `toFixed(1)`, so the
+  frame index is only recoverable from it at 10fps — at 12fps, 0.1667 and 0.25
+  land in neighbouring tenths and the reconstruction invents a `2→4`. Both made
+  a *correct* build look broken.
+
+Recorded separately: **`grade` and `levels` have no visible effect at their
+default parameters.** That is defensible — they are adjustment filters and their
+defaults are identity — but an author who adds one and sees nothing has no way
+to tell that from a broken filter. Listed under *Still open*.
 
 ### Investigated and found NOT to be defects
 
