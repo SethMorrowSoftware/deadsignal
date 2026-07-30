@@ -329,7 +329,7 @@ function handleStudioProfile(string $studioDir, string $envFile): array
 }
 
 /** STEP 5 — the first account. */
-function handleStudioAccount(string $envFile, string $lockFile): array
+function handleStudioAccount(string $envFile): array
 {
     $pdo = studioPdo($envFile);
     if (!$pdo) return ['errors' => ['No working database configuration — go back to step 2.']];
@@ -362,16 +362,10 @@ function handleStudioAccount(string $envFile, string $lockFile): array
         return ['errors' => ['Database error: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8')]];
     }
 
-    $notices = [];
-    if ($first) {
-        // Lock the wizard behind the reconfirm key from here on.
-        if (!is_dir(dirname($lockFile))) @mkdir(dirname($lockFile), 0755, true);
-        if (@file_put_contents($lockFile, date('Y-m-d H:i:s') . "\n", LOCK_EX) === false) {
-            $notices[] = 'Could not write the setup lock at <code>server/config/.setup-complete</code>. Delete this wizard manually.';
-        }
-    }
-
-    return ['errors' => [], 'notices' => $notices, 'created' => true, 'first' => $first];
+    /* The lock is written on arrival at step 6, not here: it belongs to the
+       wizard having finished, not to this run having created the first
+       account. See StudioInstall::lockInstall. */
+    return ['errors' => [], 'notices' => [], 'created' => true, 'first' => $first];
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +405,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             break;
 
         case 'account':
-            $r = handleStudioAccount($ENV_FILE, $LOCK_FILE);
+            $r = handleStudioAccount($ENV_FILE);
             $errors = $r['errors'];
             $notices = $r['notices'] ?? [];
             $accountCreated = !empty($r['created']);
@@ -430,6 +424,15 @@ if ($step === 1 || ($step === 4 && $preflight === null)) {
 $deployNote = null;
 if ($step === 6) {
     $deployNote = StudioInstall::writeDeployConfig($STUDIO_DIR, $API_REL);
+    /* And lock the wizard, whatever route got here — created an account,
+       skipped the step, or added a second one. A wizard that only locked after
+       creating the FIRST account stayed open on every other finished install,
+       and on a socket-auth install with no setup.secret "open" means open to
+       anyone who can load the URL. */
+    if (!StudioInstall::lockInstall($LOCK_FILE)) {
+        $notices[] = 'Could not write the setup lock at <code>server/config/.setup-complete</code>. '
+            . 'Until that file exists this wizard will keep running — delete <code>setup.php</code> by hand.';
+    }
 }
 
 $_SESSION['studio_setup_step'] = $step;
@@ -741,9 +744,16 @@ unset($pdoProbe);
       <li><span class="ok">✔</span> Schema applied</li>
       <li><span class="ok">✔</span> Studio settings written — <code>server/config/studio.php</code></li>
       <?php if ($accountCreated): ?>
-        <li><span class="ok">✔</span> Account created<?= $isLocked || is_file($LOCK_FILE) ? ' — setup is now locked' : '' ?></li>
+        <li><span class="ok">✔</span> Account created</li>
       <?php else: ?>
         <li><span class="warn">•</span> No account created — sign in with an existing one</li>
+      <?php endif; ?>
+      <?php /* Said on its own line and on every route through step 5: skipping the
+               account step used to leave the wizard unlocked and say nothing. */ ?>
+      <?php if (is_file($LOCK_FILE)): ?>
+        <li><span class="ok">✔</span> Setup locked — re-running it needs the reconfirm key</li>
+      <?php else: ?>
+        <li><span class="warn">•</span> Setup could <strong>not</strong> be locked — delete <code>setup.php</code> by hand</li>
       <?php endif; ?>
       <li id="api-check"><span class="warn">•</span> Checking the API from your browser…</li>
     </ul>

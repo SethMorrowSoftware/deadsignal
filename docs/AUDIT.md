@@ -231,6 +231,37 @@ page load 404s — on a subdirectory install, against somebody else's site.
   `— custom —` (honest: the loaded preset is gone, and what is on screen is
   nobody's preset), and rename carries the selection to the new name.
 
+- **The wizard locked itself only when it created the *first* account.** Every
+  other route through step 5 left `server/config/.setup-complete` unwritten:
+  *Skip — I have an account* (offered whenever the database already has
+  accounts) and creating a second account both fell through. That is not
+  cosmetic. `needsReconfirm` returns `false` when there is no secret to check a
+  key against, and `server/env.example.php` ships with an empty database
+  password *and* an empty `setup.secret` — so a socket-auth install configured
+  by copying it, on a database that already had a user, had a wizard that opened
+  for anonymous visitors indefinitely. Same failure mode as the Critical item
+  above, reached by a different door. Locking now happens on arrival at step 6
+  whatever route got there, the Done page says so on its own line, and a lock it
+  could not write is reported instead of passed over.
+
+- **`account.php` took the password as an argument.** An argument is visible to
+  every user on the box in `ps`, is written verbatim into `~/.bash_history`, and
+  on shared hosting is often in the process accounting log as well — which made
+  the one command whose job is to set a credential the one command that leaked
+  it. It now asks, with the terminal's echo off (and says so if it cannot turn
+  echo off, rather than quietly showing the password), confirms by asking twice,
+  and accepts a pipe for scripts: `printf '%s' "$PW" | php server/account.php
+  add alice`. An argument still works and still warns. `add` checks the name
+  before asking, so a password is never typed for an account that cannot be
+  created. CI and both install docs now use the pipe.
+
+- **The generated deny file emitted a bare `Require all denied`.** On Apache 2.2
+  there is no `mod_authz_core`, `Require` rejects the `all` provider at
+  parse time, and in a `.htaccess` a parse error is a 500 on every request into
+  that directory — so a file written to lock a folder down took the studio
+  offline instead, with nothing to connect the two. The 2.2 syntax beside it was
+  already fenced; both are now.
+
 ---
 
 ## Investigated and found NOT to be defects
@@ -287,12 +318,6 @@ None of these are fixed. They are recorded with enough detail to act on.
 **Backend**
 - Quota counts assets only; project documents and their 50-deep autosave history
   are unbounded and unmetered.
-- `account.php` takes the password as a command-line argument, exposing it in
-  `ps` and shell history.
-- The generated deny file emits an unguarded `Require all denied`, which 500s on
-  Apache 2.2 — unlike the `api/.htaccess` this audit added, which fences every
-  directive behind `<IfModule>`.
-- The install does not lock itself when the account step is skipped.
 
 **Client and UI**
 - The command palette's catalogue is frozen at boot, so saved presets are never

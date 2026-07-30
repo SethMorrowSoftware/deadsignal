@@ -317,6 +317,33 @@ final class StudioInstall
         return $envExists && $isLocked && $secret === '';
     }
 
+    /**
+     * Mark the install finished, so the wizard demands the key from here on.
+     *
+     * This used to be written only when the wizard created the FIRST account,
+     * which left two ordinary installs permanently unlocked: one that skipped
+     * the account step (offered whenever the database already has accounts) and
+     * one that added a second account to a database that already had one. An
+     * unlocked install is not merely untidy — `needsReconfirm` returns false
+     * when there is no secret to check against, and `server/env.example.php`
+     * ships with an empty database password and an empty `setup.secret`, so a
+     * socket-auth install configured by copying it had a wizard that opened for
+     * anonymous visitors indefinitely. Locking is a property of the wizard
+     * having RUN, not of what it happened to create, so it now happens on
+     * arrival at the last step either way.
+     *
+     * Idempotent, and it never rewrites an existing lock: the timestamp inside
+     * records when the install was first finished.
+     */
+    public static function lockInstall(?string $lockFile = null): bool
+    {
+        $file = $lockFile ?? self::lockFile();
+        if (is_file($file)) return true;
+        $dir = dirname($file);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return false;
+        return @file_put_contents($file, date('Y-m-d H:i:s') . "\n", LOCK_EX) !== false;
+    }
+
     /** Constant-time check of a supplied reconfirm key. */
     public static function keyAccepted(string $secret, $given): bool
     {
@@ -484,13 +511,32 @@ final class StudioInstall
         return null;
     }
 
-    /** Deny direct web access to a directory, if it is not already denied. */
+    /**
+     * Deny direct web access to a directory, if it is not already denied.
+     *
+     * BOTH syntaxes are fenced behind their own module. `Require all denied` was
+     * emitted bare, and on Apache 2.2 — where mod_authz_core does not exist —
+     * `Require` rejects the `all` provider at config-parse time, which in a
+     * .htaccess means a 500 on every request into that directory rather than a
+     * missing directive. A file written to lock a folder down would have taken
+     * the whole studio offline instead, and the person who ran the wizard has no
+     * reason to connect the two.
+     *
+     * The 2.2 branch was already fenced, so this is the same treatment applied
+     * to the directive that needed it more: on 2.2 the first block is skipped
+     * and `Order allow,deny` denies; on 2.4 the second is skipped and `Require`
+     * denies. A server with neither module cannot enforce either syntax, so the
+     * file is inert there by necessity — which is why the API never serves these
+     * files by path and the storage root is written outside the web root when
+     * the wizard can manage it.
+     */
     public static function writeDenyFile(string $dir, string $why): void
     {
         if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return;
         $ht = rtrim($dir, '/') . '/.htaccess';
         if (is_file($ht)) return;
-        @file_put_contents($ht, "# $why\n# Files here are served only through the API, never directly.\nRequire all denied\n"
+        @file_put_contents($ht, "# $why\n# Files here are served only through the API, never directly.\n"
+            . "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n"
             . "<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n", LOCK_EX);
     }
 

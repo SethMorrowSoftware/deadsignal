@@ -184,8 +184,8 @@ jobs:
 
       - name: Create the two accounts the API suite needs
         run: |
-          php server/account.php add tester1 'Passw0rd!tester1'
-          php server/account.php add tester2 'Passw0rd!tester2'
+          printf '%s' 'Passw0rd!tester1' | php server/account.php add tester1
+          printf '%s' 'Passw0rd!tester2' | php server/account.php add tester2
 
       - name: Serve it
         run: |

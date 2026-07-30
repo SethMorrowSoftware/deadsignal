@@ -168,8 +168,11 @@ php server/migrate.php                     # apply the schema
 php server/migrate.php --create-db         # …creating the database first
 
 php server/account.php list
-php server/account.php add    <name> <password>
-php server/account.php passwd <name> <new-password>
+php server/account.php add    <name>       # asks for the password
+php server/account.php passwd <name>       # asks for the new password
+
+# scripted, without putting the password in `ps` or your shell history:
+printf '%s' "$PASSWORD" | php server/account.php add <name>
 ```
 
 `server/config/studio.php` is optional — the backend has working defaults for
@@ -178,8 +181,9 @@ every value in it. It documents itself, and it is safe to delete and regenerate.
 ### Accounts
 
 Accounts are made from the server, never from a sign-up page. `setup.php`
-creates the first; after that use `php server/account.php add <name> <password>`,
-or re-run the wizard with the reconfirm key. Every account has identical rights;
+creates the first; after that use `php server/account.php add <name>` (it asks
+for the password rather than taking it as an argument, where `ps` and your shell
+history would both keep a copy), or re-run the wizard with the reconfirm key. Every account has identical rights;
 who may see a project is decided per project by its owner
 (**owner / editor / commenter / viewer**).
 

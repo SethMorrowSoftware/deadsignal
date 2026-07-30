@@ -469,6 +469,53 @@ check('an unlocked mid-install is not refused outright',
 check('a first run is not refused outright',
     StudioInstall::lockedWithNoSecret(false, false, '') === false);
 
+/* AND THE LOCK HAS TO BE WRITTEN AT ALL.
+   The check above is only a guard if something eventually sets $isLocked. The
+   wizard wrote the lock only when it created the FIRST account, so an install
+   that skipped the account step (offered whenever the database already has
+   accounts) or added a second one never locked — and per the case above, an
+   unlocked install with no secret needs no key from anybody. */
+{
+    $lockDir = $tmp . '/lockme';
+    $lock = $lockDir . '/.setup-complete';
+    check('lockInstall creates the lock file and its directory',
+        StudioInstall::lockInstall($lock) === true && is_file($lock));
+    $stamp = (string) file_get_contents($lock);
+    check('…and records when the install finished', trim($stamp) !== '', $stamp);
+    check('…is idempotent, and never rewrites the original timestamp',
+        StudioInstall::lockInstall($lock) === true
+        && (string) file_get_contents($lock) === $stamp);
+    /* $lock is a FILE, so its "subdirectory" can never be made. A wizard that
+       cannot write its lock has to say so — see the step 6 notice. */
+    check('…and reports failure rather than pretending, when the path cannot be written',
+        StudioInstall::lockInstall($lock . '/nested/.setup-complete') === false);
+    @unlink($lock);
+    @rmdir($lockDir);
+}
+
+/* setup.php must lock on ARRIVAL AT STEP 6, not inside the account handler:
+   that is the one point every route through step 5 passes through.
+
+   Pinned to the source rather than driven end-to-end, and worth being plain
+   about why: reaching step 6 for real writes into this working copy (the lock
+   itself, and studio.config.json) and every wizard test after it would then be
+   running against a locked install. What this can still catch is the regression
+   that actually happened — the call moving back under a condition — so the
+   assertion is on the exact unconditional call, not merely on the name being
+   present somewhere in the file. */
+{
+    $setup = (string) file_get_contents(__DIR__ . '/setup.php');
+    $sixth = strpos($setup, 'if ($step === 6) {');
+    $body = $sixth === false ? '' : substr($setup, $sixth, 900);
+    check('setup.php locks the install when the wizard reaches its last step',
+        $sixth !== false && str_contains($body, 'if (!StudioInstall::lockInstall($LOCK_FILE))'),
+        $sixth === false ? 'no step 6 block' : 'no unconditional lockInstall in it');
+    check('…and no longer locks only when it created the first account',
+        !str_contains($setup, 'if ($first) {'));
+    check('…and says so when the lock cannot be written, rather than finishing quietly',
+        str_contains($body, 'Could not write the setup lock'));
+}
+
 check('keyAccepted matches the exact secret', StudioInstall::keyAccepted('s3cr3t', 's3cr3t'));
 check('keyAccepted rejects a near miss', !StudioInstall::keyAccepted('s3cr3t', 's3cr3t '));
 check('keyAccepted rejects a non-string', !StudioInstall::keyAccepted('s3cr3t', ['s3cr3t']));
@@ -542,6 +589,16 @@ $deny = (string) @file_get_contents($tmp . '/denyme/.htaccess');
 
 check('writeDenyFile denies both Apache generations',
     str_contains($deny, 'Require all denied') && str_contains($deny, 'Deny from all'));
+/* Both syntaxes must be fenced behind their own module. A bare `Require all
+   denied` is a parse error on Apache 2.2, and in a .htaccess a parse error is a
+   500 on every request into the directory — a file written to lock a folder down
+   taking the studio offline instead. */
+check('…and fences each syntax behind the module that understands it',
+    (bool) preg_match(
+        '/<IfModule\s+mod_authz_core\.c>\s*Require all denied\s*<\/IfModule>/i', $deny)
+    && (bool) preg_match(
+        '/<IfModule\s+!mod_authz_core\.c>.*Deny from all.*<\/IfModule>/is', $deny),
+    $deny);
 file_put_contents($tmp . '/denyme/.htaccess', '# hand-edited');
 StudioInstall::writeDenyFile($tmp . '/denyme', 'unit test');
 check('an existing deny file is never overwritten',
