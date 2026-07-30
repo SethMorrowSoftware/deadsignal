@@ -50,12 +50,32 @@ export const AESTHETICS={
    same function. The picker never once showed the aesthetic's palette. */
 /** The tool's own chrome, plus regrouping the two packed pickers. No document. */
 function applyChrome(id,a){
-  const rs=document.documentElement.style; for(const k in a.vars) rs.setProperty(k,a.vars[k]);
+  const rs=document.documentElement.style;
+  /* Inline custom properties beat every stylesheet — including the neutral
+     studio skin's token block — so under that skin the aesthetic must NOT
+     paint the chrome, or the first switch leaves accent colours from one skin
+     on panels from the other, a mix neither defines. The vars are cleared
+     rather than skipped, in case a CRT-skin visit already set them; the
+     pickers still regroup, which is the part of the aesthetic that is not
+     paint. syncChromeToSkin() repaints when the skin toggles back. */
+  if(document.documentElement.getAttribute("data-skin")==="studio"){
+    for(const k in a.vars) rs.removeProperty(k);
+  } else {
+    for(const k in a.vars) rs.setProperty(k,a.vars[k]);
+  }
   /* The scene and template pickers group by the aesthetic's pack, so switching
      aesthetic has to rebuild them. Both preserve the current selection and
      neither dispatches, so this cannot change what is selected — only how the
      list is arranged. */
   fillSceneSelect(id); fillTemplateSelect(id);
+}
+
+/** Re-apply (or clear) the current aesthetic's chrome for the active skin.
+    The vars are inline, so only the writer can take them back — the skin
+    toggle calls this after changing data-skin. */
+export function syncChromeToSkin(){
+  const sel=$("aesthetic"); const a=sel&&AESTHETICS[sel.value];
+  if(a) applyChrome(sel.value,a);
 }
 /** The six control writes that put the aesthetic's palette on both tabs. */
 function paletteWrites(a){

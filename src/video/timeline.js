@@ -779,7 +779,7 @@ function timelineVisible(){ const v=$("view-timeline"); return !v || v.classList
 export function startTimelinePreview(){ stopTimelinePreview(); if(!timelineVisible())return; const c=$("tlcanvas"); if(!c)return; const sched=buildSchedule(); const tl=sched.tl;
   c.width=tl.W; c.height=tl.H; const ctx=c.getContext("2d"); _tlA().width=tl.W; _tlA().height=tl.H; updateTimelineInfo(sched);
   if(!sched.clips.length){ ctx.fillStyle="#07090c"; ctx.fillRect(0,0,tl.W,tl.H); setFont(ctx,Math.max(11,tl.H*0.05)); ctx.fillStyle="#5f7d78";
-    ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText("Add scenes from the VIDEO tab",tl.W/2,tl.H/2); ctx.textAlign="left"; ctx.textBaseline="top"; return; }
+    ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText("The sequence is empty",tl.W/2,tl.H/2); ctx.textAlign="left"; ctx.textBaseline="top"; return; }
   ensureTimelineVideo(sched,false); const start=performance.now();
   _tlClock=()=>((performance.now()-start)/1000)%sched.total;
   void armPreviewSound(sched);

@@ -36,12 +36,13 @@
  */
 import { $, toast } from '../core/dom.js';
 import { download } from '../core/blobs.js';
+import { syncChromeToSkin } from '../core/palettes.js';
 import { BIN_DRAG_TYPE, chooseFiles, useAsset } from './importui.js';
 import { getStore } from '../doc/session.js';
 import { MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
 import { library, onLibraryChange } from '../library/library.js';
 import { activateTab } from './shell.js';
-import { selectedClip, selectedRef, focusClipAfterRender, renderTrack, setTrackZoom, trackScale, zoomToFit } from './track.js';
+import { onClipSelect, selectedClip, selectedRef, focusClipAfterRender, renderTrack, setTrackZoom, trackScale, zoomToFit } from './track.js';
 import { buildInspectorPane, initInspector, render as renderInspector } from './inspector.js';
 import {
   addAudioClip, addGraphicClip, addOverlayClip, addStillClip, addTimelineClip, addTitleClip,
@@ -52,12 +53,9 @@ import {
 const SKIN_KEY = 'deadsignal.editor.skin';
 
 let built = false;
-let tool = 'select';
 
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
-
-export const currentTool = () => tool;
 
 /* ------------------------------------------------------------ timecode -- */
 
@@ -288,16 +286,26 @@ export const hasCopiedClip = () => !!_clip;
 
 /* ---------------------------------------------------------- transport -- */
 
-/** The play/pause + scrub controls of whichever view is on screen. */
+/**
+ * The play/pause + scrub controls of whichever view is on screen — or null on
+ * a workspace with no transport at all.
+ *
+ * Null matters. This used to fall through to the VIDEO targets on SCREEN,
+ * LIBRARY, BUNDLE, CLOUD and HELP, so Space and every transport button
+ * silently paused or scrubbed the hidden VIDEO preview — worse than a no-op,
+ * because coming back to VIDEO found it parked somewhere never asked for.
+ */
 function transportTargets() {
   const view = document.querySelector('.tab.active')?.dataset.view;
-  if (view === 'timeline') return { play: $('tl-playpause'), scrub: $('tl-scrub'), fps: () => Number($('tl-fps')?.value) || 12, dur: () => buildSchedule().duration };
-  if (view === 'audio') return { play: $('a-playpause'), scrub: null, fps: () => 12, dur: () => Number($('a-dur')?.value) || 0 };
-  return { play: $('v-playpause'), scrub: $('v-scrub'), fps: () => Number($('v-fps')?.value) || 12, dur: () => Number($('v-dur')?.value) || 0 };
+  if (view === 'timeline') return { view, play: $('tl-playpause'), scrub: $('tl-scrub'), fps: () => Number($('tl-fps')?.value) || 12, dur: () => buildSchedule().duration };
+  if (view === 'audio') return { view, play: $('a-play'), scrub: null, fps: () => 12, dur: () => Number($('a-dur')?.value) || 0 };
+  if (view === 'video') return { view, play: $('v-playpause'), scrub: $('v-scrub'), fps: () => Number($('v-fps')?.value) || 12, dur: () => Number($('v-dur')?.value) || 0 };
+  return null;
 }
 
 function transport(action) {
   const t = transportTargets();
+  if (!t) return;
   if (action === 'playpause') { t.play?.click(); return; }
   if (!t.scrub) return;
   const max = Number(t.scrub.max) || 1000;
@@ -309,14 +317,46 @@ function transport(action) {
   t.scrub.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+/**
+ * Keep the transport buttons honest about the workspace: disabled where they
+ * would do nothing (all of them on LIBRARY-like views, everything but play
+ * on AUDIO, which has no scrubber), and the play button mirroring the glyph
+ * of the real control it proxies, so playing state shows here too.
+ */
+function syncTransport() {
+  const t = transportTargets();
+  const scrubbable = !!t?.scrub;
+  for (const a of ['start', 'backs', 'back', 'fwd', 'fwds', 'end']) {
+    const b = $('nle-t-' + a);
+    if (b) b.disabled = !scrubbable;
+  }
+  const play = $('nle-t-playpause');
+  if (play) {
+    play.disabled = !t;
+    // ▮/❚ in the proxied button's label means "playing — click pauses".
+    play.textContent = !t ? '▶ ❚❚' : /[▮❚]/.test(t.play?.textContent || '') ? '❚❚' : '▶';
+  }
+}
+
 /* --------------------------------------------------------------- menus -- */
 
+/** Nudge the timeline zoom and keep the slider in the timeline pane honest. */
+function nudgeZoom(factor) {
+  setTrackZoom(trackScale().zoom * factor);
+  const z = $('nle-zoom');
+  if (z) z.value = String(Math.round(trackScale().zoom * 100));   /* dom-only: reflecting view state */
+}
+
 const ACTIONS = {
-  undo: { label: 'Undo', key: 'Ctrl+Z', run: () => getStore()?.undo(), can: () => !!getStore()?.canUndo },
-  redo: { label: 'Redo', key: 'Ctrl+Shift+Z', run: () => getStore()?.redo(), can: () => !!getStore()?.canRedo },
-  split: { label: 'Split at playhead', key: 'S', run: splitAtPlayhead },
-  ripple: { label: 'Delete clip', key: 'Del', run: rippleDelete },
-  dup: { label: 'Duplicate clip', key: 'Ctrl+D', run: duplicateClip },
+  /* Labels may be functions, resolved when the menu opens: the store keeps
+     each entry's own name, and "Undo trim out" is worth more than "Undo". */
+  undo: { label: () => { const l = getStore()?.undoLabel; return l ? `Undo ${l}` : 'Undo'; },
+          key: 'Ctrl+Z', run: () => getStore()?.undo(), can: () => !!getStore()?.canUndo },
+  redo: { label: () => { const l = getStore()?.redoLabel; return l ? `Redo ${l}` : 'Redo'; },
+          key: 'Ctrl+Shift+Z', run: () => getStore()?.redo(), can: () => !!getStore()?.canRedo },
+  split: { label: 'Split at playhead', key: 'S', run: splitAtPlayhead, can: () => timeline.length > 0 },
+  ripple: { label: 'Delete clip', key: 'Del', run: rippleDelete, can: () => selectedRef().i >= 0 },
+  dup: { label: 'Duplicate clip', key: 'Ctrl+D', run: duplicateClip, can: () => selectedRef().i >= 0 },
   copy: { label: 'Copy', key: 'Ctrl+C', run: copyClip, can: () => selectedRef().i >= 0 },
   paste: { label: 'Paste at playhead', key: 'Ctrl+V', run: pasteClip, can: hasCopiedClip },
   addScene: { label: 'Add current scene', key: '', run: () => addTimelineClip() },
@@ -325,29 +365,44 @@ const ACTIONS = {
   addTitle: { label: 'Add a title at playhead', key: '', run: () => addTitleClip(tlScrubT) },
   addShape: { label: 'Add a shape at playhead', key: '', run: () => addGraphicClip(tlScrubT) },
   addSound: { label: 'Add sound at playhead', key: '', run: () => addAudioClip({ at: tlScrubT }) },
-  clearSeq: { label: 'Clear sequence', key: '', run: () => clearTimeline() },
-  saveProj: { label: 'Save project…', key: '', run: () => $('proj-save')?.click() },
+  clearSeq: { label: 'Clear sequence', key: '', run: () => clearTimeline(), can: () => timeline.length > 0 },
+  saveProj: { label: 'Save project…', key: 'Ctrl+S', run: () => $('proj-save')?.click() },
   openProj: { label: 'Open project…', key: '', run: () => $('proj-load')?.click() },
-  record: { label: 'Export sequence…', key: '', run: () => { activateTab('timeline'); $('tl-record')?.click(); } },
-  exportNow: { label: 'Export what I am looking at', key: 'Ctrl+E', run: () => exportCurrent() },
+  importMedia: { label: 'Import media…', key: '', run: () => chooseFiles() },
+  record: { label: 'Export sequence…', key: '', run: () => { activateTab('timeline'); $('tl-record')?.click(); }, can: () => timeline.length > 0 },
+  exportNow: { label: 'Export what I am looking at', key: 'Ctrl+E', run: () => exportCurrent(), can: () => !!exportTarget() },
   media: { label: 'Open media list…', key: '', run: () => activateTab('library') },
   exportVideo: { label: 'Export video clip…', key: '', run: () => { activateTab('video'); $('v-record')?.click(); } },
   palette: { label: 'Search everything…', key: 'Ctrl+K', run: () => $('palette-open')?.click() },
   explain: { label: 'Explain mode', key: '?', run: () => $('explain-toggle')?.click() },
+  zoomIn: { label: 'Zoom in on the timeline', key: '', run: () => nudgeZoom(1.25) },
+  zoomOut: { label: 'Zoom out of the timeline', key: '', run: () => nudgeZoom(1 / 1.25) },
+  zoomFit: { label: 'Fit the whole sequence', key: '', run: () => { zoomToFit(); const z = $('nle-zoom'); if (z) z.value = String(Math.round(trackScale().zoom * 100)); } },
   skin: { label: 'Toggle CRT skin', key: '', run: () => toggleSkin() },
   help: { label: 'Help', key: '', run: () => activateTab('help') },
+  shortcuts: { label: 'Keyboard shortcuts', key: '', run: () => openShortcuts() },
 };
 
 const MENUS = [
-  ['File', ['openProj', 'saveProj', '-', 'exportNow', '-', 'exportVideo', 'record', 'media']],
+  ['File', ['openProj', 'saveProj', '-', 'importMedia', '-', 'exportNow', '-', 'exportVideo', 'record', 'media']],
   ['Edit', ['undo', 'redo', '-', 'copy', 'paste', '-', 'split', 'dup', 'ripple', '-', 'clearSeq']],
   ['Clip', ['addScene', 'addStill', '-', 'addTitle', 'addShape', 'addOverlay', 'addSound']],
-  ['View', ['palette', 'explain', '-', 'skin']],
-  ['Help', ['help']],
+  ['View', ['palette', 'explain', '-', 'zoomIn', 'zoomOut', 'zoomFit', '-', 'skin']],
+  ['Help', ['help', 'shortcuts']],
 ];
 
 function closeMenus() {
-  document.querySelectorAll('.nle-menu[open]').forEach((d) => d.removeAttribute('open'));
+  /* The wrapper's `open` attribute is bookkeeping; what the eye sees is the
+     popup's `hidden`. Clearing one without the other left every opened menu
+     on screen forever — Escape and outside clicks changed state and hid
+     nothing, and the stuck popup sat over the workspace tabs. */
+  document.querySelectorAll('.nle-menu[open]').forEach((d) => {
+    d.removeAttribute('open');
+    const pop = d.querySelector('.nle-menu-pop');
+    if (pop) pop.hidden = true;
+    const btn = d.querySelector('button[aria-haspopup]');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  });
 }
 
 function buildMenu(name, items) {
@@ -375,9 +430,10 @@ function buildMenu(name, items) {
     e.stopPropagation();
     const open = wrap.hasAttribute('open');
     closeMenus();
-    if (open) { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
-    // Enabled state is decided when the menu opens, not when it was built:
-    // Undo is available or not depending on what just happened.
+    if (open) return;
+    // Enabled state and labels are decided when the menu opens, not when it
+    // was built: Undo is available or not — and named or not — depending on
+    // what just happened.
     pop.replaceChildren();
     for (const key of items) {
       if (key === '-') { const s = document.createElement('div'); s.className = 'nle-menu-sep'; pop.appendChild(s); continue; }
@@ -387,20 +443,117 @@ function buildMenu(name, items) {
       b.type = 'button';
       b.setAttribute('role', 'menuitem');
       const span = document.createElement('span');
-      span.textContent = a.label;
+      span.textContent = typeof a.label === 'function' ? a.label() : a.label;
       b.appendChild(span);
       if (a.key) { const k = document.createElement('kbd'); k.textContent = a.key; b.appendChild(k); }
       if (a.can && !a.can()) b.disabled = true;
-      b.addEventListener('click', () => { closeMenus(); pop.hidden = true; try { a.run(); } catch (err) { console.error(err); } refreshStatus(); });
+      b.addEventListener('click', () => { closeMenus(); try { a.run(); } catch (err) { console.error(err); } refreshStatus(); });
       pop.appendChild(b);
     }
     wrap.setAttribute('open', '');
     pop.hidden = false;
     btn.setAttribute('aria-expanded', 'true');
+    // role="menu" promises the arrow-key model, so deliver it: focus moves in
+    // when the menu opens and the arrows walk the items.
+    pop.querySelector('button:not(:disabled)')?.focus();
+  });
+
+  // The APG menu keyboard model, minus submenus (there are none): arrows walk
+  // the enabled items, Home/End jump, Escape closes and returns focus.
+  pop.addEventListener('keydown', (e) => {
+    const items2 = [...pop.querySelectorAll('button:not(:disabled)')];
+    if (!items2.length) return;
+    const i = items2.indexOf(document.activeElement);
+    let j = null;
+    if (e.key === 'ArrowDown') j = i < 0 ? 0 : (i + 1) % items2.length;
+    else if (e.key === 'ArrowUp') j = i < 0 ? items2.length - 1 : (i - 1 + items2.length) % items2.length;
+    else if (e.key === 'Home') j = 0;
+    else if (e.key === 'End') j = items2.length - 1;
+    else if (e.key === 'Escape') { closeMenus(); btn.focus(); e.preventDefault(); e.stopPropagation(); return; }
+    else return;
+    e.preventDefault();
+    items2[j].focus();
   });
 
   return wrap;
 }
+
+/* ------------------------------------------------------ shortcut sheet -- */
+
+/**
+ * Every binding the editor answers to, in one dialog — generated from a
+ * table here rather than typed into HELP prose, so it cannot drift from the
+ * handlers without the drift being one screen away from the reader.
+ */
+const SHORTCUTS = [
+  ['Transport', [
+    ['Space / K', 'Play or pause the workspace you are in'],
+    ['J / L', 'Back / forward ten frames'],
+    ['← / →', 'Back / forward one frame'],
+    ['Home / End', 'Go to the start / end'],
+  ]],
+  ['Editing', [
+    ['S or C', 'Split the clip under the playhead'],
+    ['Del / Backspace', 'Delete the selected clip'],
+    ['Ctrl+C / Ctrl+V', 'Copy the selection / paste at the playhead'],
+    ['Ctrl+D', 'Duplicate the selected clip'],
+    ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
+    ['← / → on a selected block', 'Trim it (Shift: by 1s · Alt: reorder)'],
+  ]],
+  ['Studio', [
+    ['Ctrl+K', 'Search every setting, scene, preset and action'],
+    ['Ctrl+E', 'Export what you are looking at'],
+    ['Ctrl+S', 'Save the project file'],
+    ['1–8', 'Switch workspace'],
+    ['R', 'Record / render the current workspace'],
+    ['G', 'Randomize the current workspace'],
+    ['?', 'Explain mode — click any control to learn it'],
+  ]],
+];
+
+function openShortcuts() {
+  let overlay = $('nle-keys');
+  if (!overlay) {
+    overlay = el('div', 'nle-keys');
+    overlay.id = 'nle-keys';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Keyboard shortcuts');
+    const card = el('div', 'nle-keys-card');
+    const head = el('div', 'nle-keys-head');
+    head.appendChild(el('h2', null, 'Keyboard shortcuts'));
+    const close = el('button', 'btn small', '✕ CLOSE');
+    close.type = 'button';
+    close.id = 'nle-keys-close';
+    close.addEventListener('click', () => { overlay.hidden = true; });
+    head.appendChild(close);
+    card.appendChild(head);
+    for (const [group, rows] of SHORTCUTS) {
+      card.appendChild(el('h3', 'nle-keys-group', group));
+      const dl = el('dl', 'nle-keys-list');
+      for (const [keys, what] of rows) {
+        const dt = el('dt');
+        for (const part of keys.split(' / ')) {
+          if (dt.childNodes.length) dt.appendChild(document.createTextNode(' / '));
+          const kbd = document.createElement('kbd');
+          kbd.textContent = part;
+          dt.appendChild(kbd);
+        }
+        dl.appendChild(dt);
+        dl.appendChild(el('dd', null, what));
+      }
+      card.appendChild(dl);
+    }
+    overlay.appendChild(card);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.hidden = true; });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) overlay.hidden = true; });
+    document.body.appendChild(overlay);
+  }
+  overlay.hidden = false;
+  $('nle-keys-close')?.focus();
+}
+
+export const isShortcutsOpen = () => { const o = $('nle-keys'); return !!o && !o.hidden; };
 
 /* ------------------------------------------------------------ the bin -- */
 
@@ -408,14 +561,21 @@ function renderBin() {
   const list = $('nle-bin-list');
   const count = $('nle-bin-count');
   if (!list) return;
+  /* A full rebuild fires whenever an export lands or an undo moves the
+     library — which is exactly when a keyboard user is mid-way through the
+     bin. Note where they were and put them back, the same courtesy
+     renderTrack already extends to the lane. */
+  const pane = $('nle-bin');
+  const hadFocus = document.activeElement?.closest?.('.nle-bin-item');
+  const focusKey = hadFocus?.dataset.key;
+  const scrollTop = pane ? pane.scrollTop : 0;
   list.replaceChildren();
   if (count) count.textContent = String(library.length);
 
   if (!library.length) {
     const p = document.createElement('p');
     p.className = 'nle-empty';
-    p.textContent = 'Nothing here yet. Drop footage, stills or sound anywhere — or press ＋ — '
-      + 'and anything you export lands here too.';
+    p.textContent = 'Drop files anywhere, or press ＋. Everything you export lands here too.';
     list.appendChild(p);
     return;
   }
@@ -429,6 +589,7 @@ function renderBin() {
        belongs here, on the thing itself. */
     const row = document.createElement('div');
     row.className = 'nle-bin-item';
+    row.dataset.key = it.key;
 
     const b = document.createElement('button');
     b.type = 'button';
@@ -453,8 +614,13 @@ function renderBin() {
     /* Clicking an asset USES it. It used to open the LIBRARY tab, which is a
        list of everything rather than an answer to "I want to work with this
        one" — and with nothing importable in the library, using one was not a
-       thing you could do at all. */
-    b.addEventListener('click', () => useAsset(it));
+       thing you could do at all. The card marks itself selected first, so
+       the workspace jump that follows is legible as "that one, doing that". */
+    b.addEventListener('click', () => {
+      list.querySelectorAll('.nle-bin-item[aria-selected]').forEach((x) => x.removeAttribute('aria-selected'));
+      row.setAttribute('aria-selected', 'true');
+      useAsset(it);
+    });
 
     /* Draggable onto the sequence. HTML5 drag rather than pointer capture,
        because the lane's own pointer handlers own the pointer once a gesture
@@ -492,6 +658,12 @@ function renderBin() {
     row.append(b, dl);
     list.appendChild(row);
   }
+
+  if (focusKey) {
+    list.querySelector(`.nle-bin-item[data-key="${CSS.escape(focusKey)}"] .nle-bin-open`)
+      ?.focus({ preventScroll: true });
+  }
+  if (pane) pane.scrollTop = scrollTop;
 }
 
 /**
@@ -519,7 +691,7 @@ function exportTarget() {
 
 export function exportCurrent() {
   const t = exportTarget();
-  if (!t) { toast('This workspace has nothing to export — open VIDEO, SCREEN, AUDIO or TIMELINE'); return false; }
+  if (!t) { toast('This workspace has nothing to export — open VIDEO, AUDIO, SCREEN or TIMELINE'); return false; }
   const btn = $(t.id);
   if (!btn) return false;
   if (btn.disabled) { toast('Nothing to export yet — render it first'); return false; }
@@ -535,11 +707,15 @@ function syncExportButton() {
   btn.textContent = t ? `⤓ ${t.label.toUpperCase()}` : '⤓ EXPORT';
   btn.disabled = !t;
   btn.title = t
-    ? `${t.label} — the same as pressing ${t.id === 'v-record' ? '● RECORD' : 'its export button'} on that tab. It lands in the media bin, with a download beside it.`
-    : 'Open VIDEO, SCREEN, AUDIO or TIMELINE to export something';
+    ? `${t.label} — the same as pressing ${t.id === 'v-record' ? '● RECORD' : 'its export button'} in that workspace. It lands in the media bin, with a download beside it.`
+    : 'Open VIDEO, AUDIO, SCREEN or TIMELINE to export something';
 }
 
 /* ------------------------------------------------------------- status -- */
+
+/* Which status-bar readout belongs to which workspace: a stale estimate from
+   a workspace you are not in is a number that lies. */
+const METER_HOME = { 'v-est': 'video', 'v-flash': 'video', 'a-stale': 'audio', 'i-est': 'image', 'tl-info': 'timeline' };
 
 export function refreshStatus() {
   const seq = $('nle-st-seq');
@@ -550,21 +726,52 @@ export function refreshStatus() {
 
   let sched = null;
   try { sched = buildSchedule(); } catch { /* before the timeline tab is wired */ }
-  const fps = Number($('tl-fps')?.value) || 12;
 
   if (seq && sched) {
     seq.textContent = `${sched.clips.length} clip${sched.clips.length === 1 ? '' : 's'} · ${sched.duration.toFixed(2)}s · ${sched.tl.W}×${sched.tl.H}`;
   }
   if (sel) {
-    const i = selectedClip();
-    sel.textContent = i >= 0 && timeline[i] ? `Clip ${i + 1}: ${timeline[i].label}` : 'No selection';
+    const ref = selectedRef();
+    if (ref.lane === 'A' && ref.i >= 0 && audioTimeline[ref.i]) {
+      // A sound is a first-class selection; "No selection" over a selected
+      // sound was the status bar not knowing about the second lane.
+      sel.textContent = `Sound ${ref.i + 1}: ${audioTimeline[ref.i].label || 'sound'}`;
+    } else {
+      const i = selectedClip();
+      sel.textContent = i >= 0 && timeline[i] ? `Clip ${i + 1}: ${timeline[i].label}` : 'No selection';
+    }
   }
   if (undo) {
     const s = getStore();
     undo.textContent = s ? `${s.undoDepth} undo` : '';
   }
-  if (tc) tc.textContent = timecode(tlScrubT, fps);
-  if (tcEnd && sched) tcEnd.textContent = timecode(sched.duration, fps);
+
+  /* The timecode reads the same clock the transport buttons drive. It used to
+     always show the sequence playhead while the buttons scrubbed the VIDEO
+     preview — one transport cluster, two timebases. */
+  const t = transportTargets();
+  if (t?.view === 'video') {
+    const fps = t.fps();
+    const scrub = t.scrub;
+    const dur = t.dur();
+    const cur = scrub ? (Number(scrub.value) / (Number(scrub.max) || 1000)) * dur : 0;
+    if (tc) tc.textContent = timecode(cur, fps);
+    if (tcEnd) tcEnd.textContent = timecode(dur, fps);
+  } else {
+    const fps = Number($('tl-fps')?.value) || 12;
+    if (tc) tc.textContent = timecode(tlScrubT, fps);
+    if (tcEnd && sched) tcEnd.textContent = timecode(sched.duration, fps);
+  }
+
+  // The rehoused readouts (see enterEditor) show only for their own workspace.
+  const view = document.querySelector('.tab.active')?.dataset.view;
+  for (const [id, home] of Object.entries(METER_HOME)) {
+    const m = $(id);
+    if (m && m.parentElement?.id === 'nle-st-meters') m.hidden = view !== home;
+  }
+
+  syncExportButton();
+  syncTransport();
 
   /* The clip inspector rides this tick as a backstop. It has its own change
      notifications — selection, the store, the library — and re-renders only
@@ -590,12 +797,24 @@ function buildChrome() {
   const bar = el('div', 'nle-menubar');
   bar.appendChild(el('span', 'nle-brand', 'Dead Signal'));
   for (const [name, items] of MENUS) bar.appendChild(buildMenu(name, items));
+  bar.appendChild(el('span', 'nle-spacer'));
+  /* The skin toggle rides the menubar's right edge rather than floating at
+     the toolbar's ragged end, where it wrapped onto an orphan row of its own
+     the moment the settings did. Only the toggle is built here — Search and
+     Explain are real buttons in the page header, which moves into the
+     toolbar below; second copies would be two controls for one action. */
+  const skinBtn = el('button', 'nle-tbtn', '◐');
+  skinBtn.type = 'button';
+  skinBtn.id = 'nle-q-skin';
+  skinBtn.title = 'Switch between the studio and CRT skins';
+  skinBtn.setAttribute('aria-label', 'Switch between the studio and CRT skins');
+  skinBtn.addEventListener('click', () => toggleSkin());
+  bar.appendChild(skinBtn);
   /* The primary action of the whole tool, at the end of the top row where a
      primary action belongs. It was in the toolbar's right-hand group, which
      wraps when the settings do — so on a narrower window the one button
      everybody needs dropped onto a line of its own at the far left, which is
      nowhere. */
-  bar.appendChild(el('span', 'nle-spacer'));
   const exp = el('button', 'nle-tbtn primary nle-export', '⤓ EXPORT');
   exp.type = 'button';
   exp.id = 'nle-export';
@@ -603,61 +822,27 @@ function buildChrome() {
   bar.appendChild(exp);
   chrome.appendChild(bar);
 
-  /* toolbar: tools, workspaces, transport-adjacent actions */
+  /* toolbar: the rehoused header settings */
   const tb = el('div', 'nle-toolbar');
-  const tools = el('div', 'nle-tools');
-  tools.setAttribute('role', 'group');
-  tools.setAttribute('aria-label', 'Tools');
-  for (const [id, glyph, title] of [['select', '⇱', 'Selection tool (V)'], ['razor', '⁄', 'Razor — split at playhead (C)']]) {
-    const b = el('button', 'nle-tool');
-    b.type = 'button';
-    b.id = `nle-tool-${id}`;
-    b.textContent = glyph;
-    b.title = title;
-    b.dataset.tool = id;
-    b.setAttribute('aria-pressed', String(id === tool));
-    b.addEventListener('click', () => {
-      if (id === 'razor') { splitAtPlayhead(); return; }   // a razor click IS the cut
-      tool = id;
-      tools.querySelectorAll('.nle-tool').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.tool === tool)));
-    });
-    tools.appendChild(b);
-  }
-  tb.appendChild(tools);
-  tb.appendChild(el('span', 'nle-sep'));
-
-  /* Workspace presets. Each is a tab underneath — the same tablist, so the
-     keyboard model and the document binding are unchanged. */
-  /* No workspace switcher is built here. The page already has a tablist — the
-     one the keyboard, the command palette and the test suites drive — and a
+  /* No tool palette is built here. The old select/razor island was a facade —
+     nothing read the "current tool", and the razor button was just the Split
+     command wearing a glyph. Split lives in the Edit menu, the timeline bar
+     and the S key; a mode switch that is not a mode is chrome that lies. */
+  /* No workspace switcher either. The page already has a tablist — the one
+     the keyboard, the command palette and the test suites drive — and a
      second set of buttons onto the same views would mean two "selected" tabs,
      two tab stops per view and a roving-tabindex contract that cannot hold.
      The editor styles the real strip instead (see editor.css); this is the
      rare case where the right amount of new UI is none. */
 
-  tb.appendChild(el('span', 'nle-spacer'));
-
   /* The page header carries real settings — aesthetic, seed, contrast, detail,
      save/load — and the editor hides that header. They are MOVED here rather
      than rebuilt: same nodes, same ids, same bindings, so the document, the
      palette, Explain mode and every test still reach them, and the editor is
-     not missing controls the tabbed layout has. */
+     not missing controls the old layout had. */
   const settings = el('div', 'nle-settings');
   settings.id = 'nle-settings';
   tb.appendChild(settings);
-
-  /* Only the skin toggle is built here. Search and Explain are real buttons in
-     the page header, and the header moves into this toolbar below — building
-     second copies of them would be two controls for one action, which is how a
-     UI starts lying about its own state. */
-  const quick = el('div', 'nle-tools');
-  const skinBtn = el('button', 'nle-tool', '◐');
-  skinBtn.type = 'button';
-  skinBtn.id = 'nle-q-skin';
-  skinBtn.title = 'Switch between the studio and CRT skins';
-  skinBtn.addEventListener('click', () => toggleSkin());
-  quick.appendChild(skinBtn);
-  tb.appendChild(quick);
   chrome.appendChild(tb);
 
   return chrome;
@@ -790,12 +975,27 @@ function buildStatus() {
     s.appendChild(n);
     s.appendChild(el('span', 'sep'));
   }
-  s.appendChild(el('span', null, 'Space play · S split · Del remove · Ctrl+Z undo'));
+  const hint = el('span', 'nle-st-hint', 'Space play · S split · Del remove · Ctrl+Z undo — full list under Help');
+  s.appendChild(hint);
+  /* The live readouts rehoused from the hidden stage headers (see
+     enterEditor) dock at the right edge. */
+  const meters = el('span', 'nle-st-meters');
+  meters.id = 'nle-st-meters';
+  s.appendChild(meters);
   return s;
 }
 
 /** The active view changed: the status bar and the export button track it. */
-function syncWorkspace() { refreshStatus(); syncExportButton(); }
+function syncWorkspace() {
+  /* Stage-less views (LIBRARY, BUNDLE, CLOUD, HELP) drop the inspector and
+     transport panes and take their space — flagged with a class because the
+     selector that would express it in pure CSS needs :has() inside :has(),
+     which is invalid. */
+  const main = document.querySelector('main');
+  if (main) main.classList.toggle('no-stage', !document.querySelector('.view.active .panel.stagewrap'));
+  refreshStatus();
+  syncExportButton();
+}
 
 /* --------------------------------------------------------------- skin -- */
 
@@ -809,6 +1009,9 @@ export function setSkin(skin) {
   if (s === 'crt') document.documentElement.removeAttribute('data-skin');
   else document.documentElement.setAttribute('data-skin', 'studio');
   lsSet(SKIN_KEY, s);
+  /* The aesthetic's chrome colours are inline vars: painted under the CRT
+     skin, cleared under the studio skin, and only the writer can swap them. */
+  syncChromeToSkin();
 }
 
 /* --------------------------------------------------------------- mode -- */
@@ -851,6 +1054,20 @@ function enterEditor() {
   const log = $('console')?.closest('.panel');
   const logDock = $('nle-bin');
   if (log && logDock && log.parentElement !== logDock) logDock.appendChild(log);
+  /* The stage panels' h2 headers are hidden in the editor — a monitor shows
+     the picture, not a title — but the live readouts inside them are not
+     decoration: the export-size estimates, the WCAG 2.3.1 flash meter, the
+     audio stale badge and the sequence info. They move to the status bar,
+     keeping their ids, and refreshStatus shows each only on its own
+     workspace. Hiding the flash meter with its header would have silently
+     dropped the one safety readout HELP promises. */
+  const meters = $('nle-st-meters');
+  if (meters) {
+    for (const id of Object.keys(METER_HOME)) {
+      const m = $(id);
+      if (m && m.parentElement !== meters) meters.appendChild(m);
+    }
+  }
   syncWorkspace();
   /* The lane just changed host, and its viewport width came with the host. The
      scale is measured, so it has to be re-measured or every block is laid out
@@ -901,19 +1118,37 @@ function build() {
     if (!((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey)) return;
     const k = e.key.toLowerCase();
     if (k === 'e') { e.preventDefault(); exportCurrent(); return; }
-    /* Copy and paste are commands like Ctrl+E, but unlike it they must NOT fire
-       while a field has focus: Ctrl+C in a text box is the browser's copy, and
-       taking that away to duplicate a clip would be indefensible. */
+    /* Copy, paste and duplicate are commands like Ctrl+E, but unlike it they
+       must NOT fire while a field has focus: Ctrl+C in a text box is the
+       browser's copy, and taking that away to duplicate a clip would be
+       indefensible. */
     const t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
     if (k === 'c') { e.preventDefault(); copyClip(); }
     else if (k === 'v') { e.preventDefault(); pasteClip(); }
+    else if (k === 'd') { e.preventDefault(); duplicateClip(); }
   });
 
   document.addEventListener('keydown', (e) => {
+    /* A deeper handler that already acted owns the key: the lane's arrows
+       trim the selected block, the tablist's arrows move between workspaces,
+       and both preventDefault. Without this guard every trim ALSO stepped
+       the playhead — two meanings on one press. */
+    if (e.defaultPrevented) return;
     const t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    /* A modal on screen means the keys belong to it, not the editor: Space
+       with the welcome card up should not start the preview behind it. */
+    const welcome = document.getElementById('welcome');
+    if (welcome && welcome.getClientRects().length) return;
+    const pal = document.getElementById('palette');
+    if (pal && !pal.hidden) return;
+    if (isShortcutsOpen()) return;
+    /* Space on a focused button is the button's activation — taking it away
+       to toggle playback made Enter and Space behave differently on the same
+       control. K stays as the play/pause key that always works. */
+    if (e.key === ' ' && t && t.closest('button')) return;
 
     const map = {
       ' ': () => transport('playpause'),
@@ -930,8 +1165,9 @@ function build() {
     refreshStatus();
   });
 
-  // The tab strip is still the source of truth for which view is active.
-  document.getElementById('tabs')?.addEventListener('click', () => setTimeout(syncWorkspace, 0));
+  // activateTab() announces every workspace switch, whatever route it came
+  // by — clicking a tab, digits 1-8, arrow keys, the palette, a menu action.
+  document.addEventListener('studio:view', () => syncWorkspace());
 
   /* The scale is pixels per second against a MEASURED viewport, so a window
      resize changes it. Debounced: a drag-resize fires this continuously and
@@ -956,9 +1192,10 @@ export function initEditor() {
   enterEditor();
 
   // Keep the status bar honest without polling the document: every commit the
-  // store makes is a reason to re-read it.
-  syncExportButton();
+  // store makes is a reason to re-read it, and so is a selection — waiting up
+  // to 250ms for the poll made clicking a clip feel loose.
   getStore()?.subscribe?.('', () => refreshStatus());
+  onClipSelect(() => refreshStatus());
   setInterval(() => refreshStatus(), 250);
   refreshStatus();
 }

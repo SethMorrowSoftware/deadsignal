@@ -34,9 +34,9 @@
        became 4294967295 and a typed 1e12 became something else again, with the
        box still showing what was typed. Declaring it here makes the control
        agree with the code rather than the code quietly overruling the box. -->
-  <span class="ctl">seed <input type="number" id="seed" value="1947" min="0" max="4294967295" step="1" style="width:80px" title="deterministic seed for all randomness">
+  <span class="ctl">seed <input type="number" id="seed" value="1947" min="0" max="4294967295" step="1" title="deterministic seed for all randomness">
     <button class="btn small" id="seed-roll" title="new random seed">⟳</button></span>
-  <span class="ctl">CRT <input type="range" id="crt-intensity" min="0" max="100" value="50" style="width:70px" title="tool chrome CRT intensity (does not affect output)"></span>
+  <span class="ctl">CRT <input type="range" id="crt-intensity" min="0" max="100" value="50" title="tool chrome CRT intensity (does not affect output)"></span>
   <span class="ctl"><label for="contrast">contrast</label>
     <select id="contrast" title="High contrast turns off the CRT overlay and phosphor glow in the tool's own interface. Rendered media is unaffected.">
       <option value="normal">Normal</option><option value="high">High</option>
@@ -72,23 +72,22 @@
     <h2 id="welcome-h">▓ WELCOME</h2>
     <p>This is an offline forge for analogue-horror, cyberpunk and vaporwave media. Everything renders in your browser and downloads to your machine — nothing is uploaded.</p>
     <ol class="welcome-steps">
-      <li><b>Make a look.</b> Pick a Scene on VIDEO, or a template on SCREEN, and dial in the decay. Every control explains itself — press <b>?</b> then click one.</li>
+      <li><b>Make a look.</b> Pick a Scene on VIDEO, or a template on SCREEN, and dial in the decay in the properties column. Every control explains itself — press <b>?</b> then click one.</li>
       <li><b>Export it.</b> <b>● RECORD</b> writes a <code>.webm</code> or <code>.mp4</code> — the <b>File</b> picker chooses — faster than real time. Audio renders to <code>.wav</code>, screens to <code>.png</code>.</li>
-      <li><b>Ship it.</b> The <b>BUNDLE</b> tab turns your library into campaign-ready files and a drop-in <code>.zip</code>.</li>
+      <li><b>Cut it, ship it.</b> The sequence along the bottom edits like any NLE — split, trim, layer, add sound. The <b>BUNDLE</b> workspace turns your library into campaign-ready files and a drop-in <code>.zip</code>.</li>
     </ol>
     <p class="hint">Lost? <b>Ctrl+K</b> searches every setting, scene and action by name.</p>
     <div class="btns">
       <button class="btn" id="welcome-sample">◆ START FROM A SAMPLE</button>
-      <button class="btn small" id="welcome-close">Start empty</button>
+      <button class="btn small" id="welcome-close">START EMPTY</button>
     </div>
-    <p class="hint">The sample is a finished 10-second clip — a keyframed decay, a stacked digital-rain layer and a stereo bed — set up so you can change one thing and see what it does.</p>
+    <p class="hint">The sample is a finished 10-second look — a keyframed decay, a stacked digital-rain layer and a stereo bed — one ● RECORD away from a file, set up so you can change one thing and see what it does.</p>
   </div>
 </div>
 
 <main id="main-content">
   <!-- ===================== VIDEO ===================== -->
   <section class="view active" id="view-video" role="tabpanel" aria-labelledby="tab-video" tabindex="0">
-    <p class="tabhelp">Pick a <b>Scene</b>, dial in the CRT/VHS look and text, scrub the preview, then <b>Record</b> — the <b>File</b> picker chooses <code>.webm</code> or <code>.mp4</code>. Bring your own art with <b>⇪ IMG</b> or footage with <b>⇪ VID</b> (drop files on the preview). Also exports <code>.gif</code> and a frame-strip. Tip: click a section title to fold it.</p>
     <div class="grid">
       <div class="panel stagewrap">
         <h2>PREVIEW · TERMINAL / CRT VIDEO → .webm / .mp4 <span id="v-est" class="tag"></span><span id="v-flash" class="tag flashmeter" title="Full-screen luminance changes per second. The WCAG limit is 3.">flash 0/s</span></h2>
@@ -112,9 +111,9 @@
         </div>
         <div class="meter" id="v-progress-wrap" style="display:none;width:100%"><div id="v-progress" style="width:0%"></div></div>
         <div class="hint" id="v-status" role="status" aria-live="polite">Idle. Adjust, preview, then record.</div>
-        <div id="v-banners" style="width:100%"></div>
+        <div id="v-banners" class="banners"></div>
       </div>
-      <div class="panel" style="max-height:82vh;overflow:auto">
+      <div class="panel">
         <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="v-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
         <fieldset data-section="Look" class="macros"><legend>QUICK LOOK</legend><div class="row"><label for="v-macro-grime">Grime</label><input type="range" id="v-macro-grime" min="0" max="100" value="0" class="grow"></div><div class="row"><label for="v-macro-decay">Decay</label><input type="range" id="v-macro-decay" min="0" max="100" value="0" class="grow"></div><p class="hint">One dial each. They write the individual settings below, so everything stays adjustable.</p></fieldset>
         <div class="row"><label for="v-preset">Preset</label><select id="v-preset" class="grow"></select><button class="btn small" id="v-gallery-btn" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="v-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
@@ -259,7 +258,6 @@ signal integrity: 100%</textarea>
 
   <!-- ===================== AUDIO ===================== -->
   <section class="view" id="view-audio" role="tabpanel" aria-labelledby="tab-audio" tabindex="0">
-    <p class="tabhelp">Toggle sound <b>layers</b> (drone, noise, pulses, Morse, DTMF…) into a <b>master FX bus</b>, <b>Render</b>, watch the peak meter, optionally <b>Normalize</b>, then download <code>.wav</code>. Render length auto-extends to fit all content.</p>
     <div class="grid">
       <div class="panel stagewrap">
         <h2>PREVIEW · SYNTH AUDIO → .wav <span id="a-stale" class="badge2">—</span></h2>
@@ -284,9 +282,9 @@ signal integrity: 100%</textarea>
           <button class="btn small" id="a-savepreset">✚ PRESET</button>
         </div>
         <div class="hint" id="a-status" role="status" aria-live="polite">Idle. Configure layers + FX, then render.</div>
-        <div id="a-banners" style="width:100%"></div>
+        <div id="a-banners" class="banners"></div>
       </div>
-      <div class="panel" style="max-height:82vh;overflow:auto">
+      <div class="panel">
         <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="a-tidy" title="fold away layers that are turned off">⊟ TIDY</button><button class="btn small" id="a-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
         <div class="hint" id="a-active" style="margin-bottom:6px">no layers enabled</div>
         <div class="solo-banner" id="a-solo-banner" role="status" aria-live="polite" style="display:none"></div>
@@ -444,7 +442,6 @@ signal integrity: 100%</textarea>
 
   <!-- ===================== SCREEN ===================== -->
   <section class="view" id="view-image" role="tabpanel" aria-labelledby="tab-image" tabindex="0">
-    <p class="tabhelp">Choose a Win95 / CRT / paper <b>template</b>, apply CRT or image FX, optionally hide a <b>stego</b> token in the pixels, then export <code>.png</code> (1–4× supersample) or a degraded <code>.jpg</code>. Import your own art with <b>⇪ IMG</b>.</p>
     <div class="grid">
       <div class="panel stagewrap">
         <h2>PREVIEW · STATIC SCREEN → .png <span id="i-est" class="tag"></span></h2>
@@ -459,9 +456,9 @@ signal integrity: 100%</textarea>
           <input type="file" id="i-imgfile" aria-label="Import image file" accept="image/*" style="display:none">
         </div>
         <div class="hint" id="i-status" role="status" aria-live="polite">Idle.</div>
-        <div id="i-banners" style="width:100%"></div>
+        <div id="i-banners" class="banners"></div>
       </div>
-      <div class="panel" style="max-height:82vh;overflow:auto">
+      <div class="panel">
         <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="i-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
         <div class="row"><label for="i-preset">Preset</label><select id="i-preset" class="grow"></select><button class="btn small" id="i-gallery-btn" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="i-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
         <div class="gallery" id="i-gallery" data-generated style="display:none"></div>
@@ -551,7 +548,6 @@ C:\&gt; _</textarea>
 
   <!-- ===================== TIMELINE ===================== -->
   <section class="view" id="view-timeline" role="tabpanel" aria-labelledby="tab-timeline" tabindex="0">
-    <p class="tabhelp">Chain several VIDEO scenes into one clip. Set up a look on the <b>VIDEO</b> tab, click <b>＋ Add current scene</b>, repeat, then <b>Record sequence</b> — the clips play back-to-back with your chosen transition and land in the LIBRARY as one <code>.webm</code> or <code>.mp4</code>.</p>
     <div class="grid">
       <div class="panel stagewrap">
         <h2>SEQUENCE PREVIEW → .webm / .mp4 <span id="tl-info" class="tag"></span></h2>
@@ -568,14 +564,14 @@ C:\&gt; _</textarea>
           <button class="btn small amber" id="tl-still" title="Append the SCREEN tab's current render, held">＋ STILL</button>
           <button class="btn small amber" id="tl-title" title="Words over the picture: a title on V2 at the playhead, edited in the CLIP panel">＋ TITLE</button>
           <button class="btn small amber" id="tl-shape" title="A box, arrow, bracket or crosshair over the picture: a shape on V2 at the playhead">＋ SHAPE</button>
-          <input type="number" id="tl-stilldur" value="3" min="0.1" max="60" step="0.5" style="width:4.5em" aria-label="Still hold seconds" title="how long a still is held">
+          <input type="number" id="tl-stilldur" value="3" min="0.1" max="60" step="0.5" aria-label="Still hold seconds" title="how long a still is held">
           <button class="btn small" id="tl-clear">✕ clear all</button>
         </div>
         <div id="tl-track" class="tl-track"></div>
         <div class="meter" id="tl-progress-wrap" style="display:none;width:100%"><div id="tl-progress" style="width:0%"></div></div>
         <div class="hint" id="tl-status">Build a look on the VIDEO tab, then add it as a clip.</div>
       </div>
-      <div class="panel" style="max-height:82vh;overflow:auto">
+      <div class="panel">
         <h2>SEQUENCE <span class="hdr-actions"><button class="btn small" id="tl-reset" title="reset sequence settings to defaults">⟲ RESET</button></span></h2>
         <fieldset><legend>OUTPUT</legend>
           <div class="split3">
@@ -598,7 +594,7 @@ C:\&gt; _</textarea>
           <p class="hint" style="margin:4px 0 0">Transition and length above are the <b>default a new clip takes</b> — each clip carries its own, editable in the table below. Each clip keeps its own scene, text and FX; only W/H/FPS are unified here. <code>Video In</code> clips play your imported footage live.</p>
         </fieldset>
         <fieldset><legend>CLIPS <span id="tl-count" class="tag"></span></legend>
-          <div style="overflow:auto"><table class="lib" id="tl-table"><thead><tr>
+          <div class="srv-wrap"><table class="lib" id="tl-table"><thead><tr>
             <th scope="col">#</th><th scope="col">clip</th><th scope="col">in via</th><th scope="col">from</th><th scope="col">to</th><th scope="col">plays</th><th scope="col">sound</th><th scope="col"><span class="sr-only">reorder and remove</span></th>
           </tr></thead><tbody id="tl-body"></tbody></table></div>
         </fieldset>
@@ -611,7 +607,7 @@ C:\&gt; _</textarea>
     <div class="panel">
       <h2>SESSION LIBRARY <span><button class="btn small" id="lib-clear">CLEAR ALL</button></span></h2>
       <p class="hint">Every generated asset is collected here. Set name / kind / gated / release beat per row; the BUNDLE tab turns the whole table into a drop-in campaign package. Rows and their media are saved automatically and come back after a reload; a row whose bytes could not be restored is marked <b>no bytes</b> — re-render it.</p>
-      <div style="overflow:auto"><table class="lib" id="lib-table"><thead><tr>
+      <div class="srv-wrap"><table class="lib" id="lib-table"><thead><tr>
         <th>#</th><th>name</th><th>kind</th><th>gated</th><th>release beat</th><th>size</th><th>actions</th>
       </tr></thead><tbody id="lib-body"></tbody></table></div>
     </div>
@@ -629,7 +625,7 @@ C:\&gt; _</textarea>
           <button class="btn amber" id="bx-run">▶ EXPORT BATCH</button>
           <button class="btn" id="bx-stop" disabled>■ STOP</button>
         </div>
-        <div id="bx-progress-wrap" style="display:none"><div class="progress"><div id="bx-progress"></div></div></div>
+        <div class="meter" id="bx-progress-wrap" style="display:none"><div id="bx-progress" style="width:0%"></div></div>
         <p class="hint" id="bx-status"></p>
       </fieldset>
     </div>
@@ -688,7 +684,6 @@ C:\&gt; _</textarea>
 
   <!-- ===================== CLOUD ===================== -->
   <section class="view" id="view-cloud" role="tabpanel" aria-labelledby="tab-cloud" tabindex="0">
-    <p class="tabhelp">Optional. The studio works with no backend at all &mdash; this tab only appears to do anything when one is installed. It syncs projects between machines, stores assets on the server, and shares a project with someone else.</p>
     <div class="grid">
       <div class="panel">
         <h2>SERVER</h2>
@@ -721,11 +716,11 @@ C:\&gt; _</textarea>
         <div class="hint" id="cloud-upload-status" role="status" aria-live="polite"></div>
         <p class="hint">Assets are deduplicated by content, so uploading the library again sends only what changed. Saving keeps a snapshot of what it replaced, recoverable from the version history.</p>
       </div>
-      <div class="panel" style="grid-column:1/-1">
+      <div class="panel span">
         <h2>PROJECTS ON THE SERVER</h2>
         <div id="cloud-projects"></div>
       </div>
-      <div class="panel" id="cloud-detail-panel" style="grid-column:1/-1;display:none">
+      <div class="panel span" id="cloud-detail-panel" style="display:none">
         <h2>SELECTED PROJECT <span class="tag" id="cloud-detail-name"></span></h2>
         <div class="grid2">
           <div>
@@ -748,7 +743,7 @@ C:\&gt; _</textarea>
           </div>
         </div>
       </div>
-      <div class="panel" style="grid-column:1/-1">
+      <div class="panel span">
         <h2>ASSETS ON THE SERVER <span class="tag" id="cloud-assets-count"></span></h2>
         <p class="hint">Pull media back down on another machine &mdash; opening a project brings the recipe, this brings the files it refers to.</p>
         <div id="cloud-assets"></div>
@@ -760,7 +755,8 @@ C:\&gt; _</textarea>
   <section class="view" id="view-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0">
     <div class="panel">
       <h2>HOW TO USE <span class="hdr-actions"><button class="btn small" id="help-welcome">▓ Show the welcome card</button></span></h2>
-      <p>Offline, no dependencies, no network. Serve <span class="k">tools/media-studio/</span> from any static server &mdash; <span class="k">python -m http.server</span> in that folder is enough &mdash; and open it. A browser will not load ES modules straight off the filesystem, which is why it is served rather than double-clicked; nothing is uploaded and everything renders locally and downloads to your machine.</p>
+      <p>Offline, no dependencies, no network. Serve this folder from any static server &mdash; <span class="k">python -m http.server</span> in that folder is enough &mdash; and open it. A browser will not load ES modules straight off the filesystem, which is why it is served rather than double-clicked; nothing is uploaded and everything renders locally and downloads to your machine.</p>
+      <p><b>The editor:</b> menus along the top, the <b>media bin</b> and activity log on the left, the <b>monitor</b> and transport in the middle, the selected clip&rsquo;s <b>properties</b> and the open workspace&rsquo;s settings on the right, and the <b>sequence</b> along the bottom &mdash; visible from every workspace, so a cut is never more than a glance away. The strip above (VIDEO &middot; AUDIO &middot; SCREEN &middot; TIMELINE &hellip;) switches workspaces; <b>⤓ EXPORT</b>, top right, always exports what you are looking at. Every shortcut is listed under <b>Help &rarr; Keyboard shortcuts</b>.</p>
       <ol>
         <li><b>VIDEO</b> — pick a Scene, tune the CRT/VHS stack + text, preview (scrub to any frame), then <b>Record .webm</b>. Export runs offline and faster than real time &mdash; a 10s clip takes about a second &mdash; and does not need the tab focused. Also exports animated <b>.gif</b> and a frame-strip. <b>Bring your own art</b>: <b>⇪ IMG</b> (Ken Burns) or <b>⇪ VID</b> — import a video clip (or drop one on the preview) and run it through the whole CRT/VHS + reveal/subliminal stack, then re-export. Plays natively in the campaign.<br><b>Keyframes</b>: scrub to a time, set a control, press <b>◆ KEY</b> — two keys make a ramp, so a look can build or decay across the clip. <b>Layers</b>: stack up to six more scenes over the base, each with its own blend and opacity.</li>
         <li><b>AUDIO</b> — enable layers + a master FX bus (reverb / delay / distortion / wow-flutter / bitcrush / telephone), <b>Render</b>, check the peak meter, optionally <b>Normalize</b>, download <b>.wav</b> (8/16/24-bit). Renders in <b>stereo</b>: every layer has its own pan, drone voices spread across the field, and a mid/side <b>width</b> control sits last on the bus. <b>⇪ AUDIO</b> imports your own recording and runs it through the same FX bus.</li>
@@ -786,20 +782,20 @@ C:\&gt; _</textarea>
       <p><b>Screens:</b> <b>46</b> templates. Beside the Windows chrome (BSOD, dialogs, Explorer, Task Manager, Registry) is a shelf of <b>paper</b> — <b>Newspaper Clipping</b>, <b>Police Report</b>, <b>Evidence Tag</b>, <b>Journal Page</b>, <b>Prescription</b>, <b>Boarding Pass</b>, <b>Bank Statement</b>, <b>Certificate</b>, <b>Calendar Page</b>, <b>Autopsy Form</b>, <b>Blueprint</b>, <b>Punch Card</b>, <b>Map with Pins</b>, <b>Floppy Label</b>, <b>CD Label</b> — the props a player actually picks up. Paper templates fill with their own stock and ignore the background colour, because a newspaper on a green CRT background is not a newspaper; their type scales with the sheet, so a clipping at 1080×1920 is a readable page rather than a stamp of text in the corner.</p>
       <p><b>The filter chain:</b> the CRT/VHS stack is fixed — one control each, always in the same order. <b>FILTERS</b> is the part you order yourself: pick one, <b>＋ FILTER</b>, and it runs after the built-in stack. ↑ ↓ reorder, ◉ bypasses without losing the settings, ✕ removes; up to eight steps, and an empty chain changes nothing. <b>45 filters</b> across Colour, Sharpness, Analogue, Pattern and Frame — including <b>Levels</b>, <b>Gradient Map</b>, <b>Retro Palette</b> (Game Boy, CGA, EGA, Teletext, C64), <b>NTSC Composite</b>, <b>Error Diffusion</b>, <b>ASCII</b>, <b>Kaleidoscope</b>, <b>Risograph</b>, <b>Tilt Shift</b>, <b>Neon Edge</b>, <b>Lower Third</b> and <b>Timecode Burn</b>. Order is where most of a look lives: grading before a crush is a different picture from crushing before a grade.</p>
       <p><b>Editing a sequence:</b> a clip is a <b>window onto its source</b>, not the whole of it — trimming changes <em>which part</em> plays, never how fast. Drag a block on the track to reorder it or drag its edge to trim it; select one and use <b>←/→</b> to trim (Shift for 1s) or <b>Alt+←/→</b> to reorder. A whole drag is one <b>undo</b>. The table under the track writes the same clips, for when you would rather type <span class="k">4.25</span> than aim at a handle. <b>＋ STILL</b> holds the current SCREEN render, which is how a title card or a document gets into a sequence. <b>Sound</b> on TIMELINE comes in two: the picker above the table covers the whole sequence, and the <b>sound</b> column gives each clip its own, laid over the top at the time that clip starts. Each clip's bed loops or trims to fit <em>that clip</em>, and moves with the picture when you trim or reorder.</p>
-      <p><b>Delivering somewhere:</b> <b>Format</b> (on VIDEO, SCREEN and TIMELINE) sets the frame to a real delivery size — <b>Shorts / TikTok / Reels</b> is 1080×1920, and there are square, feed-portrait and YouTube sizes beside it. <b>Aspect</b> is the other half: it keeps the size you chose and reshapes the frame, now including 9:16 and 4:5. Editing W or H by hand puts Format back to custom. Both axes go to 1920; the size readout beside the preview estimates the export from what a frame actually costs, and <code>.gif</code> is capped at 640px because the format cannot carry more.</p>
+      <p><b>Delivering somewhere:</b> <b>Format</b> (on VIDEO, SCREEN and TIMELINE) sets the frame to a real delivery size — <b>Shorts / TikTok / Reels</b> is 1080×1920, and there are square, feed-portrait and YouTube sizes beside it. <b>Aspect</b> is the other half: it keeps the size you chose and reshapes the frame, now including 9:16 and 4:5. Editing W or H by hand puts Format back to custom. Both axes go to 1920; the size readout in the status bar estimates the export from what a frame actually costs, and <code>.gif</code> is capped at 640px because the format cannot carry more.</p>
       <p><b>Text variables:</b> a campaign fact, named once. Add <span class="k">subject = M. WEBB</span> under <b>TEXT VARIABLES</b> (on VIDEO or SCREEN — it is one shared list) and write <span class="k">{{subject}}</span> in any text box on any tab. Built-in names you can redefine: <span class="k">{{time}} {{case}} {{badge}}</span>. Always available: <span class="k">{{date}} {{seed}} {{random:###}} {{pick:a|b|c}}</span>. A name you have not defined is left on screen exactly as typed, so a typo is visible rather than silently blank.</p>
       <p><b>Presets that keep your words:</b> tick <b>lock</b> on a section and neither <b>Randomize</b> nor loading a preset will touch it. Lock <b>TEXT</b> and you can try every look in the list while your script stays put; lock <b>OUTPUT</b> to keep the delivery size you settled on. The <b>⚙</b> beside each preset picker renames, duplicates, deletes, exports and imports your own saved presets.</p>
       <p><b>Layers</b> stack up to six more scenes over the base. Each one can carry its <b>own text, colour and size</b> — open <b>own text / look</b> on a layer — and a <b>variant</b> number re-rolls that layer's randomness, so a second Digital Rain is a different rain rather than the first one twice. Leave a field empty and the layer follows the clip below it.</p>
       <p><b>Typeface</b> picks the family everything is drawn in — Monospace for a terminal, Heavy for a poster, Handwritten for a note left on a door. <b>Wrap</b> breaks a line too long for the frame instead of letting it run off the edge; it is off by default so older clips render exactly as they did, and your own line breaks are always kept.</p>
       <p class="hint">Every settings section folds away — click a section <b>title</b> to collapse it and keep the panel tidy.</p>
       <p><b>Finding things:</b> <b>Ctrl+K</b> searches every setting, scene, template, preset and action by name and jumps straight to it. <b>?</b> arms Explain mode — click or focus any control to read what it does, its range and its unit. The <b>detail</b> selector (Simple / Studio / Deep) hides advanced controls without changing their values.</p>
-      <p><b>Accessibility:</b> the <b>contrast</b> selector turns off the CRT overlay and phosphor glow in the interface — your rendered media is byte-identical either way. The <b>flash</b> readout beside the preview measures full-screen luminance changes the way WCAG 2.3.1 defines them and turns red above three per second; it warns rather than blocks, since the strobing is usually deliberate here.</p>
+      <p><b>Accessibility:</b> the <b>contrast</b> selector turns off the CRT overlay and phosphor glow in the interface — your rendered media is byte-identical either way. The <b>flash</b> readout in the status bar measures full-screen luminance changes the way WCAG 2.3.1 defines them and turns red above three per second; it warns rather than blocks, since the strobing is usually deliberate here.</p>
       <p><b>Determinism:</b> the <span class="k">seed</span> drives all randomness — same seed + params reproduces the same look (PNG/WAV are byte-stable; WebM frame-patterns reproduce but bytes may vary). <b>Presets</b>: the ✚ buttons save the current tab to your browser (localStorage); <b>SAVE PROJ</b> downloads the whole session's recipes as JSON.</p>
       <p class="hint">Format note: browser capture is <b>.webm</b> and audio is <b>.wav</b> — both play natively in the campaign, no conversion. For exact <b>.mp4/.mp3</b> parity use <span class="k">scripts/gen-campaign-media.py</span>.</p>
     </div>
   </section>
 
-  <div class="panel" style="margin-top:16px"><h2>CONSOLE</h2><div class="console" id="console" role="log" aria-live="polite" aria-label="Activity log"></div></div>
+  <div class="panel"><h2>CONSOLE</h2><div class="console" id="console" role="log" aria-live="polite" aria-label="Activity log"></div></div>
   <div class="foot">EREBUS MEDIA STUDIO — the archive makes its own ghosts now.</div>
 </main>
 <div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>

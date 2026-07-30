@@ -256,8 +256,15 @@ function signature(i, clip, lane) {
   /* The monitor's mode is PANEL state, not clip state, and no field key reads
      it — so without it here the two buttons would never repaint and arming the
      eyedropper would leave a button that still says "Pick key colour". */
+  /* Playhead-derived state, frame-rounded so scrubbing repaints these at most
+     once per frame: whether the monitor tools have a clip under the playhead
+     (the eyedropper/mask buttons disable on it) and where a key would land
+     (the "Key at Xs" button prints it). Neither is a field, so without these
+     terms both sat stale until something else moved. */
+  const overClip = monitorTarget() ? 1 : 0;
+  const keyAt = lane === 'A' ? '' : (Math.round((clipSourceTime(i) ?? -1) * 12) / 12).toFixed(2);
   return [lane, i, timeline.length, audioTimeline.length, clip.kind ?? 'sound', _epoch,
-    _curveParam, monitorMode(), curvesSignature(clip), ...fields].join('|');
+    _curveParam, monitorMode(), overClip, keyAt, curvesSignature(clip), ...fields].join('|');
 }
 
 /** Rebuild the panel if what it shows has changed. Cheap when it has not. */
@@ -286,8 +293,10 @@ export function render() {
   if (_which) _which.textContent = clip ? `${i + 1} / ${total}` : '—';
 
   if (!clip) {
-    const p = el('p', 'nle-empty',
-      'No clip selected. Click one in the sequence below to edit its trim, its transition and its look.');
+    // "Click one in the sequence below" is a lie when the sequence is empty.
+    const p = el('p', 'nle-empty', timeline.length || audioTimeline.length
+      ? 'No clip selected. Click one in the sequence below to edit its trim, its transition and its look.'
+      : 'Nothing to select yet. Add a scene to the sequence — ＋ Scene in the timeline bar — and its properties appear here.');
     _body.appendChild(p);
     return;
   }

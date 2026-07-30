@@ -26,7 +26,19 @@
 
 /* ---------------------------------------------------------------- skin -- */
 
+/* Structure tokens apply whenever the studio skin is on — type and radii are
+   not a contrast decision. */
 :root[data-skin="studio"]{
+  /* Interface type is a UI stack; the monospace token stays for numbers,
+     timecode and anything that has to line up in a column. */
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --radius:6px;
+}
+/* Colour tokens yield to high contrast: both selectors land on :root with
+   equal specificity, and this file loads after tokens.css — so without the
+   :not() guard the skin's grays silently overrode the high-contrast palette
+   and the contrast switch appeared to do nothing under the studio skin. */
+:root[data-skin="studio"]:not([data-contrast="high"]){
   --bg:#14161a;
   --panel:#1b1e24;
   --panel2:#22262e;
@@ -47,10 +59,12 @@
   --muted:#98a2b3;
   --crt:0;
 
-  /* Interface type is a UI stack; the monospace token stays for numbers,
-     timecode and anything that has to line up in a column. */
-  --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --radius:6px;
+  --on-accent:#06121f;
+  --field-bg:#0e1216;
+  --lane-bg:#101318;
+  --lane-rule:#262c35;
+  --clip-bg:#152433;
+  --aclip-bg:#12202b;
 }
 
 :root[data-skin="studio"] body{
@@ -90,7 +104,21 @@
 
 /* ------------------------------------------------------------- layout -- */
 
-body.nle{ height:100vh; overflow:hidden; }
+/* The shell is a grid of its own four bands — chrome, workspace strip, main,
+   status bar — so the main row is WHATEVER IS LEFT, measured by the layout
+   engine. It used to be `calc(100vh - var(--chrome-h,84px) - 26px)`, and
+   nothing ever set --chrome-h: the real chrome is taller than 84px on one
+   line and wraps to more on narrow windows, so every desktop size scrolled
+   the page ~76px and slid the sequence lane under the fold. A guess about
+   the chrome's height is not something a stylesheet should be making. */
+body.nle{
+  height:100vh; overflow:hidden;
+  display:grid; grid-template-rows:auto auto minmax(0,1fr) auto;
+  /* One explicit column at minmax(0,1fr), or the implicit `auto` track sizes
+     to the menubar's max-content — every band then stops wrapping and the
+     whole page scrolls sideways at narrow widths. */
+  grid-template-columns:minmax(0,1fr);
+}
 
 /* The original chrome is replaced, not deleted: every control inside it is
    still bound to the document, and its settings groups are rehoused in the
@@ -134,7 +162,7 @@ body.nle main{
   grid-template-rows:auto minmax(0,1fr) auto minmax(120px,var(--tl-h,26vh));
   gap:1px;
   background:var(--edge);
-  height:calc(100vh - var(--chrome-h,84px) - 26px);
+  height:100%; min-height:0;
 }
 
 /* The sign-off is page furniture and has no place in an editor. The activity
@@ -144,8 +172,7 @@ body.nle .foot{ display:none; }
 body.nle .nle-console{ margin:8px; border-radius:var(--radius); }
 body.nle .nle-console .console{ max-height:26vh; overflow:auto; }
 
-/* Same trick as the three-pane workspace: dissolve the wrappers so the panels
-   themselves become grid items. */
+/* Dissolve the wrappers so the panels themselves become grid items. */
 body.nle .view.active{ display:contents; }
 body.nle .view.active > .grid{ display:contents; }
 
@@ -208,8 +235,18 @@ body.nle .view.active .grid > .panel:not(.stagewrap){
 body.nle .view.active:not(:has(.panel.stagewrap)){
   display:block;
   grid-row:monitor-start / transport-end;
-  grid-column:monitor-start / monitor-end;
+  /* Through the inspector column too: on these views nothing can be
+     selected, so the clip pane is hidden below and its 360px belongs to the
+     content — the bundle columns were cramped beside a pane that could only
+     ever say "No clip selected". */
+  grid-column:monitor-start / inspector-end;
   overflow:auto; min-height:0; padding:12px 14px;
+}
+/* No picture means no transport: every button in it is disabled on these
+   views (see syncTransport), and the bar sat OVER the last band of content —
+   the beat-coverage list was clipped mid-row beneath it. */
+body.nle main.no-stage .nle-transport{
+  display:none;
 }
 /* Inside it, the ordinary page layout: `.grid` does its normal main+sidebar
    job, and the panels flow. */
@@ -226,13 +263,14 @@ body.nle .view.active:not(:has(.panel.stagewrap)):not(:has(.panel ~ .panel)){
 body.nle .view.active:not(:has(.panel.stagewrap)):not(:has(.panel ~ .panel)) > .panel{
   margin:0; border-radius:0; border:0; padding:12px 14px; min-height:100%;
 }
-/* …and on those views the clip inspector takes the whole right column rather
-   than sitting in a short band with an empty strip beneath it. Progressive: a
-   browser without :has() simply leaves the pane its normal height, which is the
-   layout working, not breaking. */
-body.nle main:has(> .view.active:not(:has(.panel.stagewrap))) .nle-inspector{
-  grid-row:clip-start / transport-end;
-  max-height:none;
+/* …and on those views the clip inspector goes away entirely: there is no
+   sequence on screen to select from, so a pane that can only say "No clip
+   selected" is a column of dead space. Keyed on a class the shell sets
+   (main.no-stage, see syncWorkspace) rather than a second :has() — :has()
+   cannot appear inside :has(), so the selector this replaced was silently
+   invalid and the rule never applied. */
+body.nle main.no-stage .nle-inspector{
+  display:none;
 }
 /* The per-tab help paragraph is the kind of thing a tool says once, in a
    tooltip — not a banner above the work on every visit. */
@@ -268,30 +306,21 @@ body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px 
   box-shadow:0 12px 32px rgba(0,0,0,.55);
 }
 .nle-menu-pop button{
-  display:flex; justify-content:space-between; gap:20px; width:100%;
+  display:flex; justify-content:space-between; gap:20px; width:100%; white-space:nowrap;
   background:transparent; border:0; color:var(--text); font:inherit; font-size:12.5px;
   padding:6px 9px; border-radius:4px; text-align:left; cursor:pointer;
 }
-.nle-menu-pop button:hover:not(:disabled){ background:var(--phos); color:#06121f; }
+.nle-menu-pop button:hover:not(:disabled){ background:var(--phos); color:var(--on-accent); }
 .nle-menu-pop button:disabled{ color:var(--muted); cursor:default; }
 .nle-menu-pop kbd{
   font-family:var(--mono); font-size:12px; color:var(--muted); background:transparent;
 }
-.nle-menu-pop button:hover:not(:disabled) kbd{ color:#06121f; }
+.nle-menu-pop button:hover:not(:disabled) kbd{ color:var(--on-accent); }
 .nle-menu-sep{ height:1px; margin:5px 4px; background:var(--edge2); }
 
 .nle-toolbar{
   display:flex; align-items:center; gap:8px; padding:5px 8px; flex-wrap:wrap;
 }
-.nle-tools{ display:flex; gap:2px; }
-.nle-tool{
-  width:30px; height:28px; display:grid; place-items:center;
-  background:transparent; border:1px solid transparent; border-radius:5px;
-  color:var(--text); font-size:14px; cursor:pointer;
-}
-.nle-tool:hover{ background:var(--panel2); border-color:var(--edge2); }
-.nle-tool[aria-pressed="true"]{ background:var(--phos); border-color:var(--phos); color:#06121f; }
-.nle-sep{ width:1px; align-self:stretch; margin:2px 4px; background:var(--edge2); }
 .nle-spacer{ flex:1 1 auto; }
 
 /* The header's settings, rehoused in the toolbar. Compact, because a toolbar is
@@ -353,11 +382,11 @@ body.nle .nle-pane{
    found by someone who does not know it is there. */
 .nle-bin-dl{
   position:absolute; top:4px; right:4px;
-  width:24px; height:24px; padding:0; line-height:1;
+  width:26px; height:26px; padding:0; line-height:1;
   background:rgba(4,8,12,.82); border:1px solid var(--edge2); border-radius:4px;
   color:var(--phos); font-size:14px; cursor:pointer;
 }
-.nle-bin-dl:hover{ border-color:var(--phos); background:var(--phos); color:#06121f; }
+.nle-bin-dl:hover:not(:disabled){ border-color:var(--phos); background:var(--phos); color:var(--on-accent); }
 .nle-bin-dl:disabled{ opacity:.4; cursor:default; color:var(--muted); }
 .nle-export{ font-weight:600; letter-spacing:.04em; margin:2px 4px 2px 0; }
 /* The empty clip pane is a sentence, not a panel — it should not hold a third
@@ -374,15 +403,15 @@ body.nle .nle-pane{
 }
 .nle-bin-kind{ font-size:12px; color:var(--muted); padding:0 6px 5px; text-transform:uppercase; letter-spacing:.08em; }
 .nle-empty{ color:var(--muted); font-size:12px; padding:10px; }
+.nle-bin-list .nle-empty{ grid-column:1/-1; }
 
 /* ---------------------------------------------------- clip inspector -- */
 
 /* Bounded so a clip with a long piece of copy in it cannot squeeze the picture
    out of the window: past this the pane scrolls and the monitor keeps its
    space. */
-/* No `display` of its own: it is a .nle-pane, and the pane rule is what turns
-   these on under body.nle and off outside it. Setting it here would win on
-   source order and leak the pane into the classic layout. */
+/* No `display` of its own: it is a .nle-pane, and the pane rule is what
+   turns these on once boot applies body.nle. */
 .nle-inspector{
   grid-area:clip; border-left:1px solid var(--edge);
   max-height:46vh;
@@ -472,8 +501,8 @@ body.nle .view.active .panel.stagewrap canvas.stage{
   background:var(--panel2); border:1px solid var(--edge2); border-radius:5px;
   color:var(--text); font-size:13px; cursor:pointer;
 }
-.nle-tbtn:hover{ border-color:var(--phos); color:var(--phos); }
-.nle-tbtn.primary{ background:var(--phos); border-color:var(--phos); color:#06121f; font-weight:600; }
+.nle-tbtn:hover:not(:disabled){ border-color:var(--phos); color:var(--phos); }
+.nle-tbtn.primary{ background:var(--phos); border-color:var(--phos); color:var(--on-accent); font-weight:600; }
 .nle-tbtn:disabled{ opacity:.45; cursor:default; }
 
 /* ----------------------------------------------------------- timeline -- */
@@ -503,22 +532,16 @@ body.nle .nle-transport,body.nle .nle-timeline{ display:flex; }
 .nle-zoom{ display:flex; align-items:center; gap:4px; margin-left:auto; min-width:0; }
 .nle-zoom input{ flex:0 1 120px; width:120px; min-width:56px; max-width:100%; }
 
-/* Track headers down the left of the lane, as in every editor. */
-.nle-tracks{ display:grid; grid-template-columns:88px minmax(0,1fr); gap:0 8px; align-items:start; }
-.nle-track-head{
-  font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em;
-  padding:6px 0; display:flex; align-items:center; gap:6px;
-}
-.nle-track-head .dot{ width:8px; height:8px; border-radius:2px; background:var(--phos); }
-.nle-track-head.audio .dot{ background:var(--amber); }
-
 /* ------------------------------------------------------------- status -- */
 
 .nle-status{
   display:none;
-  height:26px; align-items:center; gap:14px; padding:0 12px;
+  min-height:26px; align-items:center; gap:2px 14px; padding:1px 12px;
   background:var(--panel2); border-top:1px solid var(--edge);
   font-size:12px; color:var(--muted);
+  /* Wraps rather than overflows: on a narrow window the readouts drop to a
+     second line, and a bar that pushes the page sideways fails WCAG 1.4.10. */
+  flex-wrap:wrap;
 }
 body.nle .nle-status{ display:flex; }
 .nle-status .sep{ width:1px; height:14px; background:var(--edge2); }
@@ -550,8 +573,7 @@ body.nle .nle-status{ display:flex; }
 }
 
 @media (forced-colors: active){
-  .nle-tool[aria-pressed="true"],
-  .nle-ws[aria-selected="true"]{ border:2px solid CanvasText; }
+  .sec-strip button[aria-pressed="true"]{ border:2px solid CanvasText; }
 }
 
 
@@ -581,11 +603,11 @@ body.nle .nle-status{ display:flex; }
 /* ----------------------------------------------------------- importing -- */
 
 .nle-bin-import{
-  margin-left:6px; width:24px; height:22px; padding:0; line-height:1;
+  margin-left:6px; width:28px; height:24px; padding:0; line-height:1;
   background:var(--panel2); border:1px solid var(--edge2); border-radius:4px;
   color:var(--phos); font-size:14px; cursor:pointer;
 }
-.nle-bin-import:hover{ background:var(--phos); border-color:var(--phos); color:#06121f; }
+.nle-bin-import:hover:not(:disabled){ background:var(--phos); border-color:var(--phos); color:var(--on-accent); }
 .nle-bin-import:disabled{ opacity:.5; cursor:default; }
 .nle-bin-note{ margin:0 0 8px; font-size:12px; color:var(--amber); }
 
@@ -623,6 +645,48 @@ body.nle .nle-status{ display:flex; }
 .tl-clip .tl-xgrip{
   position:absolute; left:0; top:0; bottom:0; z-index:2;
   cursor:ew-resize; border-right:1px solid var(--cyan);
-  background:linear-gradient(90deg, rgba(57,255,158,.30), rgba(57,255,158,.06));
+  background:linear-gradient(90deg, color-mix(in srgb, var(--phos) 30%, transparent), color-mix(in srgb, var(--phos) 6%, transparent));
 }
-.tl-clip .tl-xgrip:hover{ background:linear-gradient(90deg, rgba(57,255,158,.45), rgba(57,255,158,.12)); }
+.tl-clip .tl-xgrip:hover{ background:linear-gradient(90deg, color-mix(in srgb, var(--phos) 45%, transparent), color-mix(in srgb, var(--phos) 12%, transparent)); }
+
+
+/* ------------------------------------------------ status-bar readouts -- */
+
+/* The stage headers' live readouts, rehoused (see enterEditor). Right edge,
+   one at a time — refreshStatus shows only the active workspace's. */
+#nle-st-meters{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+#nle-st-meters > [hidden]{ display:none; }
+.nle-st-hint{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* The CRT-intensity slider drives the scanline overlay, and the studio skin
+   removes that overlay outright — a live slider over a dead effect reads as
+   broken, so it goes with it. */
+:root[data-skin="studio"] .ctl:has(> #crt-intensity){ display:none; }
+
+/* --------------------------------------------------- shortcuts dialog -- */
+
+.nle-keys{
+  position:fixed; inset:0; z-index:10001;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(2,6,10,.78); padding:1.5rem; overflow:auto;
+}
+.nle-keys[hidden]{ display:none; }
+.nle-keys-card{
+  background:var(--panel); border:1px solid var(--edge2); border-radius:var(--radius);
+  padding:1.1rem 1.4rem; max-width:34rem; width:100%; max-height:86vh; overflow:auto;
+  box-shadow:0 18px 60px rgba(0,0,0,.6);
+}
+.nle-keys-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.nle-keys-head h2{ margin:0; font-size:14px; letter-spacing:.08em; color:var(--phos); }
+.nle-keys-group{
+  margin:14px 0 6px; font-size:12px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); border-bottom:1px solid var(--edge); padding-bottom:3px;
+}
+.nle-keys-list{ display:grid; grid-template-columns:minmax(11em,auto) 1fr; gap:4px 14px; margin:0; }
+.nle-keys-list dt{ text-align:right; }
+.nle-keys-list dd{ margin:0; color:var(--muted); }
+.nle-keys-list kbd{
+  font-family:var(--mono); font-size:12px; color:var(--text);
+  border:1px solid var(--edge2); border-bottom-width:2px; border-radius:4px;
+  padding:1px 5px; background:var(--panel2); white-space:nowrap;
+}

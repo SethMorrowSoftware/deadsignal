@@ -59,11 +59,12 @@ function renderStatus() {
 
   if (!_state.checked) { box.appendChild(banner('Checking for a backend…')); return; }
   if (!_state.reachable) {
+    /* One banner, not a stack of three: running standalone is the tool's
+       normal state, and three amber boxes made it read as three errors. */
     box.appendChild(banner('No backend here — the studio is running standalone. '
-      + 'Everything works; projects and assets stay in this browser.'));
-    box.appendChild(banner(_state.reason || '', 'hint'));
-    box.appendChild(banner('If there is one, put its address in the API field above — '
-      + 'or run this folder\'s setup.php, which records it.', 'hint'));
+      + 'Everything works; projects and assets stay in this browser. '
+      + 'To connect one, put its address in the API field above, or run this folder\'s setup.php.'));
+    if (_state.reason) box.appendChild(banner(_state.reason, 'hint'));
     return;
   }
   if (_state.degraded) {
@@ -100,7 +101,13 @@ function renderProjects() {
   const box = $('cloud-projects');
   if (!box) return;
   box.replaceChildren();
-  if (!_state.signedIn || !_state.enabled) return;
+  if (!_state.signedIn || !_state.enabled) {
+    // A bare panel header with nothing under it reads as broken; say why.
+    box.appendChild(banner(_state.reachable
+      ? 'Sign in above and your server projects list here.'
+      : 'Projects appear here once a backend is connected.', 'hint'));
+    return;
+  }
 
   if (!_projects.length) {
     box.appendChild(banner('No projects on the server yet. "⇧ SAVE TO SERVER" puts this one there.', 'hint'));
@@ -222,7 +229,29 @@ function renderAssets() {
       + '<button class="btn small" data-rmasset="' + escHtml(String(a.id)) + '">✕</button></td></tr>').join(''));
 }
 
-export function renderCloud() { renderStatus(); renderAuth(); renderProjects(); renderDetail(); renderAssets(); }
+/* The server actions are dead without a signed-in backend. Disabled with the
+   reason in the tooltip, rather than enabled buttons that fail on click —
+   a button's enabled state is a promise about what pressing it will do. */
+function renderProjectButtons() {
+  const usable = _state.reachable && !_state.degraded && _state.signedIn && _state.enabled;
+  const why = !_state.reachable ? 'No backend connected — the studio is running standalone'
+    : _state.degraded ? 'The backend is not healthy — see the SERVER panel'
+      : !_state.signedIn ? 'Sign in first — the SERVER panel has the form'
+        : !_state.enabled ? 'The studio backend is switched off on this server'
+          : '';
+  for (const [id, title] of [
+    ['cloud-save', 'Save this project to the server'],
+    ['cloud-new', 'Detach from the open server project so the next save creates a new one'],
+    ['cloud-upload', 'Upload this session\'s library assets'],
+  ]) {
+    const b = $(id);
+    if (!b) continue;
+    b.disabled = !usable;
+    b.title = usable ? title : why;
+  }
+}
+
+export function renderCloud() { renderStatus(); renderAuth(); renderProjectButtons(); renderProjects(); renderDetail(); renderAssets(); }
 
 /* ---- actions ----------------------------------------------------------- */
 

@@ -63,8 +63,6 @@ const P = {
 
   'contrast': ['Contrast', 1, "High contrast turns off the CRT scanline overlay and the phosphor glow in the tool's own interface, and raises text contrast. It does not touch what you render — your media looks exactly the same either way."],
 
-  'ws-search': ['Browser filter', 1, 'Narrows the Browser list to matching scenes, templates, presets and actions. Workspace layout only.'],
-
   'v-flash': ['Flash rate', 1, 'Full-screen luminance changes per second in the live preview, measured the way WCAG 2.3.1 defines a flash. Above three per second the readout turns red: that clip may trigger seizures. It warns rather than blocks — the strobing is usually deliberate here.', '/s'],
 
   /* ---------------------------------------------------------- video ----- */

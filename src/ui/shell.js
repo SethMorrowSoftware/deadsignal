@@ -80,7 +80,11 @@ export function activateTab(name){
   if(name==="video")startVideoPreview(); else stopVideoPreview();
   if(name==="timeline"){ renderTimelineTable(); startTimelinePreview(); } else stopTimelinePreview();
   if(name==="audio")updateAudioLayerFlags(); else stopAudioPlayback();
-  if(name==="library")renderLibTable(); if(name==="bundle"){renderCoverage();} }
+  if(name==="library")renderLibTable(); if(name==="bundle"){renderCoverage();}
+  // Every route into a workspace switch lands here — clicks, digits 1-8, the
+  // tablist arrows, palette and menu actions — so this is where the editor
+  // chrome learns the view changed rather than noticing on its next poll.
+  document.dispatchEvent(new CustomEvent("studio:view",{detail:{view:name}})); }
 /* Wrap each fieldset legend's title text in a clickable toggle so any section
    can be folded away. The existing reset (↺) / lock spans stay outside the
    toggle, so clicking those never collapses the section. */
@@ -188,7 +192,9 @@ export function updateAudioLayerFlags(){ const v=$("view-audio"); if(!v)return; 
  */
 export function foldInactiveAudioLayers(){ const v=$("view-audio"); if(!v)return 0; let folded=0;
   v.querySelectorAll("fieldset").forEach(fs=>{ if(!fs.querySelector('input[type=checkbox]'))return; const active=fieldsetActive(fs);
-    fs.classList.toggle("collapsed",!active); if(!active)folded++; }); return folded; }
+    fs.classList.toggle("collapsed",!active);
+    const t=fs.querySelector("legend .ttl"); if(t)t.setAttribute("aria-expanded",String(active));
+    if(!active)folded++; }); return folded; }
 export function tidyAudioLayers(){ const folded=foldInactiveAudioLayers();
   toast(folded?("Folded "+folded+" unused layer"+(folded>1?"s":"")):"All layers in use"); }
 /* Enhance every fieldset legend: a click-to-collapse title, a reset ↺ control,
@@ -199,16 +205,32 @@ export function enhanceFieldsets(){
     for(const n of Array.from(lg.childNodes)){ if(n.nodeType===3){ label+=n.textContent; lead.push(n); } else break; }
     label=label.trim(); if(!label) return; lead.forEach(n=>n.remove());
     const ttl=document.createElement("span"); ttl.className="ttl";
+    /* A span wired to click is mouse-only; folding a section away is not a
+       mouse-only idea. role=button + tabindex puts it in the tab order, and
+       aria-expanded says which way it will fold. */
+    ttl.setAttribute("role","button"); ttl.tabIndex=0;
+    ttl.setAttribute("aria-expanded", String(!lg.parentElement.classList.contains("collapsed")));
     const caret=document.createElement("span"); caret.className="caret"; caret.textContent="▼";
     const isAudio=!!lg.closest("#view-audio"), hasCk=!!lg.closest("fieldset").querySelector('input[type=checkbox]');
     if(isAudio&&hasCk){ const dot=document.createElement("span"); dot.className="dot"; dot.textContent="○"; ttl.appendChild(dot); }
     const txt=document.createElement("span"); txt.textContent=label;
     ttl.appendChild(caret); ttl.appendChild(txt); lg.insertBefore(ttl, lg.firstChild);
-    ttl.addEventListener("click",()=>lg.parentElement.classList.toggle("collapsed"));
+    const fold=()=>{ const fs=lg.parentElement; fs.classList.toggle("collapsed");
+      ttl.setAttribute("aria-expanded", String(!fs.classList.contains("collapsed"))); };
+    ttl.addEventListener("click",fold);
+    ttl.addEventListener("keydown",(e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); fold(); } });
     if(!lg.querySelector(".rst")){ const rst=document.createElement("span"); rst.className="rst"; rst.textContent="↺"; rst.title="reset this section to defaults";
       lg.appendChild(rst); } });
-  // wire every reset ↺ (existing + injected) to reset its fieldset
-  document.querySelectorAll("fieldset legend .rst").forEach(r=>{ r.addEventListener("click", (e)=>{ e.stopPropagation(); const fs=r.closest("fieldset"); if(fs)resetFieldset(fs); }); });
+  // wire every reset ↺ (existing + injected) to reset its fieldset — by
+  // keyboard too, since a reset is a control, not decoration
+  document.querySelectorAll("fieldset legend .rst").forEach(r=>{
+    r.setAttribute("role","button"); r.tabIndex=0;
+    if(!r.getAttribute("aria-label")) r.setAttribute("aria-label","Reset this section to defaults");
+    r.addEventListener("click", (e)=>{ e.stopPropagation(); const fs=r.closest("fieldset"); if(fs)resetFieldset(fs); });
+    /* Through click(), so the sections whose ↺ carries an extra listener
+       (KEYFRAMES, LAYERS — see boot.js) behave the same from the keyboard. */
+    r.addEventListener("keydown", (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); r.click(); } });
+  });
 }
 
 /* Arrow / Home / End navigation across the tablist, per the WAI-ARIA tabs
