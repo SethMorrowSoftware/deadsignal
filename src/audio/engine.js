@@ -1,6 +1,6 @@
 /* Dead Signal Studio — audio/engine.js */
 import { chk, clamp, log, num, pct, toast, val } from '../core/dom.js';
-import { resetSeed, rnd } from '../core/rng.js';
+import { _rngState, resetSeed, rnd, seedRng } from '../core/rng.js';
 import { morseOf, morseSpan } from '../core/text.js';
 import { hasImportedAudio, importedAudio, toBuffer } from '../media/audioimport.js';
 import { buildLayers, layersNeedSeconds, readLayerCfg } from './layers.js';
@@ -85,9 +85,20 @@ export async function renderAudio(){
      arrangement rather than one point source. In mono, or with the pan centred,
      it returns the sum itself so no node is created at all. */
   const stereo = cfg.channels>1;
+  /* A StereoPanner fed a SPEAKERS-upmixed signal. A plain StereoPanner on a MONO
+     input uses the equal-power law (~0.707 per channel at centre), while the
+     bypass path (pan 0) up-mixes L=R at unity — so a layer dropped ~3 dB the
+     instant its pan left 0. Up-mixing to stereo first makes the panner unity at
+     centre and continuous through zero. Same fix, same reasoning as midSideWidth. */
+  const pannerPair=(pan)=>{
+    const inp=ctx.createGain();
+    inp.channelCount=2; inp.channelCountMode="explicit"; inp.channelInterpretation="speakers";
+    const p=ctx.createStereoPanner(); p.pan.value=pan; inp.connect(p);
+    return { inp, out:p };
+  };
   const bus=(pan)=>{
     if(!stereo || !pan || typeof ctx.createStereoPanner!=="function") return layers;
-    const p=ctx.createStereoPanner(); p.pan.value=pan; p.connect(layers); return p;
+    const { inp, out }=pannerPair(pan); out.connect(layers); return inp;
   };
 
   if(cfg.drone&&cfg.droneG>0){ const droneBus=bus(cfg.pan.drone);
@@ -98,9 +109,10 @@ export async function renderAudio(){
     // the reason a drone sounds like a room rather than a speaker.
     let tail=g;
     if(stereo && cfg.droneSpread>0 && cfg.droneVoices>1 && typeof ctx.createStereoPanner==="function"){
-      const vp=ctx.createStereoPanner();
-      vp.pan.value=clamp((off/((cfg.droneVoices-1)/2))*cfg.droneSpread,-1,1);
-      g.connect(vp); tail=vp;
+      // Up-mixed panner (pannerPair) for the same reason as bus(): a plain
+      // panner on this mono voice would drop it ~3 dB the moment spread left 0.
+      const { inp, out }=pannerPair(clamp((off/((cfg.droneVoices-1)/2))*cfg.droneSpread,-1,1));
+      g.connect(inp); tail=out;
     }
     o.connect(g); tail.connect(droneBus); o.start(0); o.stop(renderDur); } }
   if(cfg.noise&&cfg.noiseG>0){ const src=ctx.createBufferSource(); src.buffer=noiseBuffer(ctx,renderDur);
@@ -149,13 +161,22 @@ export async function renderAudio(){
   node.connect(ctx.destination);
 
   // fades are applied post-render on the rendered buffer (keeps the graph simple)
+  /* Snapshot the shared RNG at this deterministic point — resetSeed() plus the
+     fully synchronous graph build above consume it identically every render —
+     and restore it after the await. Otherwise a preview frame running during the
+     multi-second startRendering() reseeds the shared stream (beginFrame), and the
+     post effects below (Stutter, Reverse) would draw from an unrelated state, so
+     the same project + seed exports different audio depending on whether the
+     author happened to switch tabs mid-render. */
+  const rngSnapshot=_rngState;
   const rendered=await ctx.startRendering();
+  seedRng(rngSnapshot);
   // Post-processing runs per channel with IDENTICAL parameters — the loop point,
   // the fade length and the crush step must be the same on both, or the stereo
   // image drifts across the fade and the loop seam stops lining up.
   let channels=[];
   for(let c=0;c<rendered.numberOfChannels;c++) channels.push(rendered.getChannelData(c));
-  if(cfg.crush){ const q=Math.pow(2,cfg.crushB);
+  if(cfg.crush){ const q=Math.pow(2,cfg.crushB-1);   // 2^(b-1): a b-bit step over [-1,1]; 2^b was one bit too fine
     for(const d of channels) for(let i=0;i<d.length;i++){ d[i]=Math.round(d[i]*q)/q; } }
   /* Post effects run here, BEFORE the loop crossfade and the fades: a stutter
      that fired after the crossfade would break the seam it just made, and one

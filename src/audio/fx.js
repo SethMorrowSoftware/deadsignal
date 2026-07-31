@@ -170,8 +170,12 @@ fx('pingpong', 'Ping-Pong Delay', 'Space', [
   graph({ ctx, input, p }) {
     const sum = ctx.createGain();
     input.connect(sum);
-    if (typeof ctx.createStereoPanner !== 'function') {
-      // Mono: a plain delay is the honest reduction, not silence.
+    if (typeof ctx.createStereoPanner !== 'function' || ctx.destination.channelCount < 2) {
+      // Mono render (by API absence OR a mono destination): a plain delay is the
+      // honest reduction. The old API-only test let a mono render take the stereo
+      // branch, whose hard-panned echoes then down-mixed to −6 dB — the mono
+      // fallback existed for exactly this case but was never reached. Matches the
+      // channelCount test auto-pan already uses.
       const dl = ctx.createDelay(2);
       dl.delayTime.value = p.time;
       const fb = ctx.createGain(); fb.gain.value = p.feedback / 100 * 0.95;

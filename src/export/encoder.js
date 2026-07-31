@@ -152,9 +152,12 @@ export async function encodeAudioTrack(buffer, { bitrate = 128_000, container = 
     });
     enc.encode(ad);
     ad.close();
-    if (enc.encodeQueueSize > 24) await new Promise((r) => setTimeout(r, 0));
+    // Wait for the queue to drain, not a single yield (see the video loop).
+    while (enc.encodeQueueSize > 24 && !encodeError) await new Promise((r) => setTimeout(r, 0));
   }
-  await enc.flush();
+  // Guard the flush so a fatal error is reported, not masked by a closed-codec
+  // InvalidStateError from flush() itself.
+  try { await enc.flush(); } catch (e) { if (!encodeError) throw e; }
   enc.close();
   if (encodeError) throw encodeError;
   if (!out.length) return null;
@@ -265,15 +268,22 @@ export async function encodeClip(opts) {
     encoder.encode(frame, { keyFrame: i % KEY_EVERY === 0 });
     frame.close();
 
-    // Let the encoder drain rather than queueing every frame at once, which
-    // would spike memory on a long clip.
-    if (encoder.encodeQueueSize > 8) {
+    // WAIT for the encoder to drain, don't just yield once: a single macrotask
+    // yield dequeues nothing when drawing is cheaper than encoding (a simple
+    // scene at 1080p under software VP9), so the queue grew unbounded — each
+    // in-flight VideoFrame pinning ~8MB — until the tab ran out of memory. The
+    // loop holds the queue at its cap, which is what "let the encoder drain"
+    // was meant to do.
+    while (encoder.encodeQueueSize > 8 && !encodeError && !cancelled?.()) {
       await new Promise((r) => setTimeout(r, 0));
     }
     onProgress?.((i + 1) / frames);
   }
 
-  await encoder.flush();
+  // Guard the flush: a fatal encoder error has already closed the codec, so
+  // flush() would reject with InvalidStateError and MASK the real error that the
+  // `throw encodeError` below is meant to report.
+  try { await encoder.flush(); } catch (e) { if (!encodeError) throw e; }
   } finally {
     closeEncoder();
   }

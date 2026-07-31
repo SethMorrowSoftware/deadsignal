@@ -29,8 +29,15 @@ import { steadyNoise, isBlankTitle, titleAlpha, titleAnchor, titleLines, titleRe
 /** `#rrggbb` plus an alpha, as a canvas colour. */
 function withAlpha(hex, a) {
   const h = String(hex || '#000000').replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6);
-  const n = parseInt(full, 16);
+  /* Expand anything short nibble-by-nibble, then take six — the same reading
+     doc/matte.js keyPrep uses. makeTitle validates colours as /#[0-9a-fA-F]{3,8}/,
+     so a hand-edited or older project can carry 4- and 5-digit values; the old
+     `slice(0,6)` turned `#abcd` into parseInt('abcd',16) = rgb(0,171,205) instead
+     of rgb(170,187,204), an unrelated colour. */
+  const full = h.length < 6
+    ? h.split('').map((c) => c + c).join('').slice(0, 6).padEnd(6, '0')
+    : h.slice(0, 6);
+  const n = parseInt(full, 16) || 0;
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, a))})`;
 }

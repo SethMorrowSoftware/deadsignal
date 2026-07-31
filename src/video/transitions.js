@@ -208,16 +208,18 @@ export function drawIncoming(ctx, W, H, transition, dir, k, draw, t = 0) {
     }
 
     case 'whip': {
-      /* A whip pan: the camera snaps across so fast the picture smears. Both
-         halves of the move are drawn as a stack of offset copies, which is what
-         motion blur IS — the shutter open across a distance. Cheaper and more
-         controllable than ctx.filter blur, and it does not soften the picture
-         when the pan is at rest.
+      /* A whip pan: the camera snaps across so fast the picture smears. The
+         incoming clip is drawn as a stack of offset copies — which is what
+         motion blur IS, the shutter open across a distance — sweeping in from
+         off-frame and settling to rest. Cheaper and more controllable than
+         ctx.filter blur, and it does not soften the picture when at rest.
 
-         The incoming clip arrives over the second half of the gesture, so it is
-         absent for the first half and the outgoing picture smears alone. */
-      if (u < 0.5) return true;                      // handled: nothing yet
-      const e = ease((u - 0.5) * 2);
+         It runs across the WHOLE window, fading up (× e) over the outgoing clip
+         that the compositor has already drawn underneath. It used to sit out the
+         entire first half — `if (u < 0.5) return true` drew nothing — so half of
+         every whip was a static hold of the outgoing frame with no motion at
+         all, and the visible gesture was only the back half of its duration. */
+      const e = ease(u);
       const SMEAR = 8;
       const travel = (1 - e) * (horizontal(d) ? W : H) * 0.6;
       ctx.save();
@@ -225,7 +227,9 @@ export function drawIncoming(ctx, W, H, transition, dir, k, draw, t = 0) {
       for (let i = 0; i < SMEAR; i++) {
         const f = i / (SMEAR - 1);
         ctx.save();
-        ctx.globalAlpha = (1 / SMEAR) * (1 + f);     // trailing copies are fainter
+        // Fainter trailing copies, and the whole smear fades in with e so the
+        // window opens on the outgoing picture rather than a hard pop.
+        ctx.globalAlpha = (1 / SMEAR) * (1 + f) * e;
         const off = -sign(d) * travel * (1 - f * 0.35);
         if (horizontal(d)) ctx.translate(off, 0); else ctx.translate(0, off);
         draw();

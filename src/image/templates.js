@@ -138,12 +138,18 @@ template("boot","Boot Splash",(ctx,W,H,c)=>{ ctx.fillStyle="#000"; ctx.fillRect(
      not break lines — and a four-line status message drew as a single run that
      ran off both edges of the frame. */
   bodyLines(ctx,c,"Starting the archive...",W*0.86).forEach((l,i)=>glowText(ctx,l,W/2,by+30+i*15,c.fg,0)); });
-template("shutdown","Shutdown Screen",(ctx,W,H,c)=>{ ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H); setFont(ctx,Math.max(16,c.font+4)); ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillStyle="#ffb000"; ctx.shadowColor="#ffb000"; ctx.shadowBlur=8;
-  const t=bodyLines(ctx,c,"It is now safe to turn off\nyour computer.",W*0.72); t.forEach((l,i)=>ctx.fillText(l,W/2,H/2-((t.length-1)/2-i)*c.font*1.6));
+template("shutdown","Shutdown Screen",(ctx,W,H,c)=>{ ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
+  /* Leading from the DRAWN glyph size, not raw c.font. The glyph floors at 16px
+     but the line step used c.font*1.6, so at a small font (c.font ≤ 10, reachable
+     via the min-6 control or an auto-scaled small format) the 16px lines were
+     stepped less than 16px apart and overprinted each other. */
+  const fpx=Math.max(16,c.font+4); const step=fpx*1.35;
+  setFont(ctx,fpx); ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillStyle="#ffb000"; ctx.shadowColor="#ffb000"; ctx.shadowBlur=8;
+  const t=bodyLines(ctx,c,"It is now safe to turn off\nyour computer.",W*0.72); t.forEach((l,i)=>ctx.fillText(l,W/2,H/2-((t.length-1)/2-i)*step));
   /* The heading above it — the Title box was inert on this template, which on a
      screen with exactly two words of furniture is most of what it does. */
   if(c.title){ setFont(ctx,Math.max(12,c.font)); ctx.globalAlpha=0.7;
-    ctx.fillText(macros(c.title),W/2,H/2-((t.length-1)/2+1.6)*c.font*1.6); ctx.globalAlpha=1; }
+    ctx.fillText(macros(c.title),W/2,H/2-((t.length-1)/2+1.6)*step); ctx.globalAlpha=1; }
   ctx.shadowBlur=0; });
 template("desktop","Fake Desktop",(ctx,W,H,c)=>{ ctx.fillStyle="#3a6ea5"; ctx.fillRect(0,0,W,H); setFont(ctx,11); ctx.textAlign="center"; ctx.textBaseline="top";
   // Wrap into columns like a real desktop: a cell is icon (24) + label (~16),
@@ -169,7 +175,10 @@ template("redacted","Redacted Document",(ctx,W,H,c)=>{ ctx.fillStyle=c.trans?"#f
   redactedLines(ctx,c,"MEMO // CASE {{case}}\n\nSubject [[REDACTED]] entered LAB-3 at\n03:47 with [[REDACTED]]. Session record\nedited to read 03:12. See [[REDACTED]].",W-48).forEach(line=>{ let x=24;
     line.forEach(p=>{ const w=ctx.measureText(p.text).width;
       if(p.redact){ // Clipped to the sheet: a bar that overflows is still a bar.
-        ctx.fillStyle="#000"; ctx.fillRect(x,y,Math.min(w,W-24-x),c.font+2); ctx.fillStyle="#111"; }
+        // max(0,…): when wrap is off and the marker starts past the right margin,
+        // W-24-x is negative, and fillRect normalizes a negative width into a bar
+        // drawn BACKWARDS over the words already inked to its left. Clamp it away.
+        ctx.fillStyle="#000"; ctx.fillRect(x,y,Math.max(0,Math.min(w,W-24-x)),c.font+2); ctx.fillStyle="#111"; }
       else ctx.fillText(p.text,x,y);
       x+=w; }); y+=c.font*1.6; }); });
 /* Every offset here is a FRACTION of the frame. It used to be a set of absolute
@@ -192,7 +201,18 @@ template("poster","Missing Poster",(ctx,W,H,c)=>{ ctx.fillStyle="#eee"; ctx.fill
 template("taskmgr","Task Manager",(ctx,W,H,c)=>{ ctx.fillStyle="#0a5a6a"; ctx.fillRect(0,0,W,H); const win=win95(ctx,8,8,W-16,H-16,macros(c.title||"Close Program"),true); ctx.fillStyle="#fff"; ctx.fillRect(win.cx,win.cy,win.cw,win.ch); bevel(ctx,win.cx,win.cy,win.cw,win.ch,false);
   setFont(ctx,12); ctx.textBaseline="top"; ctx.textAlign="left"; const rows=macros(c.body||"Explorer\nInbox\nEREBUS.EXE [Not Responding]\nWEBB_47\nArchive Monitor").split("\n"); let y=win.cy+6;
   rows.forEach((r,i)=>{ if(/EREBUS|Not Responding/i.test(r)){ ctx.fillStyle="#000080"; ctx.fillRect(win.cx+2,y-2,win.cw-4,15); ctx.fillStyle="#fff"; } else ctx.fillStyle="#000"; ctx.fillText(r,win.cx+8,y); y+=16; }); });
-template("hexedit","Hex Editor",(ctx,W,H,c)=>{ baseTerm(ctx,W,H,c); const fs=Math.max(10,c.font*0.85); setFont(ctx,fs); ctx.textBaseline="top"; ctx.textAlign="left"; const src=macros(c.body||"EREBUS OBSERVE 0347"); seedStatic("hexedit");
+template("hexedit","Hex Editor",(ctx,W,H,c)=>{ baseTerm(ctx,W,H,c);
+  /* Fit the type to the FRAME, not just the font control. Every row is a fixed
+     77-char string (offset + 16 hex bytes + a 16-char ASCII gutter), whose width
+     never depended on W — so at the tab's own default (480×360, font 15) the row
+     ran ~590px wide on a 480px frame and the ASCII gutter, where the author's
+     Body text actually surfaces, fell off the right edge. Measure one row and
+     shrink the type until it fits. */
+  let fs=Math.max(10,c.font*0.85); setFont(ctx,fs);
+  const sampleRow="00000000"+"  "+"00 ".repeat(16)+" |"+".".repeat(16)+"|";
+  const rowW=ctx.measureText(sampleRow).width;
+  if(rowW>W-16) fs=Math.max(6,fs*(W-16)/rowW);
+  setFont(ctx,fs); ctx.textBaseline="top"; ctx.textAlign="left"; const src=macros(c.body||"EREBUS OBSERVE 0347"); seedStatic("hexedit");
   /* A hex editor is always looking AT something, and the Title box is where you
      say what. It used to read the body and ignore the title entirely. */
   const file=macros(c.title||"ARCHIVE_0347.TAP"); glowText(ctx,"-- "+file+" --",8,8,c.fg,2);
@@ -231,10 +251,13 @@ template("implant","Cyber Implant ID",(ctx,W,H,c)=>{ ctx.fillStyle=c.bg; ctx.fil
 template("vapordesktop","Vapor Desktop",(ctx,W,H,c)=>{ const g=ctx.createLinearGradient(0,0,W,H); g.addColorStop(0,"#ff9ff3"); g.addColorStop(1,"#7af0ff"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   const win=win95(ctx,W*0.15,H*0.18,W*0.7,H*0.52,c.title||"ａｅｓｔｈｅｔｉｃ.exe",true); ctx.fillStyle="#fff"; ctx.fillRect(win.cx,win.cy,win.cw,win.ch); bevel(ctx,win.cx,win.cy,win.cw,win.ch,false);
   setFont(ctx,Math.max(18,c.font*1.4)); ctx.textAlign="center"; ctx.textBaseline="middle";
-  /* Also one string, also never split — and fullwidth() doubles every glyph's
-     width, so this one ran off the window sooner than any other template. The
-     lines are centred as a block about the window's middle. */
-  { const ls=bodyLines(ctx,c,"WELCOME",win.cw-16).map((l)=>fullwidth(l));
+  /* Also one string — and fullwidth() widens every glyph ~1.6×, so the wrap has
+     to measure the FULLWIDTH text, not the plain ASCII. It used to wrap the
+     narrow form and then widen each line, so every "wrapped" line still overran
+     the window (and the frame). Widen first, then wrap/split. The lines are
+     centred as a block about the window's middle. */
+  { const txt=fullwidth(macros(c.body||"WELCOME"));
+    const ls=(c.wrap&&win.cw-16>0)?wrapLines(ctx,txt,win.cw-16):txt.split("\n");
     const lh=Math.max(18,c.font*1.4)*1.35, mid=win.cy+win.ch/2;
     ls.forEach((l,i)=>glowText(ctx,l,W/2,mid-((ls.length-1)/2-i)*lh,"#ff2bd6",6)); }
   ctx.textBaseline="top"; ctx.textAlign="left";

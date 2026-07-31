@@ -217,6 +217,11 @@ export function recorderSupported(){ const c=$("vcanvas"); return !!(window.Medi
    token is held; every other entry point refuses with a toast. */
 let _exportBusy=null;
 const STILL_BTNS=["v-gif","v-apng","v-awebp","v-strip"];
+/* Whether an export holds the shared render surfaces right now. The chrome uses
+   this to freeze tab switching during an export: every exporter renders through
+   the same module scratch canvases and seeks the same <video>, so restarting a
+   preview loop mid-export corrupts the frames it is writing. */
+export const isExportBusy=()=>!!_exportBusy;
 export function claimExport(label){
   if(_exportBusy){ log(_exportBusy+" already running — wait for it or press ■ STOP.","warn"); toast(_exportBusy+" in progress","warn"); return false; }
   _exportBusy=label;

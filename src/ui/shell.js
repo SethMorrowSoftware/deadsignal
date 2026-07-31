@@ -9,7 +9,7 @@ import { currentSeed, resetSeed, rnd } from '../core/rng.js';
 import { renderImage } from '../image/render.js';
 import { renderCoverage } from '../library/bundle.js';
 import { renderLibTable } from '../library/library.js';
-import { startVideoPreview, stopVideoPreview } from '../video/capture.js';
+import { isExportBusy, startVideoPreview, stopVideoPreview } from '../video/capture.js';
 import { readVideoCfg } from '../video/render.js';
 import { hasFootageFor } from '../media/import.js';
 import { renderTimelineTable, startTimelinePreview, stopTimelinePreview } from '../video/timeline.js';
@@ -73,6 +73,14 @@ export function randomize(){ const view=document.querySelector(".tab.active").da
   const st=getStore(); if(st) st.transaction(write,"randomize"); else write();
   if(view==="video")startVideoPreview(); else if(view==="image")renderImage(); else markAudioStale(); toast("Randomized (seed "+currentSeed()+")"); }
 export function activateTab(name){
+  // An export holds the shared render surfaces (the scratch canvases and the
+  // imported <video>). Switching tabs restarts a preview loop that resizes and
+  // repaints those same buffers from its own clock, interleaving preview frames
+  // into the export — so every route into a tab switch is frozen until the
+  // export releases. The exporters restart the correct preview themselves in
+  // their finally blocks (calling startVideoPreview directly, not through here),
+  // so this guard does not strand the preview.
+  if(isExportBusy()){ toast("Busy exporting — that view is paused until it finishes","warn"); return; }
   // Roving tabindex: only the selected tab is in the tab order, and arrow keys
   // move between them — the expected keyboard model for a tablist.
   document.querySelectorAll(".tab").forEach(t=>{

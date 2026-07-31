@@ -141,12 +141,17 @@ export function splitAtPlayhead() {
      agree about this; the razor now agrees with them too. */
   const cut = sourceTimeOf(c, hit.local);
   /* Both halves have to survive normalizeClips' minimum length, or the split
-     silently produces one clip and a discarded sliver. Measured on the RENDERED
-     length, which is what MIN_CLIP bounds — the source-side check this replaced
-     rejected legitimate splits on a fast clip and allowed impossible ones on a
-     slow one. */
+     silently produces one clip and a discarded sliver. The RENDERED length is
+     what MIN_CLIP bounds for the lane, but makeClip ALSO enforces MIN_CLIP on
+     the SOURCE window — and for a slow clip (speed < 1) a legal rendered length
+     maps to a source window shorter than MIN_CLIP, so makeClip's fallback reset
+     the sliver half to the whole source and the split silently duplicated the
+     clip. Guard both: the rendered halves and the source windows (round2'd like
+     makeClip stores them, with the same epsilon). */
   const len = clipLength(c);
-  if (hit.local < MIN_CLIP || len - hit.local < MIN_CLIP) {
+  const rcut = Math.round(cut * 100) / 100;
+  if (hit.local < MIN_CLIP || len - hit.local < MIN_CLIP
+      || rcut - c.in < MIN_CLIP - 1e-6 || c.out - rcut < MIN_CLIP - 1e-6) {
     toast('Too close to the edge to split');
     return false;
   }

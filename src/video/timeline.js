@@ -101,7 +101,10 @@ export function commitClips(next,label,opts={}){
   const st=getStore();
   if(st) st.apply(setCmd('timeline.clips',clips,{ label, coalesceKey:opts.coalesceKey }));
   setTimelineClips(clips);
-  if(opts.preview===false) updateTimelineInfo(buildSchedule());
+  // Never restart the preview while a recording holds #tlcanvas: its RAF loop
+  // would resize and repaint the surface the recorder is capturing, from its own
+  // clock, interleaving preview frames into the exported file.
+  if(opts.preview===false || tlRecording) updateTimelineInfo(buildSchedule());
   else startTimelinePreview();
 }
 /** Re-project after undo / redo / project load. */
@@ -141,7 +144,8 @@ export function commitAudioClips(next,label,opts={}){
   const st=getStore();
   if(st) st.apply(setCmd('timeline.audio',clips,{ label, coalesceKey:opts.coalesceKey }));
   setAudioClips(clips);
-  if(opts.preview===false) updateTimelineInfo(buildSchedule());
+  // As in commitClips: leave the recorder's canvas alone while it is recording.
+  if(opts.preview===false || tlRecording) updateTimelineInfo(buildSchedule());
   else startTimelinePreview();
 }
 export function editAudioClip(i,patch,label,opts){
@@ -358,11 +362,18 @@ export function clearTimeline(){
  * `pictureEnd` is kept separate for anything that genuinely means "how much
  * picture is there" rather than "how long is the sequence".
  */
-export function buildSchedule(){ const tl=readTimelineCfg(); const clips=timeline;
+export function buildSchedule(){ const tl=readTimelineCfg();
+  /* SNAPSHOT the arrays, not the live references. setTimelineClips rebuilds the
+     `timeline` array in place (length=0 then push), so an edit made while an
+     export holds a schedule used to replace that schedule's clips out from under
+     it while `starts` stayed stale — desynchronising clips[i]/starts[i] for every
+     remaining frame. A shallow slice is enough: setTimelineClips makes new clip
+     objects rather than mutating the old ones the snapshot still points at. */
+  const clips=timeline.slice();
   const { starts, duration }=scheduleOf(clips);
   const aEnd=audioEnd(audioTimeline);
   const seq=Math.round(Math.max(duration,aEnd)*100)/100;
-  return { clips, starts, audio:audioTimeline, pictureEnd:duration, audioEnd:aEnd,
+  return { clips, starts, audio:audioTimeline.slice(), pictureEnd:duration, audioEnd:aEnd,
            total:Math.max(0.1,seq), duration:seq, tl }; }
 
 /**
@@ -531,7 +542,12 @@ function drawClipSource(sctx,clip,localT,tl){
   // would put it straight back, so drop that one track for this render only.
   if(cfg.__auto && cfg.__auto["v-persist"]) cfg.__auto={...cfg.__auto, "v-persist":[]};
   _persistCanvas().width=tl.W; _persistCanvas().height=tl.H;
-  renderVideoFrame(sctx,tl.W,tl.H,cfg,clamp(sourceTimeOf(clip,localT),0,cfg.duration)); }
+  /* Clamp to the TRIM WINDOW, not [0, duration]. clipLength floors at MIN_CLIP,
+     so a very short trim (where (out-in)/speed < 0.1) occupies 0.1s of lane and
+     sourceTimeOf then walks past `out` (or below `in` reversed) — showing frames
+     the author trimmed away. Holding at the boundary frame is the honest read. */
+  const _in=Number.isFinite(clip.in)?clip.in:0, _out=Number.isFinite(clip.out)?clip.out:cfg.duration;
+  renderVideoFrame(sctx,tl.W,tl.H,cfg,clamp(sourceTimeOf(clip,localT),Math.min(_in,_out),Math.max(_in,_out))); }
 
 /**
  * How visible an overlay clip is at `localT` seconds into itself.
@@ -678,18 +694,34 @@ export function renderTimelineFrame(ctx,T,sched){ const {clips,starts,tl}=sched;
     drawClipTo(ctx,c,tl);
     ctx.restore(); }
 }
+/* A clip's raw footage key, whichever way it draws footage. footageKeyOf only
+   answers for a videoin BASE scene, but a clip can also carry a videoin LAYER,
+   which draws from the same base `v-srckey` (video/layers.js builds each layer
+   cfg from the base recipe). Both must be primed, or the offline encoder — which
+   renders far faster than real time — samples a frozen <video>. */
+function rawSrcKey(c){ const k=c&&c.rec&&typeof c.rec==='object'?c.rec['v-srckey']:''; return typeof k==='string'?k:''; }
+function layersUseVideo(c){
+  const ls=c&&c.rec&&c.rec.__layers;
+  return Array.isArray(ls)&&ls.some(L=>L&&L.enabled&&L.opacity>0&&L.scene==='videoin');
+}
+/** Whether this clip draws footage at all — base scene OR a videoin layer. */
+export function clipUsesFootage(c){ return !!c && c.kind!=='still' && (c.scene==='videoin' || layersUseVideo(c)); }
 /** Every footage key this sequence needs, in clip order. */
 export function footageKeys(sched){
   const out=[];
-  for(const c of sched.clips){ const k=footageKeyOf(c); if(k) out.push(k); }
+  for(const c of sched.clips){
+    if(c.kind==='still') continue;
+    let k=footageKeyOf(c);
+    if(!k && layersUseVideo(c)) k=rawSrcKey(c);   // footage that reaches the frame only through a layer
+    if(k) out.push(k);
+  }
   return out;
 }
-/* A sequence uses footage when it has a videoin clip AND something to draw for
-   it — either that clip's own source or the active slot for clips captured
-   before per-clip footage existed. */
+/* A sequence uses footage when a clip draws it — as a base videoin scene or a
+   videoin layer — AND there is something to draw: that clip's own source or the
+   active slot for clips captured before per-clip footage existed. */
 export function timelineUsesVideo(sched){
-  const vids=sched.clips.filter(c=>c.kind!=="still"&&c.scene==="videoin");
-  if(!vids.length) return false;
+  if(!sched.clips.some(clipUsesFootage)) return false;
   return hasImportedVideo() || footageKeys(sched).length>0;
 }
 export function ensureTimelineVideo(sched,reset){ if(!timelineUsesVideo(sched))return;
@@ -884,7 +916,10 @@ export function renderTimelineTable(){ const b=$("tl-body"); if(!b)return; b.rep
        recoverable if we accept this one. */
     if((k==="in"||k==="out") && Number.isFinite(v)){
       const inn=k==="in"?v:c.in, out=k==="out"?v:c.out;
-      if(!(out-inn>=MIN_CLIP)){
+      // Epsilon so the legal tightest trim (a 0.1s window that rounds just under
+      // MIN_CLIP in float) is accepted here as it is in makeClip, rather than
+      // refused with a toast on a value the author is entitled to type.
+      if(!(out-inn>=MIN_CLIP-1e-6)){
         el.value=(k==="in"?c.in:c.out).toFixed(2);   /* dom-only: this cell is redrawn from the document, not bound to it, and dispatching would re-enter this handler */
         toast("Out must be at least "+MIN_CLIP+"s after In","warn");
         log("Clip "+(i+1)+": in "+inn.toFixed(2)+" / out "+out.toFixed(2)

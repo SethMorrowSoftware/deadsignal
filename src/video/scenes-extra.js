@@ -312,10 +312,14 @@ export function registerExtraScenes() {
         s += (rnd() < 0.15 ? '████' : ((rnd() * 65536) | 0).toString(16).padStart(4, '0').toUpperCase()) + ' ';
       }
       const wpx = ctx.measureText(s).width || W;
-      const x = dir > 0 ? -((t * speed) % wpx) : ((t * speed) % wpx) - wpx;
+      // Tile the band across the FULL width, not two fixed copies: the string is
+      // ~780px wide regardless of W, so at any frame wider than 2·wpx (e.g.
+      // 1920px) the right side never received text. x0 is the leftmost copy in
+      // (-wpx, 0]; repeat rightward until past W. Motion and direction are
+      // unchanged — the same scrolling offset, now covering the whole row.
+      const x0 = dir > 0 ? -((t * speed) % wpx) : ((t * speed) % wpx) - wpx;
       ctx.globalAlpha = 0.30 + (r % 3) * 0.22;
-      glowText(ctx, s, x, r * rh + rh / 2, cfg.fg, 2);
-      glowText(ctx, s, x + wpx, r * rh + rh / 2, cfg.fg, 2);
+      for (let xx = x0; xx < W; xx += wpx) glowText(ctx, s, xx, r * rh + rh / 2, cfg.fg, 2);
     }
     ctx.globalAlpha = 1;
     ctx.textBaseline = 'top';

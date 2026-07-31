@@ -187,8 +187,11 @@ export function makeClip(c) {
   let inn = clamp(round2(num(c?.in, 0)), 0, src);
   let out = clamp(round2(num(c?.out, src)), 0, src);
   // A backwards or empty trim is not an edit, it is a mistake — the whole
-  // source is the honest reading of it.
-  if (!(out - inn >= MIN_CLIP)) { inn = 0; out = src; }
+  // source is the honest reading of it. The epsilon matters: in and out are
+  // round2'd, so a legal tightest trim like (4.9, 5.0) subtracts to
+  // 0.09999999999999964, which a float-exact `>= MIN_CLIP` wrongly rejected —
+  // silently discarding a trim the author (and patchFor's own clamp) built.
+  if (!(out - inn >= MIN_CLIP - 1e-6)) { inn = 0; out = src; }
   return {
     kind,
     rec: normalizeRec(c?.rec),
