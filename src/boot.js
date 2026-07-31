@@ -5,7 +5,7 @@ import { primeSizing } from './ui/sizing.js';
 import { download } from './core/blobs.js';
 import { $, guardDisabled, log, setVal, toast } from './core/dom.js';
 import { applyAesthetic, applyPack, fillPaletteSelect } from './core/palettes.js';
-import { applyProject, readProject } from './core/recipes.js';
+import { PREVIOUS_PROJECT_KEY, applyProject, lsGet, readProject } from './core/recipes.js';
 import { startSession } from './doc/bind.js';
 import { createDocument } from './doc/schema.js';
 import { toJSON } from './doc/serialize.js';
@@ -31,7 +31,7 @@ import { currentRate, feedLuminance, paintFlash, resetFlashMeter } from './ui/fl
 import { initEditor } from './ui/nle.js';
 import { activateTab, enhanceFieldsets, foldInactiveAudioLayers, initTablistKeys, randomize, resetView, setResetRefresh, snapshotDefaults, tidyAudioLayers, updateAudioLayerFlags, wireLive } from './ui/shell.js';
 import { clearAllKeyframes, initKeyframes, refreshKeyframes } from './ui/keyframes.js';
-import { addFilter, addToChain, clearChain, clearFilters, initChain, initFilters, renderChain, renderFilters } from './ui/filters.js';
+import { addFilter, addToChain, clearChain, clearFilters, initChain, initFilters, initImageFilters, renderChain, renderFilters, renderImageFilters } from './ui/filters.js';
 import { AUDIO_FX, fxGroups, resolveFxParams } from './audio/fx.js';
 import { addRegion, clearRegions, renderRegions } from './ui/regions.js';
 import { clearSolo, renderSolo, toggleSolo } from './ui/solo.js';
@@ -53,6 +53,7 @@ import { readAudioCfg, renderAudio } from './audio/engine.js';
 import { SCENES, fillSceneSelect } from './video/scenes.js';
 import { registerExtraScenes } from './video/scenes-extra.js';
 import { registerExtraFilters } from './fx/filters-extra.js';
+import { registerExtraFilters2 } from './fx/filters-extra2.js';
 import { buildAudioLayerControls } from './ui/audiolayers.js';
 import { addAudioClip, addGraphicClip, addOverlayClip, addStillClip, addTimelineClip, addTitleClip, audioTimeline, buildSchedule, clearTimeline, clipSourceTime, commitAudioClips, editAudioClip, editClip, initTimelineTab, recordTimeline, renderTimelineFrame, renderTimelineTable, sequenceMix, setTimelineClips, startTimelinePreview, syncTimelineFromDoc, timeline } from './video/timeline.js';
 import { trackScale } from './ui/track.js';
@@ -79,7 +80,7 @@ export function boot(){
   // selects
   // Extra scenes register into the same SCENES map, so this has to run
   // BEFORE the pickers are filled or they would be missing from every list.
-  registerExtraScenes(); registerExtraTemplates(); registerExtraFilters();
+  registerExtraScenes(); registerExtraTemplates(); registerExtraFilters(); registerExtraFilters2();
   /* Registry audio layers generate their controls here, for the same reason as
      the pickers above: the document is seeded from the DOM a few lines down and
      the reset snapshot is taken from it, so a control that does not exist yet
@@ -141,6 +142,7 @@ export function boot(){
       step("keyframes", refreshKeyframes);
       step("layers", renderLayers);
       step("filters", renderFilters);
+      step("image filters", renderImageFilters);
       step("audio fx", ()=>renderChain(AUDIO_FX_CHAIN));
       step("audio edits", renderRegions);
       step("solo", renderSolo);
@@ -250,6 +252,9 @@ export function boot(){
   initLayers(()=>startVideoPreview());
   initBatch();
   initFilters(()=>startVideoPreview());
+  // The SCREEN tab's filter chain — same registry, one still. Registered here
+  // beside the video one so both live in one place.
+  initImageFilters(()=>renderImage());
   /* The audio FX chain is the same panel over a different registry. Registered
      here rather than inside initAudioTab so both chains are wired in one place
      and the shared panel has exactly one call site per chain. */
@@ -533,9 +538,37 @@ async function rehydrateAssets(backend, session, { arrivedByShareLink=false, res
     return;
   }
   try{
+    /* The root set is more than the library rows. The document also references
+       assets by key OUTSIDE those rows — the timeline audio lane's sources, a
+       clip's bed, and footage `v-srckey` — and the stashed previous project (the
+       documented recovery path for the one irreversible LOAD click) references
+       its own. Rooting only library rows deleted the bytes all three still point
+       at on the next reload; the sound kept playing this session off the blob
+       map, then vanished for good. Union every reachable key before deleting. */
     const live=referencedKeys();
+    for(const k of docReferencedKeys(session.store.doc)) live.add(k);
+    for(const k of docReferencedKeys(lsGet(PREVIOUS_PROJECT_KEY, null))) live.add(k);
     for(const k of await backend.listAssets()) if(!live.has(k)) await backend.deleteAsset(k);
   }catch(e){ /* a sweep that cannot run is not a failure worth reporting */ }
+}
+
+/* Every asset key a document references, as BARE keys (the form listAssets and
+   the library rows use). Beyond the library rows, keys hide in three places the
+   schema keeps as authored `lib:<key>` strings: the timeline audio lane's
+   `source`, a clip's `bed`, and footage `v-srckey` (in each clip's recipe and on
+   the live video tab). Conservative by construction — an extra key here costs a
+   kept orphan; a missing one costs someone's imported media. */
+function docReferencedKeys(doc){
+  const keys=new Set();
+  if(!doc || typeof doc!=='object') return keys;
+  const addLib=(v)=>{ if(typeof v==='string' && v.startsWith('lib:')) keys.add(v.slice(4)); };
+  if(Array.isArray(doc.library)) for(const it of doc.library) if(it && it.key) keys.add(it.key);
+  const audio=doc.timeline&&doc.timeline.audio;
+  if(Array.isArray(audio)) for(const a of audio) addLib(a&&a.source);
+  const clips=doc.timeline&&doc.timeline.clips;
+  if(Array.isArray(clips)) for(const c of clips){ if(!c) continue; addLib(c.bed); if(c.rec&&typeof c.rec==='object') addLib(c.rec['v-srckey']); }
+  if(doc.tabs&&doc.tabs.video) addLib(doc.tabs.video['v-srckey']);
+  return keys;
 }
 
 /* Public seam for the smoke suite and devtools poking. Deliberately explicit:

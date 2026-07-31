@@ -249,3 +249,25 @@ export function initFilters(onChange) {
 export const renderFilters = () => renderChain(VIDEO_CHAIN);
 export const addFilter = (id) => addToChain(VIDEO_CHAIN, id);
 export const clearFilters = () => clearChain(VIDEO_CHAIN);
+
+/* The SCREEN tab's copy of the same chain, over the same registry — one still
+   instead of a frame. Its own key and its own document path so the two chains
+   never share state, but everything else is identical, which is the whole point
+   of the generalised panel. */
+export const IMAGE_CHAIN = 'i-filters';
+export function initImageFilters(onChange) {
+  initChain(IMAGE_CHAIN, {
+    path: 'filters.image',
+    registry: FILTERS,
+    groups: filterGroups,
+    resolve: resolveParams,
+    ids: { list: 'i-filters-list', pick: 'i-filters-pick', add: 'i-filters-add',
+           clear: 'i-filters-clear', count: 'i-filters-count' },
+    empty: 'No filters — the still is just the template and the CRT/paper FX above. '
+      + 'Add one to grade, warp or screen it, then use ↑ ↓ on a step to change what runs first.',
+    onChange,
+  });
+}
+export const renderImageFilters = () => renderChain(IMAGE_CHAIN);
+export const addImageFilter = (id) => addToChain(IMAGE_CHAIN, id);
+export const clearImageFilters = () => clearChain(IMAGE_CHAIN);

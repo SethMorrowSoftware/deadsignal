@@ -69,8 +69,11 @@ export function makeAudioClip(c) {
   let inn = Math.max(0, round2(num(c?.in, 0)));
   let out = Math.max(0, round2(num(c?.out, inn + 1)));
   // A backwards or empty window is not an edit, it is a mistake; a legal
-  // one-second window from the in point is the honest reading of it.
-  if (!(out - inn >= MIN_AUDIO_CLIP)) out = inn + 1;
+  // one-second window from the in point is the honest reading of it. Epsilon
+  // for the same reason as makeClip: a legal 0.1s window (e.g. 4.9→5.0) rounds
+  // to 0.09999999999999964, which a float-exact test wrongly rewrote to in+1s —
+  // silently extending the sound past the point the author trimmed to.
+  if (!(out - inn >= MIN_AUDIO_CLIP - 1e-6)) out = inn + 1;
   if (out - inn > MAX_AUDIO_CLIP) out = inn + MAX_AUDIO_CLIP;
   return {
     source: typeof c?.source === 'string' ? c.source.slice(0, 200) : '',

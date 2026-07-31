@@ -5,7 +5,6 @@
   table.lib{width:100%; border-collapse:collapse; font-size:12.5px}
   table.lib th,table.lib td{border:1px solid var(--edge2); padding:4px 6px; text-align:left}
   table.lib th{color:var(--cyan); background:#060d11}
-  table.lib .fn{color:var(--phos); word-break:break-all}
   table.lib input[type=text]{padding:2px 4px; font-size:12.5px}
   table.lib select{padding:2px 4px; font-size:12.5px}
   pre.snip{background:#020506; border:1px solid var(--edge2); border-radius:2px; padding:9px; overflow:auto; color:var(--cyan); font-size:13px; margin:5px 0; max-height:260px}
@@ -109,6 +108,12 @@ body.explain-armed input, body.explain-armed select, body.explain-armed textarea
   background:var(--panel); border:1px solid var(--phos-dim); border-radius:3px;
   padding:1.4rem 1.6rem; max-width:44rem; width:100%;
   box-shadow:0 0 40px rgba(57,255,158,.09);
+  /* margin:auto, not the parent's align/justify-center: a flex item centred by
+     align-items overflows equally above and below, and the overflow above the
+     start edge cannot be scrolled to — so on a short window the WELCOME heading
+     was clipped unreachably. Auto margins centre when it fits and collapse when
+     it does not, keeping the whole card reachable through #welcome's own scroll. */
+  margin:auto;
 }
 .welcome-card h2{ color:var(--phos); margin:0 0 .6rem }
 .welcome-card p{ margin:.5rem 0 }
@@ -172,13 +177,20 @@ body.explain-armed input, body.explain-armed select, body.explain-armed textarea
 .tl-content { position:relative }
 /* Track headers down the left, as in every editor. The ruler carries the same
    indent so a tick and the clip under it are at the same x. */
-.tl-row { display:grid; grid-template-columns:var(--tl-head) minmax(0,1fr); gap:0 var(--tl-gap);
+/* Flex, not grid: a grid item's containing block is its own grid area, which is
+   exactly the item's size, so position:sticky on .tl-head had no slack to move
+   in and never pinned — the label scrolled away with the lane once zoomed in. A
+   flex item's containing block is the full-width row, so sticky:left:0 actually
+   holds the label in view. The lane width (contentPx − head − gap) and the
+   ruler indent are unchanged, so tick↔clip alignment is preserved. */
+.tl-row { display:flex; gap:var(--tl-gap);
           align-items:center; margin-bottom:3px }
-.tl-head { font-size:10px; letter-spacing:.08em; color:var(--muted); text-align:right;
+.tl-head { flex:0 0 var(--tl-head); font-size:10px; letter-spacing:.08em; color:var(--muted); text-align:right;
            font-family:var(--mono);
            /* Pinned while the lane scrolls under it: a track label that slides
               away is a lane you cannot identify once you are zoomed in. */
            position:sticky; left:0; z-index:2; background:var(--panel) }
+.tl-lane { flex:1 1 auto; min-width:0 }
 .tl-row.overlay .tl-lane { height:32px }
 .tl-row.overlay .tl-head { color:var(--amber) }
 .tl-row.audio .tl-lane { height:34px }

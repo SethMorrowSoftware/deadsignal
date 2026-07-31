@@ -34,6 +34,7 @@
 class StudioController
 {
     private const AUTOSAVE_KEEP = 50;
+    private const NAMED_KEEP = 100;
 
     private function storage(): StudioStorage
     {
@@ -44,6 +45,24 @@ class StudioController
             jsonError('The studio backend is not enabled on this server.', 503);
         }
         return $s;
+    }
+
+    /**
+     * Refuse a document/version write that would push the OWNER over quota.
+     *
+     * Asset uploads were metered but document and version writes were not, so a
+     * project or version could grow the store without bound — and versions are
+     * charged to the project owner, so a shared-project editor could fill the
+     * owner's quota. Charged to $ownerId for exactly that reason. A quota of 0
+     * means unlimited (the storage layer's own convention).
+     */
+    private function assertQuotaForWrite(StudioStorage $storage, int $ownerId, int $addBytes): void
+    {
+        $quota = $storage->userQuota();
+        if ($quota <= 0) return;
+        if ($storage->usageFor($ownerId) + $addBytes > $quota) {
+            jsonError('This would exceed the account storage quota (' . $quota . ' bytes)', 413);
+        }
     }
 
     private function userId(): int
@@ -156,6 +175,7 @@ class StudioController
         if (mb_strlen($name) > 200) jsonError('name is too long');
 
         $json = $this->documentJson(input('document', []), $storage);
+        $this->assertQuotaForWrite($storage, $uid, strlen($json));
         $uuid = self::uuid();
 
         $id = StudioProject::create(
@@ -193,6 +213,8 @@ class StudioController
         if (input('document') !== null) {
             $fields['document'] = $this->documentJson(input('document'), $storage);
             $fields['schema_version'] = max(1, (int) input('schemaVersion', $project['schema_version'] ?? 1));
+            // Charged to the owner, not the editor making the change.
+            $this->assertQuotaForWrite($storage, (int) $project['owner_id'], strlen($fields['document']));
 
             // Autosave a snapshot of what is being replaced, so an accidental
             // overwrite from another machine is recoverable rather than final.
@@ -231,11 +253,15 @@ class StudioController
     {
         $project = $this->requireProject($params['id'] ?? '', StudioShare::ROLE_EDITOR);
         $label = self::nullableText(input('label'));
+        $doc = json_encode($project['document'], JSON_UNESCAPED_SLASHES);
+        // Charged to the owner; named versions were unmetered and never pruned.
+        $this->assertQuotaForWrite($this->storage(), (int) $project['owner_id'], strlen($doc));
         $id = StudioVersion::create(
-            (int) $project['id'],
-            json_encode($project['document'], JSON_UNESCAPED_SLASHES),
-            $label, false, $this->userId()
+            (int) $project['id'], $doc, $label, false, $this->userId()
         );
+        // Bound the count the way autosaves are bounded, so history cannot grow
+        // without limit even for a project that stays under quota.
+        StudioVersion::pruneNamed((int) $project['id'], self::NAMED_KEEP);
         jsonResponse(['version' => StudioVersion::findById($id)], 201);
     }
 
@@ -247,6 +273,11 @@ class StudioController
         // says nothing about who may use it.
         $project = $this->requireProject((string) $version['project_id'], StudioShare::ROLE_EDITOR);
 
+        $restored = json_encode($version['document'], JSON_UNESCAPED_SLASHES);
+        // The autosave snapshot below is pruned, but the restored document itself
+        // is a fresh write charged to the owner — gate it like any other.
+        $this->assertQuotaForWrite($this->storage(), (int) $project['owner_id'], strlen($restored));
+
         // Snapshot the current state first: restoring is itself a change worth
         // being able to undo.
         StudioVersion::create((int) $project['id'],
@@ -254,7 +285,7 @@ class StudioController
         StudioVersion::pruneAutosaves((int) $project['id'], self::AUTOSAVE_KEEP);
 
         StudioProject::update((int) $project['id'], [
-            'document' => json_encode($version['document'], JSON_UNESCAPED_SLASHES),
+            'document' => $restored,
         ]);
         jsonResponse(['project' => StudioProject::findById((int) $project['id'])]);
     }
@@ -294,12 +325,12 @@ class StudioController
             jsonError('A share link can only grant viewer or commenter access');
         }
         $token = bin2hex(random_bytes(32));
-        $expires = null;
+        $expiresInSeconds = null;
         if (input('expiresInDays') !== null) {
             $days = max(1, min(365, (int) input('expiresInDays')));
-            $expires = gmdate('Y-m-d H:i:s', time() + $days * 86400);
+            $expiresInSeconds = $days * 86400;
         }
-        $id = StudioShare::createLink((int) $project['id'], $token, $role, $expires, $uid);
+        $id = StudioShare::createLink((int) $project['id'], $token, $role, $expiresInSeconds, $uid);
 
         // The token is returned exactly once, here. It is not in any listing.
         jsonResponse([
@@ -442,6 +473,16 @@ class StudioController
         $sha = strtolower(trim((string) input('sha256', '')));
         $size = (int) input('size', 0);
 
+        // Authorise the target project BEFORE any bytes are committed. Assembling
+        // the upload renames the file into its final path; if the authorisation
+        // below runs afterwards and fails, requireProject() exits and the asset
+        // row is never created — leaving an orphan file that usageFor() never
+        // counts (it sums rows, not loose files) and the stale-upload sweep never
+        // reaps (it only touches tmp/), so the same low quota reading admits the
+        // next upload and the next: an unbounded quota bypass / disk filler.
+        $projectId = input('projectId') !== null ? (int) input('projectId') : null;
+        if ($projectId) $this->requireProject((string) $projectId, StudioShare::ROLE_EDITOR);
+
         try {
             $r = $storage->completeUpload($uid, $uploadId, $sha, $size);
         } catch (\RuntimeException $e) {
@@ -451,9 +492,6 @@ class StudioController
 
         $existing = StudioAsset::findBySha($uid, $sha);
         if ($existing) { jsonResponse(['asset' => $existing, 'deduped' => true]); return; }
-
-        $projectId = input('projectId') !== null ? (int) input('projectId') : null;
-        if ($projectId) $this->requireProject((string) $projectId, StudioShare::ROLE_EDITOR);
 
         $kind = (string) input('kind', 'other');
         if (!in_array($kind, StudioAsset::KINDS, true)) $kind = 'other';
@@ -517,6 +555,65 @@ class StudioController
             $storage->deleteAssetFile((int) $asset['owner_id'], (string) $asset['sha256']);
         }
         jsonResponse(['deleted' => true]);
+    }
+
+    /** PATCH /studio/assets/:id — rename (owner only). */
+    public function renameAsset(array $params): void
+    {
+        $this->storage();
+        $asset = StudioAsset::findById((int) ($params['id'] ?? 0));
+        // 404, not 403, for someone else's asset — the same non-disclosure the
+        // project routes keep.
+        if (!$asset || (int) $asset['owner_id'] !== $this->userId()) jsonError('Asset not found', 404);
+        $name = trim((string) input('name', ''));
+        if ($name === '') jsonError('name is required');
+        if (mb_strlen($name) > 255) jsonError('name is too long');
+        StudioAsset::rename((int) $asset['id'], $name);
+        jsonResponse(['asset' => StudioAsset::findById((int) $asset['id'])]);
+    }
+
+    /* ------------------------------------------------------------- extras -- */
+
+    /** POST /studio/projects/:id/duplicate — copy into the caller's own account. */
+    public function duplicateProject(array $params): void
+    {
+        $storage = $this->storage();
+        // Viewer access is enough: duplicating a project shared with you into your
+        // OWN account is how a read-only share becomes something you can edit,
+        // without touching the original. The copy is owned by the caller.
+        $src = $this->requireProject($params['id'] ?? '', StudioShare::ROLE_VIEWER);
+        $uid = $this->userId();
+
+        $name = trim((string) input('name', ''));
+        if ($name === '') $name = mb_substr(((string) $src['name']) . ' (copy)', 0, 200);
+        if (mb_strlen($name) > 200) jsonError('name is too long');
+
+        // requireProject returns the document already decoded to an array
+        // (StudioProject::hydrate); re-encode it through the shared guard so the
+        // copy is stored as valid JSON, size-checked like any other write.
+        $json = $this->documentJson(is_array($src['document'] ?? null) ? $src['document'] : [], $storage);
+        // Charged to the caller, who now owns the copy.
+        $this->assertQuotaForWrite($storage, $uid, strlen($json));
+
+        $id = StudioProject::create(
+            $uid, self::uuid(), $name,
+            self::nullableText($src['description'] ?? null),
+            $json,
+            max(1, (int) ($src['schema_version'] ?? 1))
+        );
+        jsonResponse(['project' => StudioProject::findById($id)], 201);
+    }
+
+    /** GET /studio/usage — this account's storage picture, in one call. */
+    public function usage(array $params): void
+    {
+        $s = $this->storage();
+        $uid = $this->userId();
+        jsonResponse([
+            'quota'    => $s->quotaInfo($uid),
+            'projects' => StudioProject::countFor($uid),
+            'assets'   => StudioAsset::countFor($uid),
+        ]);
     }
 
     /* ------------------------------------------------------------ helpers -- */

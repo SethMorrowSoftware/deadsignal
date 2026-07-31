@@ -117,6 +117,11 @@ function wireCanvas() {
   const cv = $('icanvas');
   if (!cv) return;
   let mode = null, startX = 0, startY = 0, base = null, index = -1;
+  // A per-drag gesture key. A DRAG IS ONE UNDO ENTRY: without an open gesture,
+  // the store only folds same-key commits within a 600ms window, so a paused
+  // drag split into several undo entries and two quick separate drags merged
+  // into one — exactly what beginGesture was added to fix (see ui/track.js).
+  let dragKey = null, dragSeq = 0;
 
   // Canvas pixels, not CSS pixels: the preview is scaled to fit the panel, and
   // the two only agree at 100%.
@@ -142,6 +147,8 @@ function wireCanvas() {
     }
     base = annotations()[index];
     startX = p.fx; startY = p.fy;
+    dragKey = `anno-drag-${dragSeq++}`;
+    getStore()?.beginGesture(dragKey);
     try { cv.setPointerCapture?.(e.pointerId); } catch { /* pointer already gone */ }
     e.preventDefault();
   });
@@ -150,14 +157,16 @@ function wireCanvas() {
     if (!mode || !base) { updateCursor(e, cv, at); return; }
     const p = at(e);
     const dx = p.fx - startX, dy = p.fy - startY;
-    // One coalesce key per gesture per mark, so two separate drags of the same
-    // caption stay two undo steps.
-    const key = `anno:${mode}:${index}`;
-    if (mode === 'move') updateAnnotation(index, moveAnnotation(base, dx, dy), 'move mark', key);
-    else updateAnnotation(index, resizeAnnotation(base, base.w + dx, base.h + dy), 'resize mark', key);
+    // The per-drag gesture key minted on pointerdown, so the whole drag is one
+    // undo entry however long it pauses, and the next drag is a separate one.
+    if (mode === 'move') updateAnnotation(index, moveAnnotation(base, dx, dy), 'move mark', dragKey);
+    else updateAnnotation(index, resizeAnnotation(base, base.w + dx, base.h + dy), 'resize mark', dragKey);
   });
 
-  const end = () => { mode = null; base = null; index = -1; };
+  const end = () => {
+    if (dragKey) { getStore()?.endGesture(); dragKey = null; }
+    mode = null; base = null; index = -1;
+  };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 }

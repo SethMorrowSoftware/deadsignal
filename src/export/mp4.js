@@ -222,8 +222,14 @@ function trak(t, offsets) {
     UNITY_MATRIX,
     u32((t.width || 0) << 16), u32((t.height || 0) << 16));
 
-  const mdhd = fullBox('mdhd', 0, 0,
-    u32(EPOCH_1904), u32(EPOCH_1904), u32(t.timescale), u32(dur),
+  /* Version 1 (64-bit duration). The video timescale is microseconds, so a
+     version-0 u32 duration wraps at 2^32 µs ≈ 4294.97s — a sequence past ~71m35s
+     (64 clips × 60s at 0.1× speed reaches 80m) then declared an ~8-minute track
+     inside an hours-long movie, and players that read track length from mdhd
+     truncated or misseeked it. u64 is fixed-width, so the two-pass moov sizing
+     below still holds exactly. */
+  const mdhd = fullBox('mdhd', 1, 0,
+    u64(EPOCH_1904), u64(EPOCH_1904), u32(t.timescale), u64(dur),
     u16(0x55c4), u16(0));                 // language 'und'
 
   const hdlr = fullBox('hdlr', 0, 0,

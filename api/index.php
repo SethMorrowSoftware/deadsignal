@@ -77,11 +77,13 @@ $router->get('/auth/me',      [AuthController::class, 'me']);
 // Literal sub-paths before :id, everywhere. The upload endpoints in particular
 // MUST precede /studio/assets/:id, or "init" is parsed as an asset id.
 $router->get('/studio/config',                 [StudioController::class, 'config'],         $authed);
+$router->get('/studio/usage',                  [StudioController::class, 'usage'],          $authed);
 $router->get('/studio/projects',               [StudioController::class, 'listProjects'],   $authed);
 $router->post('/studio/projects',              [StudioController::class, 'createProject'],  $authed);
 $router->get('/studio/projects/:id',           [StudioController::class, 'getProject'],     $authed);
 $router->put('/studio/projects/:id',           [StudioController::class, 'updateProject'],  $authed);
 $router->delete('/studio/projects/:id',        [StudioController::class, 'deleteProject'],  $authed);
+$router->post('/studio/projects/:id/duplicate',[StudioController::class, 'duplicateProject'],$authed);
 $router->get('/studio/projects/:id/versions',  [StudioController::class, 'listVersions'],   $authed);
 $router->post('/studio/projects/:id/versions', [StudioController::class, 'createVersion'],  $authed);
 $router->get('/studio/projects/:id/shares',    [StudioController::class, 'listShares'],     $authed);
@@ -98,6 +100,7 @@ $router->post('/studio/assets/chunk',          [StudioController::class, 'upload
 $router->post('/studio/assets/complete',       [StudioController::class, 'completeUpload'], $upload);
 $router->get('/studio/assets',                 [StudioController::class, 'listAssets'],     $authed);
 $router->get('/studio/assets/:id/raw',         [StudioController::class, 'downloadAsset'],  $authed);
+$router->patch('/studio/assets/:id',           [StudioController::class, 'renameAsset'],    $authed);
 $router->delete('/studio/assets/:id',          [StudioController::class, 'deleteAsset'],    $authed);
 
 // CORS preflight, for the deployment where the studio and its API are on

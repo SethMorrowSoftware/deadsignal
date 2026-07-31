@@ -114,6 +114,13 @@ function wire(box) {
       cur[val.dataset.var] = val.value;
       writeVars(cur, `set {{${val.dataset.var}}}`);
       // No re-render on a value edit: it would replace the field being typed in.
+      // But the panel renders into two mounts (VIDEO and SCREEN), and re-rendering
+      // neither left the sibling mount showing the OLD value — so mirror the new
+      // value into the same variable's input on every other mount directly,
+      // leaving the just-edited field untouched.
+      for (const other of document.querySelectorAll('[data-vars-mount] input[data-var]')) {
+        if (other !== val && other.dataset.var === val.dataset.var) other.value = val.value;
+      }
       _onChange?.();
     }
   });

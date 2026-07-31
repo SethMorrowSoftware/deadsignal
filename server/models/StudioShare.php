@@ -123,12 +123,22 @@ class StudioShare
     }
 
     public static function createLink(int $projectId, string $token, string $role,
-                                      ?string $expiresAt, ?int $by): int
+                                      ?int $expiresInSeconds, ?int $by): int
     {
+        // Like Session, expiry is set by the DB clock (DATE_ADD(NOW(), …)) so the
+        // same clock that reads link_expires_at with NOW() also wrote it — the
+        // gmdate() literal it used before skewed against a non-UTC MySQL server.
+        if ($expiresInSeconds === null) {
+            return Database::insert(
+                'INSERT INTO studio_shares (project_id, link_token, role, link_expires_at, created_by)
+                 VALUES (?, ?, ?, NULL, ?)',
+                [$projectId, $token, $role, $by]
+            );
+        }
         return Database::insert(
             'INSERT INTO studio_shares (project_id, link_token, role, link_expires_at, created_by)
-             VALUES (?, ?, ?, ?, ?)',
-            [$projectId, $token, $role, $expiresAt, $by]
+             VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), ?)',
+            [$projectId, $token, $role, $expiresInSeconds, $by]
         );
     }
 

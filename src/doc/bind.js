@@ -263,6 +263,25 @@ export function clampToBounds(el) {
   return c;
 }
 
+/* The value STORED for a number/range control, clamped to its advertised
+   bounds — but without touching el.value. clampToBounds corrects the box on
+   commit ('change'); this holds the DOCUMENT to the same bounds during the
+   window between 'input' and that commit, which Ctrl+S (no 'change' fires) and
+   the 800ms autosave both read. It leaves the box alone so typing "50" into a
+   min-10 field is not snapped to "5" mid-keystroke, and passes a blank/unparsed
+   box through unchanged (a field being cleared, which every reader defaults). */
+function clampedForDoc(el, raw) {
+  if (el.type !== 'number' && el.type !== 'range') return raw;
+  const v = parseFloat(el.value);
+  if (!Number.isFinite(v)) return raw;
+  const min = el.min === '' ? -Infinity : parseFloat(el.min);
+  const max = el.max === '' ? Infinity : parseFloat(el.max);
+  if (!Number.isFinite(min) && !Number.isFinite(max)) return raw;
+  const c = Math.min(Number.isFinite(max) ? max : Infinity,
+                     Math.max(Number.isFinite(min) ? min : -Infinity, v));
+  return c === v ? raw : String(c);
+}
+
 export function bindControls(store, index, opts = {}) {
   const offs = [];
   let editingId = null;
@@ -274,7 +293,7 @@ export function bindControls(store, index, opts = {}) {
     const path = pathFor(el.id);
     if (!path) return;
     const raw = controlValue(el);
-    const value = el.id === 'seed' ? (parseInt(raw, 10) || 0) >>> 0 : raw;
+    const value = el.id === 'seed' ? (parseInt(raw, 10) || 0) >>> 0 : clampedForDoc(el, raw);
     // One undo entry per control per gesture: dragging a slider or typing a
     // word collapses, but moving to a different control starts a new entry.
     store.apply(set(path, value, { coalesceKey: el.id, label: `edit ${el.id}` }));

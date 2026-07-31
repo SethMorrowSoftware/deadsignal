@@ -422,6 +422,12 @@ export const AUDIO_LAYERS = [
       o.frequency.exponentialRampToValueAtTime(Math.max(20, p.f * 0.04), end);
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
+      // Anchor the tone from t=0, not only at `start`. Without the t=0 event the
+      // filter sat at the BiquadFilter default (350 Hz) for the whole play before
+      // the stop, muffling the saw to a near-sine, then jumped UP to 4000 at the
+      // stop moment — the sound brightened exactly when the transport should have
+      // been losing power. Now it plays bright, then dulls into the stop.
+      lp.frequency.setValueAtTime(4000, 0);
       lp.frequency.setValueAtTime(4000, start);
       lp.frequency.exponentialRampToValueAtTime(300, end);
       const g = ctx.createGain();

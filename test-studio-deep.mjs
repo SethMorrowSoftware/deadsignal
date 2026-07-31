@@ -456,7 +456,7 @@ section('every filter, one at a time');
       params: (f.params || []).map((p) => ({ key: p.key, kind: p.kind || 'num', min: p.min, max: p.max, def: p.def })),
     }));
   });
-  check('the registry holds every filter the tool ships', info.length === 45, `${info.length}`);
+  check('the registry holds every filter the tool ships', info.length === 55, `${info.length}`);
 
   const res = await page.evaluate(async (info) => {
     const F = await import('./src/fx/filters.js');
@@ -557,7 +557,7 @@ section('every filter, one at a time');
      broken. So the identity-at-default set is declared and checked rather than
      forbidden — a new filter that quietly lands in it fails, and a correction
      filter that loses its neutral default fails too. */
-  const IDENTITY_AT_DEFAULT = ['grade', 'levels'];
+  const IDENTITY_AT_DEFAULT = ['grade', 'hue', 'levels'];
   const inertAtDef = ids.filter((i) => !res[i].threw && !res[i].changes).sort();
   check('the filters that are neutral at their defaults are exactly the correction ones',
     JSON.stringify(inertAtDef) === JSON.stringify([...IDENTITY_AT_DEFAULT].sort()),
@@ -859,7 +859,7 @@ section('every audio FX, one at a time');
     return out;
   });
 
-  check('the registry holds every audio FX the tool ships', res.ids.length === 8, `${res.ids.length}`);
+  check('the registry holds every audio FX the tool ships', res.ids.length === 15, `${res.ids.length}`);
   const threw = res.ids.filter((i) => res.per[i].threw);
   check('no audio FX throws', threw.length === 0,
     threw.map((i) => `${i}: ${res.per[i].threw}`).join(' | '));

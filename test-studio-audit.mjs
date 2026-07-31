@@ -327,6 +327,57 @@ section('video effects change the picture');
 }
 
 /* ================================================ image effects do something */
+section('the screen filter chain');
+{
+  const chain = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const R = await import('./src/image/render.js');
+    const set = (l) => S.store.apply({ op: 'set', path: 'filters.image', value: l });
+    const hashLive = () => {
+      const c = document.getElementById('icanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 2166136261 >>> 0;
+      for (let i = 0; i < d.length; i++) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; }
+      return h.toString(16);
+    };
+    document.getElementById('i-tpl').value = 'terminal';
+    // Live SCREEN tab: a filter in the chain changes the preview; bypassed, it
+    // is the bare still again.
+    set([]); S.renderImage(); const bare = hashLive();
+    set([{ id: 'invert', enabled: true, params: { amount: 100 } }]); S.renderImage();
+    const filtered = hashLive();
+    set([{ id: 'invert', enabled: false, params: { amount: 100 } }]); S.renderImage();
+    const bypassed = hashLive();
+    // readImageCfg surfaces the live chain as __filters.
+    set([{ id: 'invert', enabled: true, params: { amount: 100 } }]);
+    const liveLen = (R.readImageCfg().__filters || []).length;
+    set([]);
+    // A captured recipe carries its OWN __filters, and readImageCfg(rec) +
+    // drawImageTo apply it — so a still-in-sequence filters with what it was
+    // made with, not the tab's later state. Rendered offscreen, no side effects.
+    const recHash = (recFilters) => {
+      const rec = { 'i-tpl': 'terminal', __filters: recFilters };
+      const cfg = Object.assign(R.readImageCfg(rec), { W: 200, H: 150 });
+      const c = document.createElement('canvas'); c.width = 200; c.height = 150;
+      R.drawImageTo(c.getContext('2d'), 200, 150, cfg);
+      const d = c.getContext('2d').getImageData(0, 0, 200, 150).data;
+      let h = 2166136261 >>> 0;
+      for (let i = 0; i < d.length; i++) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; }
+      return h.toString(16);
+    };
+    return { bare, filtered, bypassed, liveLen,
+             recBare: recHash([]),
+             recFiltered: recHash([{ id: 'invert', enabled: true, params: { amount: 100 } }]) };
+  });
+  check('a filter in the SCREEN chain changes the still', chain.filtered !== chain.bare,
+        `${chain.bare} vs ${chain.filtered}`);
+  check('…and bypassing it restores the bare still exactly', chain.bypassed === chain.bare,
+        `${chain.bypassed} vs ${chain.bare}`);
+  check('readImageCfg surfaces the live chain', chain.liveLen === 1, String(chain.liveLen));
+  check('a captured still filters with its OWN recipe chain, not the live tab',
+        chain.recFiltered !== chain.recBare, `${chain.recBare} vs ${chain.recFiltered}`);
+}
+
 section('screen effects change the image');
 {
   const hashImg = (overrides) => page.evaluate((overrides) => {
@@ -3638,15 +3689,17 @@ section('twenty more filters');
 {
   const reg = await page.evaluate(async () => {
     const M = await import('./src/fx/filters-extra.js');
+    const M2 = await import('./src/fx/filters-extra2.js');
     const F = await import('./src/fx/filters.js');
     const groups = {};
     for (const f of Object.values(F.FILTERS)) groups[f.group] = (groups[f.group] || 0) + 1;
-    return { total: Object.keys(F.FILTERS).length, added: M.EXTRA_FILTER_IDS.length,
-             missing: M.EXTRA_FILTER_IDS.filter((id) => !F.FILTERS[id]), groups,
+    const ids = M.EXTRA_FILTER_IDS.concat(M2.EXTRA2_FILTER_IDS);
+    return { total: Object.keys(F.FILTERS).length, added: ids.length,
+             missing: ids.filter((id) => !F.FILTERS[id]), groups,
              picker: document.querySelectorAll('#v-filters-pick option').length };
   });
   check('every new filter registers into the one chain registry',
-    reg.missing.length === 0 && reg.total === 45, JSON.stringify(reg.missing) + ' total ' + reg.total);
+    reg.missing.length === 0 && reg.total === 55, JSON.stringify(reg.missing) + ' total ' + reg.total);
   check('…and reaches the picker', reg.picker === reg.total, `${reg.picker} of ${reg.total}`);
   check('…grouped, not dumped in one list', Object.keys(reg.groups).length >= 5, JSON.stringify(reg.groups));
 
@@ -3657,6 +3710,7 @@ section('twenty more filters');
   const live = await page.evaluate(async () => {
     const S = window.DeadSignalStudio;
     const M = await import('./src/fx/filters-extra.js');
+    const M2 = await import('./src/fx/filters-extra2.js');
     const F = await import('./src/fx/filters.js');
     const W = 240, H = 180;
     const base = document.createElement('canvas'); base.width = W; base.height = H;
@@ -3664,10 +3718,13 @@ section('twenty more filters');
     S.renderVideoFrame(base.getContext('2d'), W, H, cfg, 1.0);
     const ref = base.getContext('2d').getImageData(0, 0, W, H).data;
     // Levels is deliberately an identity at its defaults; Streak needs a
-    // highlight to find on a dark source.
-    const EX = { levels: { inLow: 40, inHigh: 200, gamma: 160 }, streak: { threshold: 40 } };
+    // highlight to find on a dark source. Hue and Bloom are likewise identities
+    // at their defaults (rotate 0 / colourise 0; nothing over the threshold), so
+    // the change-detector is given a setting that does something.
+    const EX = { levels: { inLow: 40, inHigh: 200, gamma: 160 }, streak: { threshold: 40 },
+                 hue: { rotate: 90 }, bloom: { threshold: 10, intensity: 150 } };
     const dead = [], threw = [];
-    for (const id of M.EXTRA_FILTER_IDS) {
+    for (const id of M.EXTRA_FILTER_IDS.concat(M2.EXTRA2_FILTER_IDS)) {
       const c = document.createElement('canvas'); c.width = W; c.height = H;
       const ctx = c.getContext('2d');
       ctx.drawImage(base, 0, 0);
@@ -3740,6 +3797,7 @@ section('twenty more filters');
   const det = await page.evaluate(async () => {
     const S = window.DeadSignalStudio;
     const M = await import('./src/fx/filters-extra.js');
+    const M2 = await import('./src/fx/filters-extra2.js');
     const F = await import('./src/fx/filters.js');
     const W = 160, H = 120;
     const shot = (id) => {
@@ -3750,7 +3808,7 @@ section('twenty more filters');
       F.applyFilterChain(ctx, W, H, [{ id, enabled: true, params: {} }], 2.5);
       return c.toDataURL();
     };
-    return M.EXTRA_FILTER_IDS.filter((id) => shot(id) !== shot(id));
+    return M.EXTRA_FILTER_IDS.concat(M2.EXTRA2_FILTER_IDS).filter((id) => shot(id) !== shot(id));
   });
   check('the same (frame, t) renders the same pixels twice — scrub, play and export agree',
     det.length === 0, det.join(', '));
@@ -3801,6 +3859,7 @@ section('twenty more filters');
   const cost = await page.evaluate(async () => {
     const S = window.DeadSignalStudio;
     const M = await import('./src/fx/filters-extra.js');
+    const M2 = await import('./src/fx/filters-extra2.js');
     const F = await import('./src/fx/filters.js');
     const W = 1080, H = 608;
     const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -3808,7 +3867,7 @@ section('twenty more filters');
     const cfg = S.readVideoCfg(); cfg.W = W; cfg.H = H; cfg.scene = 'hud';
     S.renderVideoFrame(ctx, W, H, cfg, 1.0);
     const slow = [];
-    for (const id of M.EXTRA_FILTER_IDS) {
+    for (const id of M.EXTRA_FILTER_IDS.concat(M2.EXTRA2_FILTER_IDS)) {
       const t0 = performance.now();
       F.applyFilterChain(ctx, W, H, [{ id, enabled: true, params: {} }], 1.0);
       const ms = performance.now() - t0;
@@ -4496,7 +4555,7 @@ section('an audio FX chain');
              optgroups: document.querySelectorAll('#a-fx-pick optgroup').length };
   });
   check('the chain registry is populated and grouped',
-    reg.total === 8 && reg.optgroups >= 4, JSON.stringify(reg.groups));
+    reg.total === 15 && reg.optgroups >= 4, JSON.stringify(reg.groups));
   check('…every effect is exactly one of graph or post',
     reg.unimplemented.length === 0 && reg.both.length === 0,
     JSON.stringify(reg.unimplemented) + JSON.stringify(reg.both));

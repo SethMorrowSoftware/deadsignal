@@ -15,6 +15,7 @@ import { $, escHtml, log, setVal, toast } from '../core/dom.js';
 import { download } from '../core/blobs.js';
 import { PKEY, lsSet, userPresets } from '../core/recipes.js';
 import { rebuildPresetSelect } from '../presets/index.js';
+import { modalTrap } from './modaltrap.js';
 
 const TAB_LABEL = { video: 'VIDEO', audio: 'AUDIO', image: 'SCREEN' };
 const SELECT_ID = { video: 'v-preset', audio: 'a-preset', image: 'i-preset' };
@@ -120,10 +121,12 @@ export function importPresets(text) {
    author's next Tab starts again from the top of the page rather than from the
    ⚙ they just pressed. Same contract the command palette already keeps. */
 let _lastFocus = null;
+const _trap = modalTrap(() => _open?.querySelector('.pv-box'));
 
 function close() {
   if (!_open) return;
   document.removeEventListener('keydown', onKey);
+  _trap.release();
   _open.remove();
   _open = null;
   if (_lastFocus && document.contains(_lastFocus)) {
@@ -205,6 +208,7 @@ export function openPresetManager(tab) {
   document.body.appendChild(ov);
   document.addEventListener('keydown', onKey);
   _open = ov;
+  _trap.engage();
   _lastFocus = opener && opener !== document.body ? opener : null;
 
   const redraw = () => body(tab, list);

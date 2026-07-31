@@ -39,7 +39,7 @@ import { download } from '../core/blobs.js';
 import { syncChromeToSkin } from '../core/palettes.js';
 import { BIN_DRAG_TYPE, chooseFiles, useAsset } from './importui.js';
 import { getStore } from '../doc/session.js';
-import { MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
+import { MAX_START, MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
 import { library, onLibraryChange } from '../library/library.js';
 import { activateTab } from './shell.js';
 import { onClipSelect, selectedClip, selectedRef, focusClipAfterRender, renderTrack, setTrackZoom, trackScale, zoomToFit } from './track.js';
@@ -106,6 +106,20 @@ export function clipAt(t) {
 }
 
 /**
+ * Index of the SPINE clip covering `t`, or -1 — the same scan clipAt() falls
+ * back to, but with no selection tie-break, so a selected overlay cannot decide
+ * where a spine paste lands.
+ */
+function spineClipAt(t) {
+  const { starts } = buildSchedule();
+  for (let i = 0; i < timeline.length; i++) {
+    const c = timeline[i];
+    if (!isOverlay(c) && t >= starts[i] - 1e-6 && t < starts[i] + clipLength(c) - 1e-6) return i;
+  }
+  return -1;
+}
+
+/**
  * Razor: cut the clip under the playhead in two at that point.
  *
  * The two halves are the same source with adjacent trims — which is what a
@@ -127,12 +141,17 @@ export function splitAtPlayhead() {
      agree about this; the razor now agrees with them too. */
   const cut = sourceTimeOf(c, hit.local);
   /* Both halves have to survive normalizeClips' minimum length, or the split
-     silently produces one clip and a discarded sliver. Measured on the RENDERED
-     length, which is what MIN_CLIP bounds — the source-side check this replaced
-     rejected legitimate splits on a fast clip and allowed impossible ones on a
-     slow one. */
+     silently produces one clip and a discarded sliver. The RENDERED length is
+     what MIN_CLIP bounds for the lane, but makeClip ALSO enforces MIN_CLIP on
+     the SOURCE window — and for a slow clip (speed < 1) a legal rendered length
+     maps to a source window shorter than MIN_CLIP, so makeClip's fallback reset
+     the sliver half to the whole source and the split silently duplicated the
+     clip. Guard both: the rendered halves and the source windows (round2'd like
+     makeClip stores them, with the same epsilon). */
   const len = clipLength(c);
-  if (hit.local < MIN_CLIP || len - hit.local < MIN_CLIP) {
+  const rcut = Math.round(cut * 100) / 100;
+  if (hit.local < MIN_CLIP || len - hit.local < MIN_CLIP
+      || rcut - c.in < MIN_CLIP - 1e-6 || c.out - rcut < MIN_CLIP - 1e-6) {
     toast('Too close to the edge to split');
     return false;
   }
@@ -202,8 +221,16 @@ export function duplicateClip() {
     return true;
   }
   if (i < 0 || !timeline[i]) { toast('Select a clip first'); return false; }
+  const src = timeline[i];
   const next = timeline.slice();
-  next.splice(i + 1, 0, { ...timeline[i] });
+  // An overlay is positioned by `at`, so a copy left at the same `at` stacks
+  // exactly on the original — invisible in the lane, and doubling the picture
+  // where it lands. Offset it by its own length, as the audio branch does; a
+  // spine clip needs no offset because the splice slot places it adjacent.
+  const copy = isOverlay(src)
+    ? { ...src, at: Math.min(MAX_START, Math.round(((src.at ?? 0) + clipLength(src)) * 100) / 100) }
+    : { ...src };
+  next.splice(i + 1, 0, copy);
   commitClips(next, 'duplicate clip');
   focusClipAfterRender(i + 1);
   return true;
@@ -272,8 +299,12 @@ export function pasteClip() {
     toast('Overlay at ' + at.toFixed(1) + 's');
     return true;
   }
-  const hit = clipAt(tlScrubT);
-  const to = hit ? hit.i + 1 : next.length;
+  // The covering SPINE clip, NOT clipAt() — clipAt's selection tie-break can
+  // return a selected V2 overlay, whose array index says nothing about spine
+  // order, so the pasted spine clip would land at the overlay's slot (usually
+  // the array end) instead of after the clip the playhead is actually over.
+  const si = spineClipAt(tlScrubT);
+  const to = si >= 0 ? si + 1 : next.length;
   next.splice(to, 0, data);
   commitClips(next, 'paste clip');
   focusClipAfterRender(to);

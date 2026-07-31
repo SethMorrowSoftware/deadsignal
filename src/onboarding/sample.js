@@ -87,7 +87,11 @@ export function sampleProject(current) {
   doc.layers = { video: safeClone(LAYERS) };
   // Deliberately no timeline clips and no library: the sample should leave the
   // author one Record away from their first file, not hand them someone else's.
-  doc.timeline = { clips: [] };
+  // The `audio` lane must be present and empty: loadSample st.replace()s this
+  // document without normalizing, and syncAudioFromDoc only clears the runtime
+  // lane when it finds an array — omitting the key left the previous project's
+  // sounds on the sample's audio lane (and broke byte-stable round-tripping).
+  doc.timeline = { clips: [], audio: [] };
   doc.library = [];
   return doc;
 }

@@ -274,6 +274,15 @@ export const saveProject = (id, document, extra = {}) =>
   api('/studio/projects/' + encodeURIComponent(id), { method: 'PUT', body: { document, ...extra } });
 export const deleteProject = (id) =>
   api('/studio/projects/' + encodeURIComponent(id), { method: 'DELETE' });
+/** Copy a project into your own account. Works on one shared with you — the way
+    a read-only share becomes something you can edit. Name defaults to "… (copy)". */
+export const duplicateProject = (id, name) =>
+  api('/studio/projects/' + encodeURIComponent(id) + '/duplicate',
+      { method: 'POST', body: name ? { name } : {} });
+/** This account's storage picture: quota breakdown plus project and asset counts.
+    Named serverUsage, not usage, to stay clear of the storage backend's own
+    usage() method — the module graph test rightly flags the collision. */
+export const serverUsage = () => api('/studio/usage');
 export const listVersions = (id) => api('/studio/projects/' + encodeURIComponent(id) + '/versions');
 /** A named snapshot. Named versions are never pruned; autosaves are. */
 export const createVersion = (id, label) =>
@@ -390,10 +399,27 @@ function rememberUploadId(sha, id) {
 
 export async function uploadAsset(blob, { name, kind = 'other', projectId, onProgress, signal } = {}) {
   const sha = await sha256(blob);
-  const init = await api('/studio/assets/init', {
-    method: 'POST', signal,
-    body: { sha256: sha, size: blob.size, name, kind, uploadId: rememberedUploadId(sha) },
-  });
+  const offered = rememberedUploadId(sha);
+  let init;
+  try {
+    init = await api('/studio/assets/init', {
+      method: 'POST', signal,
+      body: { sha256: sha, size: blob.size, name, kind, uploadId: offered },
+    });
+  } catch (e) {
+    // The remembered upload id is keyed only by content hash, not by account. On
+    // a shared browser a second account that re-uploads byte-identical content
+    // (re-exports are byte-identical by design) offers the FIRST account's id;
+    // the server rejects it with 'Unknown upload' before it can mint a fresh one,
+    // and the poisoned id is re-offered on every retry — a permanent, baffling
+    // block. If an id was offered, drop it and retry init once with none.
+    if (!offered) throw e;
+    rememberUploadId(sha, null);
+    init = await api('/studio/assets/init', {
+      method: 'POST', signal,
+      body: { sha256: sha, size: blob.size, name, kind },
+    });
+  }
 
   // Already on the server: re-exporting an unchanged clip is byte-identical by
   // design, so this is the common case rather than an edge one.
@@ -429,6 +455,9 @@ export async function uploadAsset(blob, { name, kind = 'other', projectId, onPro
 
 export const deleteServerAsset = (id) =>
   api('/studio/assets/' + encodeURIComponent(id), { method: 'DELETE' });
+/** Rename an asset's display name (owner only). */
+export const renameServerAsset = (id, name) =>
+  api('/studio/assets/' + encodeURIComponent(id), { method: 'PATCH', body: { name } });
 
 /** Download an asset's bytes as a Blob. */
 export async function fetchAsset(id) {

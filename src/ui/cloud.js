@@ -19,6 +19,7 @@ let _projectsTotal = 0;
 let _openId = null;      // the server project this session is bound to
 let _sharedName = null;  // set instead when opened read-only from a share link
 let _detailId = null;    // the project whose versions and shares are shown
+let _tokenFor = null;    // the project the one-time share link on screen belongs to
 let _versions = [];
 let _shares = [];
 let _assets = [];
@@ -155,6 +156,14 @@ function tableIn(box, head, rowsHtml) {
 function renderDetail() {
   const panel = $('cloud-detail-panel');
   if (!panel) return;
+  // A minted share link is shown once and never cleared by anything else, so it
+  // survived a switch to another project (and a revoke) — the owner could copy
+  // project A's link believing it grants B. Drop it whenever the pane is no
+  // longer showing the project the token was minted for.
+  if (_tokenFor !== null && String(_tokenFor) !== String(_detailId)) {
+    $('cloud-share-token')?.replaceChildren();
+    _tokenFor = null;
+  }
   const project = _projects.find((p) => String(p.id) === String(_detailId));
   panel.style.display = project ? '' : 'none';
   if (!project) return;
@@ -386,7 +395,9 @@ export async function consumeShareFragment() {
       try { history.replaceState(null, '', location.pathname + location.search + '#share=' + m[1]); } catch { /* ignore */ }
     }
     toast('Could not open the share link — ' + e.message, 'err');
+    // Latch if boot has not registered yet, so a fast failure is not lost.
     if (_onShareFailed) _onShareFailed({ permanent });
+    else _pendingShareFailure = { permanent };
     throw e;
   }
   return true;
@@ -396,13 +407,30 @@ export async function consumeShareFragment() {
    visit after all and the reader's own work must start being saved. Registered
    rather than imported so cloud.js keeps knowing nothing about persistence. */
 let _onShareFailed = null;
-export function onShareFailed(fn) { _onShareFailed = typeof fn === 'function' ? fn : null; }
+let _pendingShareFailure = null;   // a failure that fired before boot registered
+export function onShareFailed(fn) {
+  _onShareFailed = typeof fn === 'function' ? fn : null;
+  // Deliver a failure that happened before registration. initCloud() starts the
+  // share fetch, and a dead backend can reject it in milliseconds — well before
+  // initPersistence() awaits IndexedDB and registers this callback. Without the
+  // latch that event was dropped, and since arrivedByShareLink is true, autosave
+  // (and the pagehide flush) then never started for the whole session.
+  if (_onShareFailed && _pendingShareFailure) {
+    const pending = _pendingShareFailure;
+    _pendingShareFailure = null;
+    _onShareFailed(pending);
+  }
+}
 
 export async function openFromServer(id) {
   const r = await API.getProject(id);
   if (!r.project?.document) throw new API.ApiError('That project has no document', 500);
   applyProject(r.project.document);
   _openId = r.project.id;
+  // Opening your own project ends any read-only share view — without this the
+  // "viewing from a share link — read-only" banner persisted over a project you
+  // now have open and fully editable.
+  _sharedName = null;
   if ($('cloud-name')) $('cloud-name').value = r.project.name || '';   /* dom-only: CLOUD panel, not a document-bound control */
   toast('Opened ' + (r.project.name || 'project'));
   log('Opened server project "' + (r.project.name || '') + '" (' + r.project.access + ').', 'ok');
@@ -488,6 +516,7 @@ export async function loadDetail(id) {
 function showToken(url) {
   const box = $('cloud-share-token');
   if (!box) return;
+  _tokenFor = _detailId;   // so renderDetail clears it once the pane moves on
   box.replaceChildren();
   const d = document.createElement('div');
   d.className = 'token-box';
@@ -662,6 +691,9 @@ export function initCloud() {
       await API.revokeShare(r.dataset.revoke);
       toast('Access revoked');
       log('Revoked share ' + r.dataset.revoke + '.', 'ok');
+      // A revoked link must not stay on screen still labelled "copy it now".
+      $('cloud-share-token')?.replaceChildren();
+      _tokenFor = null;
       await loadDetail(_detailId);
     }, 'Revoke');
   });

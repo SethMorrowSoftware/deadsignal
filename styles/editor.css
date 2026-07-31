@@ -64,6 +64,11 @@
   --lane-bg:#101318;
   --lane-rule:#262c35;
   --clip-bg:#152433;
+  /* The still and overlay clip colours were left to fall through to the CRT
+     base (a saturated purple and brown), which read as foreign next to the
+     retinted blue-grey lanes. tokens.css states every skin defines the full
+     set; these are the neutral-family equivalents. */
+  --clip-still:#241d33; --clip-still-edge:#5f6f9f; --clip-overlay:#2b2410;
   --aclip-bg:#12202b;
 }
 
@@ -272,9 +277,6 @@ body.nle .view.active:not(:has(.panel.stagewrap)):not(:has(.panel ~ .panel)) > .
 body.nle main.no-stage .nle-inspector{
   display:none;
 }
-/* The per-tab help paragraph is the kind of thing a tool says once, in a
-   tooltip — not a banner above the work on every visit. */
-body.nle .view.active > .tabhelp{ display:none; }
 
 /* ---------------------------------------------------------- menu + bar -- */
 

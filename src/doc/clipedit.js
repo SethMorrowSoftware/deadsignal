@@ -222,15 +222,21 @@ const MATTE_KEYS = new Set(Object.keys(makeMatte({})));
 export const isMatteKey = (key) => MATTE_KEYS.has(key);
 
 /**
- * The editable surface of `clip` at slot `index`.
+ * The editable surface of `clip` at spine position `index`.
  *
- * `index` matters because the first clip of the spine has nothing to transition
- * FROM: its transition is about how the SEQUENCE opens, and the schedule
- * ignores it entirely (scheduleOf only overlaps against a previous V1 clip).
- * Offering the control there would be offering a setting with no effect, so it
- * is returned disabled with the reason rather than silently dropped — a control
- * that vanishes depending on where a clip sits is harder to trust than one that
- * explains itself.
+ * `index` is a SPINE POSITION, not a raw array index: 0 means "first on the
+ * spine". That distinction matters because the first spine clip has nothing to
+ * transition FROM — its transition is about how the SEQUENCE opens, and the
+ * schedule ignores it entirely (scheduleOf only overlaps against a previous V1
+ * clip). Offering the control there would be offering a setting with no effect,
+ * so it is returned disabled with the reason rather than silently dropped — a
+ * control that vanishes depending on where a clip sits is harder to trust than
+ * one that explains itself.
+ *
+ * The caller must therefore pass the spine-order fact (via isFirstOnTrack), NOT
+ * the raw array index: an overlay sitting at array slot 0 pushes the real first
+ * spine clip to a non-zero array index, and passing that index would enable a
+ * dead transition control on the clip that actually opens the sequence.
  *
  * An overlay is exempt: it is composited over whatever V1 is showing, so it
  * always has something to fade up from, wherever it sits in the array.
@@ -531,7 +537,13 @@ export function patchFor(clip, key, raw) {
   if (isLookKey(key)) {
     const rec = clip.rec && typeof clip.rec === 'object' ? clip.rec : {};
     const field = Object.values(LOOK).flat().find((f) => f.key === key);
-    const v = str(raw, field?.max ?? 400);
+    // `field.max` is a CHARACTER cap only for text fields; for a number field it
+    // is the numeric bound, and using it to slice the string corrupted almost
+    // every fractional value ("0.5"→"0", "0.75"→"0.", g-radius max 0.5 → ""). Cap
+    // the length only for text/textarea; other kinds keep their full string and
+    // are coerced (and clamped) by makeTitle/makeGraphic on read.
+    const isText = field?.kind === 'text' || field?.kind === 'textarea';
+    const v = str(raw, isText ? (field.max ?? 400) : 400);
     const next = { ...rec, [key]: v };
     /* On a title, the words ARE the clip, so a lane block still reading the old
        ones is simply wrong — you renamed the thing by typing in it. But `label`

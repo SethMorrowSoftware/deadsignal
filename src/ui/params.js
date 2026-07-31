@@ -236,6 +236,7 @@ const P = {
   'i-posterize': ['Posterize', 2, 'Reduces to a few brightness steps, flattening gradients into bands.', '%'],
   'i-halftone': ['Halftone', 2, 'Rebuilds the image from dots of varying size, like newsprint.', '%'],
   'i-pixsort':  ['Pixel sort', 2, 'Sorts runs of pixels by brightness, smearing the image into glitch streaks.', '%'],
+  'i-filters-pick': ['Filter to add', 2, 'The filter the ＋ FILTER button appends to the still\'s chain — the same registry the VIDEO tab uses, run after the CRT/paper FX above, top to bottom. The ORDER is the setting that matters most: grade cold then crush the bit depth, or the other way round, are two different pictures. Grouped by what they touch — Colour, Sharpness, Analogue, Pattern, Frame.'],
   'i-stego':    ['Hidden message', 2, 'Buries text invisibly in the pixel values. Survives PNG export; JPEG destroys it.'],
   'i-invert':   ['Invert text', 2, 'Writes text at nearly the background colour — invisible until someone inverts the image.'],
 

@@ -34,6 +34,7 @@ import { flatPresets, presetRecipe } from '../presets/index.js';
 import { userPresets } from '../core/recipes.js';
 import { _persistCanvas, readVideoCfg, renderScaled } from '../video/render.js';
 import { drawImageTo, readImageCfg } from '../image/render.js';
+import { embedStego } from '../image/stego.js';
 import { timeline } from '../video/timeline.js';
 import { addToLibrary } from '../library/library.js';
 import { encodeClip, encoderSupport } from './encoder.js';
@@ -161,15 +162,36 @@ async function gather(sourceId, seconds) {
         _persistCanvas().width = cfg.W; _persistCanvas().height = cfg.H;
         const dur = seconds > 0 ? Math.min(seconds, cfg.duration) : cfg.duration;
         const frames = Math.max(1, Math.round(dur * cfg.fps));
-        const r = await encodeClip({
-          width: cfg.W, height: cfg.H, fps: cfg.fps, frames, container, log,
-          // Times are clamped to the RECIPE's duration, not the cap: a scene
-          // that resolves over ten seconds should show its first three, not
-          // three seconds of a ten-second scene squeezed into three.
-          drawFrame: (ctx, t) => renderScaled(ctx, cfg.W, cfg.H, cfg, Math.min(t, cfg.duration)),
-          cancelled,
-        });
-        return r && { ...r, ext: r.ext || 'webm', seconds: dur };
+        /* A videoin preset draws imported footage, which only advances in
+           wall-clock time. Frame-indexed encoding must seek it per frame or every
+           frame samples one picture — the single-clip RECORD path refuses videoin
+           for this reason and drops to real time, but a batch has no real-time
+           fallback, so it seeks here instead. */
+        let fvid = null;
+        if (cfg.scene === 'videoin') {
+          const media = await import('../media/import.js');
+          const { ensureVideoSource } = await import('../video/sources.js');
+          try { await ensureVideoSource(cfg.srcKey); } catch (e) { /* absent footage is ordinary */ }
+          const el = media.footageFor(cfg.srcKey);
+          if (el && el.videoWidth) fvid = { el, seek: media.seekVideo };
+        }
+        try {
+          const r = await encodeClip({
+            width: cfg.W, height: cfg.H, fps: cfg.fps, frames, container, log,
+            // Times are clamped to the RECIPE's duration, not the cap: a scene
+            // that resolves over ten seconds should show its first three, not
+            // three seconds of a ten-second scene squeezed into three.
+            drawFrame: async (ctx, t) => {
+              const st = Math.min(t, cfg.duration);
+              if (fvid) await fvid.seek(fvid.el, Math.max(0, Math.min(st, fvid.el.duration || st)));
+              renderScaled(ctx, cfg.W, cfg.H, cfg, st);
+            },
+            cancelled,
+          });
+          return r && { ...r, ext: r.ext || 'webm', seconds: dur };
+        } finally {
+          if (fvid) { try { fvid.el.play().catch(() => {}); } catch (e) { /* detached */ } }
+        }
       },
     }));
   }
@@ -183,6 +205,10 @@ async function gather(sourceId, seconds) {
         const c = document.createElement('canvas');
         c.width = cfg.W; c.height = cfg.H;
         drawImageTo(c.getContext('2d'), cfg.W, cfg.H, cfg);
+        // Embed the LSB payload, exactly as the single-file export does. Without
+        // this the batch PNG shipped with the preset's Stego text silently
+        // dropped — it looked identical but decoded to nothing.
+        if (cfg.stego) embedStego(c.getContext('2d'), cfg.W, cfg.H, cfg.stego, cfg.bg);
         const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
         return blob && { blob, ext: 'png', seconds: 0 };
       },
@@ -192,11 +218,12 @@ async function gather(sourceId, seconds) {
   if (sourceId === 'timeline-clips') {
     // Imported lazily: video/timeline.js already imports this module's siblings,
     // and pulling its renderer in at module scope would close the cycle.
-    const { renderClipTo, readTimelineCfg } = await import('../video/timeline.js');
-    const { clipLength } = await import('../doc/timeline.js');
+    const { renderClipTo, readTimelineCfg, clipUsesFootage } = await import('../video/timeline.js');
+    const { clipLength, sourceTimeOf } = await import('../doc/timeline.js');
     // Namespace import: _importedVideo is a reassignable binding, and a
     // destructure would freeze whatever it held at gather() time.
     const media = await import('../media/import.js');
+    const { ensureVideoSource } = await import('../video/sources.js');
     const { sliceBuffer } = await import('../audio/bed.js');
     const { buildSchedule, sequenceMix } = await import('../video/timeline.js');
     const tl = readTimelineCfg();
@@ -237,21 +264,31 @@ async function gather(sourceId, seconds) {
         let bed = null;
         const mix = await wholeMix();
         if (mix) bed = sliceBuffer(mix, sched.starts[i] ?? 0, len);
-        /* A videoin clip draws the imported <video> at whatever frame it is
-           currently showing — a <video> only advances in wall-clock time, so
-           frame-indexed encoding must seek it to each frame's instant first,
-           exactly as collectFrames does for the GIF/strip export. Without the
-           seek every encoded frame samples the same picture. */
-        const seeks = clip.kind !== 'still' && clip.scene === 'videoin' && media.hasImportedVideo();
+        /* A footage clip draws a <video>, which only advances in wall-clock time,
+           so frame-indexed encoding has to seek it to each frame's instant first,
+           exactly as collectFrames does for the GIF/strip export — without the
+           seek every encoded frame samples one never-advancing picture.
+           Three things the old code got wrong: it seeked `_importedVideo` while
+           the renderer draws `videoSource(v-srckey)` (a different element, so the
+           drawn one stayed frozen); it gated on `hasImportedVideo()`, which is
+           false after a reload restores footage from the library (the ordinary
+           case); and it seeked to `in + localT`, ignoring speed/reverse, which
+           the renderer maps through sourceTimeOf. Resolve the element the
+           renderer actually draws, prime it, and seek it to the source time. */
+        const srcKey = clip.rec && typeof clip.rec === 'object' ? clip.rec['v-srckey'] : '';
+        if (clipUsesFootage(clip)) { try { await ensureVideoSource(srcKey); } catch (e) { /* absent footage is ordinary */ } }
+        const fvid = clipUsesFootage(clip) ? media.footageFor(srcKey) : null;
+        const seeks = !!(fvid && fvid.videoWidth);
         try {
           const r = await encodeClip({
             width: tl.W, height: tl.H, fps: tl.fps, frames, container, log,
             audioBuffer: bed,
             drawFrame: async (ctx, t) => {
               const localT = Math.min(t, len);
-              // The IN point offsets the seek, so a trimmed clip exports the
-              // part of its footage the author kept.
-              if (seeks) await media.seekVideo(media._importedVideo, (clip.in || 0) + localT);
+              if (seeks) {
+                const st = sourceTimeOf(clip, localT);
+                await media.seekVideo(fvid, Math.max(0, Math.min(st, fvid.duration || st)));
+              }
               renderClipTo(sctx, clip, localT, tl);
               ctx.drawImage(scratch, 0, 0);
             },
@@ -260,7 +297,7 @@ async function gather(sourceId, seconds) {
           return r && { ...r, ext: r.ext || 'webm', seconds: len };
         } finally {
           // seekVideo pauses the element; put the preview's looping playback back.
-          if (seeks) { try { media._importedVideo.play().catch(() => {}); } catch (e) { /* detached */ } }
+          if (seeks) { try { fvid.play().catch(() => {}); } catch (e) { /* detached */ } }
         }
       },
     }));

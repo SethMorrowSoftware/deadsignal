@@ -9,6 +9,7 @@
  * lives in.
  */
 import { $, log, setVal } from '../core/dom.js';
+import { modalTrap } from './modaltrap.js';
 import { userPresets } from '../core/recipes.js';
 import { revealSectionFor } from './sections.js';
 import { PARAMS } from './params.js';
@@ -16,6 +17,7 @@ import { LEVEL_NAMES, applyLevel, getLevel } from './complexity.js';
 import { activateTab } from './shell.js';
 
 let el = null, input = null, list = null, items = [], sel = 0, lastFocus = null;
+const _trap = modalTrap(() => el);
 /* Kept so the catalogue can be rebuilt. It was built once in initPalette() and
    never again, which made ⌘K a snapshot of the studio as it looked at boot: a
    preset saved this session, a variable just defined, a layer just added — none
@@ -161,12 +163,16 @@ export function openPalette() {
   input.value = '';   /* dom-only: the palette's own search box */
   sel = 0;
   render('');
+  // Make the aria-modal="true" claim true: trap Tab in the box and inert the
+  // page behind it, otherwise Tab walked into the covered controls.
+  _trap.engage();
   input.focus();
 }
 
 export function closePalette() {
   if (!el || el.hidden) return;
   el.hidden = true;
+  _trap.release();
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
 }
 

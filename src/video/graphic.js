@@ -17,8 +17,12 @@ import { graphicAlpha, graphicDraw, graphicScale, isDiagonal, isEmptyGraphic, re
 /** `#rrggbb` plus an alpha, as a canvas colour. */
 function withAlpha(hex, a) {
   const h = String(hex || '#000000').replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6);
-  const n = parseInt(full, 16);
+  // Nibble-expand short values (keyPrep's reading), so a 4/5-digit colour the
+  // validator accepts is not mis-parsed into an unrelated one by slice(0,6).
+  const full = h.length < 6
+    ? h.split('').map((c) => c + c).join('').slice(0, 6).padEnd(6, '0')
+    : h.slice(0, 6);
+  const n = parseInt(full, 16) || 0;
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.max(0, Math.min(1, a))})`;
 }
 

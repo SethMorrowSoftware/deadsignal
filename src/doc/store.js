@@ -93,9 +93,20 @@ export class Store {
   apply(cmd) {
     const cmds = Array.isArray(cmd) ? cmd : [cmd];
     const steps = [];
-    for (const c of cmds) {
-      const step = this._exec(c);
-      if (step) steps.push(step);
+    // Atomic on throw: _exec mutates as it goes, so if a later command throws
+    // (an insert/remove on a non-array, an unknown op, a safeClone PathError)
+    // the earlier commands would otherwise stay applied with no undo entry — and
+    // inside a transaction they escape the rollback, since they reach _txn.steps
+    // only after this loop. Revert what this batch applied, then rethrow, so a
+    // failed batch leaves the document exactly as it was.
+    try {
+      for (const c of cmds) {
+        const step = this._exec(c);
+        if (step) steps.push(step);
+      }
+    } catch (e) {
+      this._revert(steps);
+      throw e;
     }
     if (!steps.length) return null;
 
