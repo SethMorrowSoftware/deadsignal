@@ -31,7 +31,7 @@ import { currentRate, feedLuminance, paintFlash, resetFlashMeter } from './ui/fl
 import { initEditor } from './ui/nle.js';
 import { activateTab, enhanceFieldsets, foldInactiveAudioLayers, initTablistKeys, randomize, resetView, setResetRefresh, snapshotDefaults, tidyAudioLayers, updateAudioLayerFlags, wireLive } from './ui/shell.js';
 import { clearAllKeyframes, initKeyframes, refreshKeyframes } from './ui/keyframes.js';
-import { addFilter, addToChain, clearChain, clearFilters, initChain, initFilters, renderChain, renderFilters } from './ui/filters.js';
+import { addFilter, addToChain, clearChain, clearFilters, initChain, initFilters, initImageFilters, renderChain, renderFilters, renderImageFilters } from './ui/filters.js';
 import { AUDIO_FX, fxGroups, resolveFxParams } from './audio/fx.js';
 import { addRegion, clearRegions, renderRegions } from './ui/regions.js';
 import { clearSolo, renderSolo, toggleSolo } from './ui/solo.js';
@@ -142,6 +142,7 @@ export function boot(){
       step("keyframes", refreshKeyframes);
       step("layers", renderLayers);
       step("filters", renderFilters);
+      step("image filters", renderImageFilters);
       step("audio fx", ()=>renderChain(AUDIO_FX_CHAIN));
       step("audio edits", renderRegions);
       step("solo", renderSolo);
@@ -251,6 +252,9 @@ export function boot(){
   initLayers(()=>startVideoPreview());
   initBatch();
   initFilters(()=>startVideoPreview());
+  // The SCREEN tab's filter chain — same registry, one still. Registered here
+  // beside the video one so both live in one place.
+  initImageFilters(()=>renderImage());
   /* The audio FX chain is the same panel over a different registry. Registered
      here rather than inside initAudioTab so both chains are wired in one place
      and the shared panel has exactly one call site per chain. */

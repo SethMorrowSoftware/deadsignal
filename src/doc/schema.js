@@ -51,10 +51,12 @@ export function createDocument(init = {}) {
     automation: { video: {} },
     // extra scenes composited over the base scene, bottom-first
     layers: { video: [] },
-    // Both chains, so a fresh document already has the shape normalize()
+    // All three chains, so a fresh document already has the shape normalize()
     // produces — otherwise save→load is not byte-identical, which the
     // serialisation contract in test-studio-document.mjs rightly insists on.
-    filters: { video: [], audio: [] },
+    // `image` runs the same filter registry over a still as `video` runs over a
+    // frame; a project written before it existed simply reads back with none.
+    filters: { video: [], audio: [], image: [] },
     // Region edits on the rendered wave (doc/regions.js) and the solo set
     // (audio/solo.js) — both are audio state that no control holds.
     audio: { regions: [], solo: [] },
@@ -100,9 +102,10 @@ export function normalize(doc) {
      same thing over different registries — an ordered list of {id, params,
      enabled}. A project written before the audio chain existed simply has
      none. */
-  out.filters = { video: [], audio: [], ...(doc.filters ?? {}) };
+  out.filters = { video: [], audio: [], image: [], ...(doc.filters ?? {}) };
   out.filters.video = normalizeFilters(out.filters.video);
   out.filters.audio = normalizeFilters(out.filters.audio);
+  out.filters.image = normalizeFilters(out.filters.image);
   out.audio = { regions: [], solo: [], ...(doc.audio ?? {}) };
   out.audio.regions = normalizeRegions(out.audio.regions);
   out.audio.solo = normalizeSolo(out.audio.solo);

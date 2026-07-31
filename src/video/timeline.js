@@ -29,6 +29,7 @@ import { encodeClip, encoderSupport, fillContainerSelect } from '../export/encod
 import { captureTracks } from './automation.js';
 import { captureFilters } from './filters.js';
 import { captureAnnotations } from '../ui/annotations.js';
+import { captureImageFilters } from '../image/imagefilters.js';
 import { captureLayers } from './layers.js';
 import { addToLibrary, onLibraryChange } from '../library/library.js';
 import { _importedVideo, hasImportedVideo } from '../media/import.js';
@@ -195,7 +196,7 @@ const spineLength=()=>timeline.reduce((n,c)=>n+(isOverlay(c)?0:1),0);
  * list would mean the second one quietly dropping whatever the first one grew.
  */
 export function captureClipRecipe(kind){
-  if(kind==="still"){ const rec=readRecipe("view-image"); rec.__annotations=captureAnnotations(); return rec; }
+  if(kind==="still"){ const rec=readRecipe("view-image"); rec.__annotations=captureAnnotations(); rec.__filters=captureImageFilters(); return rec; }
   const rec=readRecipe("view-video");
   rec.__auto=captureTracks(); rec.__layers=captureLayers(); rec.__filters=captureFilters();
   return rec;

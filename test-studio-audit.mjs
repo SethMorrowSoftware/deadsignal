@@ -327,6 +327,57 @@ section('video effects change the picture');
 }
 
 /* ================================================ image effects do something */
+section('the screen filter chain');
+{
+  const chain = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const R = await import('./src/image/render.js');
+    const set = (l) => S.store.apply({ op: 'set', path: 'filters.image', value: l });
+    const hashLive = () => {
+      const c = document.getElementById('icanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 2166136261 >>> 0;
+      for (let i = 0; i < d.length; i++) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; }
+      return h.toString(16);
+    };
+    document.getElementById('i-tpl').value = 'terminal';
+    // Live SCREEN tab: a filter in the chain changes the preview; bypassed, it
+    // is the bare still again.
+    set([]); S.renderImage(); const bare = hashLive();
+    set([{ id: 'invert', enabled: true, params: { amount: 100 } }]); S.renderImage();
+    const filtered = hashLive();
+    set([{ id: 'invert', enabled: false, params: { amount: 100 } }]); S.renderImage();
+    const bypassed = hashLive();
+    // readImageCfg surfaces the live chain as __filters.
+    set([{ id: 'invert', enabled: true, params: { amount: 100 } }]);
+    const liveLen = (R.readImageCfg().__filters || []).length;
+    set([]);
+    // A captured recipe carries its OWN __filters, and readImageCfg(rec) +
+    // drawImageTo apply it — so a still-in-sequence filters with what it was
+    // made with, not the tab's later state. Rendered offscreen, no side effects.
+    const recHash = (recFilters) => {
+      const rec = { 'i-tpl': 'terminal', __filters: recFilters };
+      const cfg = Object.assign(R.readImageCfg(rec), { W: 200, H: 150 });
+      const c = document.createElement('canvas'); c.width = 200; c.height = 150;
+      R.drawImageTo(c.getContext('2d'), 200, 150, cfg);
+      const d = c.getContext('2d').getImageData(0, 0, 200, 150).data;
+      let h = 2166136261 >>> 0;
+      for (let i = 0; i < d.length; i++) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; }
+      return h.toString(16);
+    };
+    return { bare, filtered, bypassed, liveLen,
+             recBare: recHash([]),
+             recFiltered: recHash([{ id: 'invert', enabled: true, params: { amount: 100 } }]) };
+  });
+  check('a filter in the SCREEN chain changes the still', chain.filtered !== chain.bare,
+        `${chain.bare} vs ${chain.filtered}`);
+  check('…and bypassing it restores the bare still exactly', chain.bypassed === chain.bare,
+        `${chain.bypassed} vs ${chain.bare}`);
+  check('readImageCfg surfaces the live chain', chain.liveLen === 1, String(chain.liveLen));
+  check('a captured still filters with its OWN recipe chain, not the live tab',
+        chain.recFiltered !== chain.recBare, `${chain.recBare} vs ${chain.recFiltered}`);
+}
+
 section('screen effects change the image');
 {
   const hashImg = (overrides) => page.evaluate((overrides) => {

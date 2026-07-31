@@ -562,6 +562,15 @@ C:\&gt; _</textarea>
             <div class="row"><label for="i-pixsort">Pixel-sort</label><input type="range" id="i-pixsort" min="0" max="100" value="0" class="grow" title="glitch-art sort"></div>
           </div>
         </fieldset>
+        <fieldset data-section="FX" id="i-filters-fieldset" data-doc-reset="filters.image"><legend>FILTERS <span class="tag" id="i-filters-count"></span></legend>
+          <p class="hint">The same reorderable chain the VIDEO tab has, over the whole still — 55 filters from colour grades to warps to halftones, applied <b>after</b> the CRT/paper FX above, top to bottom. ◉ bypasses a step without losing its settings.</p>
+          <div class="row">
+            <select id="i-filters-pick" class="grow" aria-label="filter to add"></select>
+            <button class="btn small amber" id="i-filters-add" title="Add this filter to the end of the chain">＋ FILTER</button>
+            <button class="btn small" id="i-filters-clear" title="Remove every filter">✕ clear</button>
+          </div>
+          <div id="i-filters-list" data-generated></div>
+        </fieldset>
         <fieldset data-section="FX"><legend>HIDDEN CHANNEL</legend>
           <div class="row"><label for="i-stego">Stego LSB</label><input type="text" id="i-stego" class="grow" placeholder="secret embedded in PNG pixels"></div>
           <div class="row"><label for="i-invert">Invert text</label><input type="text" id="i-invert" class="grow" placeholder="near-invisible; reveal by inverting"></div>

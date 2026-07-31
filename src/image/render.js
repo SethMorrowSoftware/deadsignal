@@ -11,6 +11,7 @@ import { applyStillFx } from '../fx/still.js';
 import { drawAnnotations, drawSelection } from './annotate.js';
 import { annotations, initAnnotations, setAnnotationBoxes, selectedAnnotation } from '../ui/annotations.js';
 import { decodeStego, embedStego } from './stego.js';
+import { drawImageFilters, imageFilters, scaleImageFilterChainPx } from './imagefilters.js';
 import { TEMPLATES, hasFixedGround, hasFixedInk } from './templates.js';
 import { addToLibrary, slug } from '../library/library.js';
 import { loadImageFile } from '../media/import.js';
@@ -39,7 +40,11 @@ export function readImageCfg(rec){
      tab's chain is (`cfg.__filters`) and for the same reason: a still captured
      into a sequence must draw the annotations it was captured WITH, not
      whatever the SCREEN tab happens to show now. */
-  __annotations: rec ? (Array.isArray(rec.__annotations)?rec.__annotations:[]) : annotations() }; }
+  __annotations: rec ? (Array.isArray(rec.__annotations)?rec.__annotations:[]) : annotations(),
+  /* The reorderable filter chain over the whole still — the same registry the
+     video tab uses. Captured into the recipe for a still-in-sequence, exactly
+     like the marks above. */
+  __filters: rec ? (Array.isArray(rec.__filters)?rec.__filters:[]) : imageFilters() }; }
 
 /**
  * Is the band the invert mark lands in light or dark?
@@ -83,6 +88,10 @@ export function drawImageTo(ctx,W,H,c,sel=null){
      export cannot contain it. */
   drawImageTo.lastBoxes = drawAnnotations(ctx,W,H,c.__annotations,c);
   applyStillFx(ctx,W,H,c);
+  /* The author's filter chain runs LAST, over the finished still — after the
+     fixed CRT/paper FX, the same order the video chain runs after its CRT stack.
+     Before the selection outline, which is editor chrome and must never export. */
+  drawImageFilters(ctx,W,H,c);
   if(sel!=null) drawSelection(ctx, drawImageTo.lastBoxes[sel]);
   return ctx;
 }
@@ -159,7 +168,7 @@ export function initImageTab(){
   // Same as the VIDEO tab: the type size is in pixels, so it travels with the
   // format. The screen effects are all percentages and need no help.
   initSizing({ format:"i-format", aspect:"i-aspect", w:"i-w", h:"i-h", after:renderImage,
-    onResize:(f)=>scaleNumControl("i-font", f) });
+    onResize:(f)=>{ scaleNumControl("i-font", f); scaleImageFilterChainPx(f); } });
   $("i-preset").addEventListener("change", ()=>loadPreset("image","view-image"));
   $("i-palette").addEventListener("change", ()=>{ applyPalette($("i-palette"),"i-bg","i-fg"); renderImage(); });
   $("i-render").addEventListener("click", renderImage); $("i-dl").addEventListener("click", ()=>exportImage("image/png","png")); $("i-jpg").addEventListener("click", ()=>exportImage("image/jpeg","jpg",0.5));
