@@ -390,10 +390,27 @@ function rememberUploadId(sha, id) {
 
 export async function uploadAsset(blob, { name, kind = 'other', projectId, onProgress, signal } = {}) {
   const sha = await sha256(blob);
-  const init = await api('/studio/assets/init', {
-    method: 'POST', signal,
-    body: { sha256: sha, size: blob.size, name, kind, uploadId: rememberedUploadId(sha) },
-  });
+  const offered = rememberedUploadId(sha);
+  let init;
+  try {
+    init = await api('/studio/assets/init', {
+      method: 'POST', signal,
+      body: { sha256: sha, size: blob.size, name, kind, uploadId: offered },
+    });
+  } catch (e) {
+    // The remembered upload id is keyed only by content hash, not by account. On
+    // a shared browser a second account that re-uploads byte-identical content
+    // (re-exports are byte-identical by design) offers the FIRST account's id;
+    // the server rejects it with 'Unknown upload' before it can mint a fresh one,
+    // and the poisoned id is re-offered on every retry — a permanent, baffling
+    // block. If an id was offered, drop it and retry init once with none.
+    if (!offered) throw e;
+    rememberUploadId(sha, null);
+    init = await api('/studio/assets/init', {
+      method: 'POST', signal,
+      body: { sha256: sha, size: blob.size, name, kind },
+    });
+  }
 
   // Already on the server: re-exporting an unchanged clip is byte-identical by
   // design, so this is the common case rather than an edge one.

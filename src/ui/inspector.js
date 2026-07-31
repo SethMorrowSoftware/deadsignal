@@ -54,7 +54,7 @@ import {
 import { hasMatte, maskActive, matteSummary, needsAlphaBlend } from '../doc/matte.js';
 import { monitorMode, monitorTarget, onMonitorMode, setMonitorMode } from './monitor.js';
 import { ALPHA_BLEND } from '../doc/layers.js';
-import { isOverlay } from '../doc/timeline.js';
+import { isFirstOnTrack, isOverlay } from '../doc/timeline.js';
 import { EASE_NAMES } from '../doc/automation.js';
 import { FONTS } from '../core/text.js';
 import { isIdentity, offFrame, transformSummary } from '../doc/transform.js';
@@ -248,7 +248,7 @@ function signature(i, clip, lane) {
   if (!clip) return `none:${_epoch}`;
   const fields = lane === 'A'
     ? audioFieldsFor(clip).map((f) => `${f.key}=${audioValueFor(clip, f.key)}`)
-    : fieldsFor(clip, i).map((f) => `${f.key}=${valueFor(clip, f.key)}:${f.disabled ? 'd' : ''}`);
+    : fieldsFor(clip, isFirstOnTrack(timeline, i) ? 0 : 1).map((f) => `${f.key}=${valueFor(clip, f.key)}:${f.disabled ? 'd' : ''}`);
   /* The curves are inside `rec`, which no field key reads — so without this a
      keyframe edit produces an identical signature, render() returns early, and
      the key list sits frozen while the picture changes. The picker is here too,
@@ -307,7 +307,9 @@ export function render() {
   head.appendChild(el('span', 'insp-len', lane === 'A' ? soundSummary(clip) : trimSummary(clip)));
   _body.appendChild(head);
 
-  const fields = lane === 'A' ? audioFieldsFor(clip) : fieldsFor(clip, i);
+  // Spine position, not the raw array index i: an overlay at a lower array slot
+  // must not make the opening spine clip look non-first (a dead transition ctl).
+  const fields = lane === 'A' ? audioFieldsFor(clip) : fieldsFor(clip, isFirstOnTrack(timeline, i) ? 0 : 1);
   for (const [group, title] of GROUPS) {
     const inGroup = fields.filter((f) => f.group === group);
     if (!inGroup.length) continue;

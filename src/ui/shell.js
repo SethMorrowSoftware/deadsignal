@@ -11,6 +11,7 @@ import { renderCoverage } from '../library/bundle.js';
 import { renderLibTable } from '../library/library.js';
 import { startVideoPreview, stopVideoPreview } from '../video/capture.js';
 import { readVideoCfg } from '../video/render.js';
+import { hasFootageFor } from '../media/import.js';
 import { renderTimelineTable, startTimelinePreview, stopTimelinePreview } from '../video/timeline.js';
 
 // Built from DOM nodes rather than an innerHTML string: `esc()` is only
@@ -27,7 +28,11 @@ export function validateVideo(){ const cfg=readVideoCfg(); const items=[];
      The offline encoder renders every frame at full cost and drops none, so
      once delivery sizes exist this warning fired permanently on exactly the
      settings an author is supposed to use — 1080×1920 is not a mistake. */
-  const offline = typeof VideoEncoder!=="undefined";
+  /* …but footage (Video In) clips ALWAYS take the real-time path even where
+     WebCodecs exists — recordVideoFast returns false for them because a <video>
+     only advances in wall-clock time — so the warning must still fire for the
+     one case that actually drops frames. Mirror recordVideoFast's own test. */
+  const offline = typeof VideoEncoder!=="undefined" && !(cfg.scene==="videoin" && hasFootageFor(cfg.srcKey));
   if(!offline && cfg.W*cfg.H*cfg.fps>320*240*15*4) items.push({msg:"Large frame×fps and no offline encoder here — real-time recording may drop frames.",fix:()=>{setVal("v-fps",12); startVideoPreview();}});
   // 2× supersample renders four times the pixels into a scratch canvas. At a
   // delivery size that is 3840×3840 of buffer, which is worth saying out loud.

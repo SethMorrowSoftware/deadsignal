@@ -118,6 +118,7 @@ export async function openStorage({ prefer = 'auto', name = DB_NAME } = {}) {
  */
 export function autosave(store, backend, { id = 'current', delay = 800, onSave, onError } = {}) {
   let timer = null, inFlight = false, dirty = false, stopped = false;
+  let inFlightPromise = null;   // the running putDoc drain, so flush() can await it
   /* Whether the LAST write failed, so the caller can report a transition rather
      than an event. A failing autosave fails on every edit — ten ordinary edits
      produced ten identical "Autosave failed" lines and nothing else — and the
@@ -127,24 +128,43 @@ export function autosave(store, backend, { id = 'current', delay = 800, onSave, 
   let failing = false;
   const state = { savedAt: null, get failing() { return failing; } };
 
-  const write = async () => {
-    if (stopped) return;
-    if (inFlight) { dirty = true; return; }
+  const write = () => {
+    if (stopped) return Promise.resolve();
+    // A write is already running: mark the newest state pending and hand back
+    // the SAME promise. The drain loop below re-reads store.doc and writes again
+    // for that pending edit before resolving — so an awaited flush() cannot
+    // resolve on a stale write, and a pagehide flush no longer defers the last
+    // edit onto a fresh 800ms timer that never fires on tab close.
+    if (inFlight) { dirty = true; return inFlightPromise; }
     inFlight = true;
-    try {
-      await backend.putDoc(id, JSON.parse(JSON.stringify(store.doc)));
-      state.savedAt = Date.now();
-      const recovered = failing;
-      failing = false;
-      onSave?.(state.savedAt, { recovered });
-    } catch (e) {
-      const first = !failing;
-      failing = true;
-      onError?.(e, { first });
-    } finally {
-      inFlight = false;
-      if (dirty) { dirty = false; schedule(); }
-    }
+    inFlightPromise = (async () => {
+      try {
+        // Drain: keep writing while edits arrive mid-write, always from the
+        // freshest store.doc, so the final persisted state is the latest one.
+        // `dirty` is cleared only just before each snapshot, so an edit that
+        // lands during a write is caught by the next loop turn.
+        for (;;) {
+          dirty = false;
+          await backend.putDoc(id, JSON.parse(JSON.stringify(store.doc)));
+          state.savedAt = Date.now();
+          const recovered = failing;
+          failing = false;
+          onSave?.(state.savedAt, { recovered });
+          if (!dirty || stopped) break;
+        }
+      } catch (e) {
+        const first = !failing;
+        failing = true;
+        onError?.(e, { first });
+        // A pending edit is retried on the debounce; a persistently-failing
+        // backend is NOT hammered with an immediate retry per failure.
+        if (dirty && !stopped) { dirty = false; schedule(); }
+      } finally {
+        inFlight = false;
+        inFlightPromise = null;
+      }
+    })();
+    return inFlightPromise;
   };
 
   const schedule = () => {

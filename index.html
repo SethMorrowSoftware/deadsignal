@@ -129,7 +129,7 @@
           <button class="btn small amber" id="v-grab">⌗ STILL</button>
           <button class="btn small" id="v-loadimg" title="import an image to Ken Burns">⇪ IMG</button>
           <button class="btn small" id="v-loadvid" title="import a video clip to filter (CRT/VHS + stego)">⇪ VID</button>
-          <button class="btn small" id="v-savepreset">✚</button>
+          <button class="btn small" id="v-savepreset" title="save the current look as a preset" aria-label="Save video settings as a preset">✚ PRESET</button>
           <input type="file" id="v-imgfile" aria-label="Import image file" accept="image/*" style="display:none">
           <input type="file" id="v-vidfile" aria-label="Import video file" accept="video/*" style="display:none">
         </div>
@@ -593,7 +593,7 @@ C:\&gt; _</textarea>
         </div>
         <div id="tl-track" class="tl-track"></div>
         <div class="meter" id="tl-progress-wrap" style="display:none;width:100%"><div id="tl-progress" style="width:0%"></div></div>
-        <div class="hint" id="tl-status">Build a look on the VIDEO tab, then add it as a clip.</div>
+        <div class="hint" id="tl-status" role="status" aria-live="polite">Build a look on the VIDEO tab, then add it as a clip.</div>
       </div>
       <div class="panel">
         <h2>SEQUENCE <span class="hdr-actions"><button class="btn small" id="tl-reset" title="reset sequence settings to defaults">⟲ RESET</button></span></h2>
@@ -650,7 +650,7 @@ C:\&gt; _</textarea>
           <button class="btn" id="bx-stop" aria-disabled="true">■ STOP</button>
         </div>
         <div class="meter" id="bx-progress-wrap" style="display:none"><div id="bx-progress" style="width:0%"></div></div>
-        <p class="hint" id="bx-status"></p>
+        <p class="hint" id="bx-status" role="status" aria-live="polite"></p>
       </fieldset>
     </div>
   </section>

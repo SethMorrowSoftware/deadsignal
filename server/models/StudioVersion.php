@@ -94,6 +94,29 @@ class StudioVersion
         );
     }
 
+    /**
+     * Keep the newest $keep NAMED versions for a project; delete the rest.
+     *
+     * Named versions were pruned by nothing, so createVersion could be looped to
+     * accumulate unbounded multi-megabyte snapshots (each charged to the owner's
+     * quota). This bounds the count the same way pruneAutosaves bounds autosaves.
+     */
+    public static function pruneNamed(int $projectId, int $keep): int
+    {
+        $keep = max(1, min(500, $keep));
+        return Database::execute(
+            'DELETE FROM studio_versions
+             WHERE project_id = ? AND is_autosave = 0 AND id NOT IN (
+                 SELECT id FROM (
+                     SELECT id FROM studio_versions
+                     WHERE project_id = ? AND is_autosave = 0
+                     ORDER BY id DESC LIMIT ' . (int) $keep . '
+                 ) AS keepers
+             )',
+            [$projectId, $projectId]
+        );
+    }
+
     public static function hydrate(array $row): array
     {
         foreach (['id', 'project_id', 'size_bytes', 'created_by'] as $k) {

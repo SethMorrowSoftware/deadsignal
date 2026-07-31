@@ -18,7 +18,6 @@ input[type=text],input[type=number],textarea,select{background:var(--field-bg); 
   .btn[aria-disabled="true"]{opacity:.4; cursor:not-allowed}
   /* It is still focusable, so it still has to show focus. */
   .btn[aria-disabled="true"]:focus-visible{opacity:.6}
-  .btn.rec{border-color:var(--hot); color:var(--red)} .btn.rec:hover:not(:disabled):not([aria-disabled="true"]){background:var(--hot); color:#100}
   .btn.small{padding:4px 8px; font-size:12px}
   .btn.amber{border-color:var(--amber); color:var(--amber)} .btn.amber:hover:not(:disabled):not([aria-disabled="true"]){background:var(--amber); color:#210}
   .btns{display:flex; gap:7px; flex-wrap:wrap; margin-top:9px}

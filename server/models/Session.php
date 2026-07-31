@@ -24,29 +24,36 @@ class Session
     public static function create(int $userId, int $lifetimeSeconds = 86400): array
     {
         $token = bin2hex(random_bytes(32));
-        $expiresAt = date('Y-m-d H:i:s', time() + max(300, $lifetimeSeconds));
+        $life = max(300, $lifetimeSeconds);
 
+        // Expiry set by the DB clock via DATE_ADD(NOW(), …), the SAME clock
+        // findByToken/purgeExpired read with NOW(). Computing it in PHP with
+        // date() and inserting the literal made the stored instant depend on
+        // app.timezone vs the MySQL server timezone: where they differ, a
+        // session could outlive its lifetime by the offset (or die early).
         Database::insert(
             'INSERT INTO sessions (token, user_id, created_at, expires_at, user_agent, ip_address)
-             VALUES (?, ?, NOW(), ?, ?, ?)',
+             VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND), ?, ?)',
             [
                 $token,
                 $userId,
-                $expiresAt,
+                $life,
                 mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255),
                 mb_substr(Middleware::clientIp(), 0, 45),
             ]
         );
 
-        return ['token' => $token, 'user_id' => $userId, 'expires_at' => $expiresAt];
+        // Returned for display only; the authoritative value lives in the DB.
+        return ['token' => $token, 'user_id' => $userId,
+                'expires_at' => gmdate('Y-m-d H:i:s', time() + $life)];
     }
 
     /** Sliding expiry, so an active session does not die mid-edit. */
     public static function extend(string $token, int $lifetimeSeconds = 86400): bool
     {
         return Database::execute(
-            'UPDATE sessions SET expires_at = ? WHERE token = ?',
-            [date('Y-m-d H:i:s', time() + max(300, $lifetimeSeconds)), $token]
+            'UPDATE sessions SET expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE token = ?',
+            [max(300, $lifetimeSeconds), $token]
         ) > 0;
     }
 

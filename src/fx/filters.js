@@ -25,7 +25,7 @@
  * The frame seed is already set by renderVideoFrame, so the same t renders the
  * same pixels — which is what makes scrub, playback and export agree.
  */
-import { rnd, rrange, seedStream } from '../core/rng.js';
+import { rnd, rrange, seedStatic, seedStream } from '../core/rng.js';
 import { hexToRgb } from '../core/text.js';
 
 /* Scratch canvases, lazily created: module-scope DOM would make this file
@@ -399,9 +399,13 @@ filter('scantear', 'Scan Tear', 'Analogue', [
   { key: 'rate', label: 'Re-tear per second', min: 0, max: 30, step: 1, def: 6 },
 ], (ctx, W, H, p, t) => {
   // Quantising t to the tear rate holds each tear for a beat instead of
-  // re-rolling every frame, which just reads as noise.
+  // re-rolling every frame, which just reads as noise. seedStatic, not
+  // seedStream: the stream seed folds in the frame index, so a name held
+  // constant across a beat would still re-roll every frame and the rate
+  // control (rate=0 included) would do nothing. seedStatic keys on the beat
+  // alone, so a tear genuinely holds until `step` advances.
   const step = p.rate > 0 ? Math.floor(t * p.rate) : 0;
-  seedStream('scantear:' + step);
+  seedStatic('scantear:' + step);
   const src = snapshot(ctx, W, H);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -423,8 +427,9 @@ filter('datamosh', 'Datamosh', 'Analogue', [
   { key: 'rate', label: 'Re-roll per second', min: 0, max: 30, step: 1, def: 4 },
 ], (ctx, W, H, p, t) => {
   if (p.amount <= 0) return;
+  // seedStatic so the block layout holds for a beat — see Scan Tear above.
   const step = p.rate > 0 ? Math.floor(t * p.rate) : 0;
-  seedStream('datamosh:' + step);
+  seedStatic('datamosh:' + step);
   const src = snapshot(ctx, W, H);
   const b = Math.max(4, Math.round(p.block));
   ctx.save();
@@ -480,6 +485,14 @@ filter('aberration', 'Lens Aberration', 'Analogue', [
     cx.globalCompositeOperation = 'multiply';
     cx.fillStyle = mask;
     cx.fillRect(0, 0, W, H);
+    // Multiply blends over a transparent backdrop by painting the mask colour
+    // at full alpha, so every transparent source pixel would come out opaque
+    // primary — and three of those summed with 'lighter' is opaque white, a
+    // white hole through anything composited beneath a keyed clip. Mask the
+    // channel plate back to the source's own alpha so transparent stays
+    // transparent, honouring the same alpha contract the other filters keep.
+    cx.globalCompositeOperation = 'destination-in';
+    cx.drawImage(src, 0, 0);
     cx.globalCompositeOperation = 'source-over';
     scaled(c, f);
   }
@@ -609,8 +622,13 @@ filter('crosshatch', 'Crosshatch', 'Pattern', [
     // A diagonal family is indexed by its intercept, so its scan has to start
     // above the frame to reach the lines that enter from the left. An axis
     // direction has no intercept to chase and starts at the top.
-    const yFrom = (ex === 0 || ey === 0) ? 0 : -H;
-    const yTo = (ex === 0 || ey === 0) ? H : H * 2;
+    //
+    // The intercept range must be sized by W as well as H: a [1,1] line through
+    // (x, py) has intercept py - x reaching down to -(W-1), and a [1,-1] line
+    // has py + x reaching up to W+H-2. Scanning only -H..2H left the right side
+    // of any frame wider than it is tall (every landscape format) unhatched.
+    const yFrom = (ex === 0 || ey === 0) ? 0 : -W;
+    const yTo = (ex === 0 || ey === 0) ? H : H + W;
     ctx.beginPath();
     for (let y = yFrom; y < yTo; y += s) for (let x = 0; x < W; x += s) {
       const py = (ex === 0 || ey === 0) ? y : y + x * ey;

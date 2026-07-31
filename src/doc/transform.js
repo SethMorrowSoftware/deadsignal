@@ -266,9 +266,17 @@ export function scaleAt(W, H, centre, qx, qy) {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round((d / half) * 1000) / 1000));
 }
 
-/** The rotation, in degrees, that points the clip's top edge at the pointer. */
-export function rotAt(centre, qx, qy) {
-  const deg = (Math.atan2(qy - centre[1], qx - centre[0]) * 180) / Math.PI + 90;
+/**
+ * The rotation, in degrees, that points the clip's top edge at the pointer.
+ *
+ * `flip` is load-bearing: for a vertically mirrored clip ('v'/'hv') matrixFor's
+ * sy is negative, so handlesFor draws the rotation grip along the mirrored top
+ * edge — at rot+90 instead of rot−90. Without compensating, grabbing that grip
+ * on a v-flipped clip would snap it 180° and then track opposite the pointer.
+ */
+export function rotAt(centre, qx, qy, flip = 'none') {
+  let deg = (Math.atan2(qy - centre[1], qx - centre[0]) * 180) / Math.PI + 90;
+  if (flip === 'v' || flip === 'hv') deg += 180;
   return makeTransform({ rot: deg }).rot;
 }
 

@@ -454,7 +454,11 @@ export function registerExtraFilters() {
   ], (ctx, W, H, p, t) => {
     if (p.amount <= 0 || p.density <= 0) return;
     const band = Math.max(1, Math.round(p.rows));
-    seedStream('rowshift:' + (p.rate > 0 ? Math.floor(t * p.rate) : 0));
+    // seedStatic, not seedStream: the stream seed folds in the frame index, so
+    // quantising the name to the re-roll rate would still re-roll every frame
+    // and the rate control (rate=0 included) would do nothing. Keyed on the
+    // beat alone, a band layout holds until the beat advances.
+    seedStatic('rowshift:' + (p.rate > 0 ? Math.floor(t * p.rate) : 0));
 
     /* This used to draw two whole-colour copies of each band, offset either
        way, under `lighter` — which is not a channel shift at all. On a flat
@@ -537,7 +541,10 @@ export function registerExtraFilters() {
     const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * (p.spread / 100) * 1.2);
     const c = rgb(p.colour);
     // Seeded, not Math.random: an export must flicker the same way a scrub did.
-    seedStream('leak:' + Math.floor(t * 24));
+    // seedStatic so the flicker holds for each 1/24s beat instead of re-rolling
+    // on every rendered frame — seedStream would fold in the frame index and
+    // defeat the quantisation (visible above 24fps).
+    seedStatic('leak:' + Math.floor(t * 24));
     const f = 1 - (p.flicker / 100) * rnd() * 0.6;
     const s = (p.strength / 100) * f;
     g.addColorStop(0, `rgba(${c.r},${c.g},${c.b},${s})`);

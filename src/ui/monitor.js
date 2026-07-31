@@ -325,7 +325,9 @@ export function initMonitor() {
       editClip(_drag.i, next, 'move clip', live);
     } else if (_drag.kind === 'rot') {
       const h = handlesFor({ ..._drag.from, rot: 0 }, W, H);
-      editClip(_drag.i, { rot: rotAt(h.centre, p.x, p.y) }, 'rotate clip', live);
+      // Pass the clip's flip: a v/hv mirror draws the grip on the opposite edge,
+      // and rotAt compensates so the grip stays under the pointer.
+      editClip(_drag.i, { rot: rotAt(h.centre, p.x, p.y, makeTransform(_drag.from).flip) }, 'rotate clip', live);
     } else {
       const h = handlesFor(_drag.from, W, H);
       editClip(_drag.i, { scale: scaleAt(W, H, h.centre, p.x, p.y) }, 'scale clip', live);

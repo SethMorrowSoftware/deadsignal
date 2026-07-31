@@ -68,6 +68,13 @@ export const MIGRATIONS = [
         // Already the current shape; normalize() below fills in the rest.
         doc.timeline.clips = old.timeline.clips;
       }
+      // Carry the audio lane too. Omitting it wiped every sound on the sequence
+      // for any current-shape document read as v0 (a schemaVersion stripped by a
+      // hand edit or a stringified "1") — the one thing this migration exists to
+      // never do. normalize()'s normalizeAudioClips cleans it.
+      if (Array.isArray(old.timeline?.audio)) {
+        doc.timeline.audio = old.timeline.audio;
+      }
       return doc;
     },
   },

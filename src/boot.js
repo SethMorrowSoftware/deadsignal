@@ -5,7 +5,7 @@ import { primeSizing } from './ui/sizing.js';
 import { download } from './core/blobs.js';
 import { $, guardDisabled, log, setVal, toast } from './core/dom.js';
 import { applyAesthetic, applyPack, fillPaletteSelect } from './core/palettes.js';
-import { applyProject, readProject } from './core/recipes.js';
+import { PREVIOUS_PROJECT_KEY, applyProject, lsGet, readProject } from './core/recipes.js';
 import { startSession } from './doc/bind.js';
 import { createDocument } from './doc/schema.js';
 import { toJSON } from './doc/serialize.js';
@@ -533,9 +533,37 @@ async function rehydrateAssets(backend, session, { arrivedByShareLink=false, res
     return;
   }
   try{
+    /* The root set is more than the library rows. The document also references
+       assets by key OUTSIDE those rows — the timeline audio lane's sources, a
+       clip's bed, and footage `v-srckey` — and the stashed previous project (the
+       documented recovery path for the one irreversible LOAD click) references
+       its own. Rooting only library rows deleted the bytes all three still point
+       at on the next reload; the sound kept playing this session off the blob
+       map, then vanished for good. Union every reachable key before deleting. */
     const live=referencedKeys();
+    for(const k of docReferencedKeys(session.store.doc)) live.add(k);
+    for(const k of docReferencedKeys(lsGet(PREVIOUS_PROJECT_KEY, null))) live.add(k);
     for(const k of await backend.listAssets()) if(!live.has(k)) await backend.deleteAsset(k);
   }catch(e){ /* a sweep that cannot run is not a failure worth reporting */ }
+}
+
+/* Every asset key a document references, as BARE keys (the form listAssets and
+   the library rows use). Beyond the library rows, keys hide in three places the
+   schema keeps as authored `lib:<key>` strings: the timeline audio lane's
+   `source`, a clip's `bed`, and footage `v-srckey` (in each clip's recipe and on
+   the live video tab). Conservative by construction — an extra key here costs a
+   kept orphan; a missing one costs someone's imported media. */
+function docReferencedKeys(doc){
+  const keys=new Set();
+  if(!doc || typeof doc!=='object') return keys;
+  const addLib=(v)=>{ if(typeof v==='string' && v.startsWith('lib:')) keys.add(v.slice(4)); };
+  if(Array.isArray(doc.library)) for(const it of doc.library) if(it && it.key) keys.add(it.key);
+  const audio=doc.timeline&&doc.timeline.audio;
+  if(Array.isArray(audio)) for(const a of audio) addLib(a&&a.source);
+  const clips=doc.timeline&&doc.timeline.clips;
+  if(Array.isArray(clips)) for(const c of clips){ if(!c) continue; addLib(c.bed); if(c.rec&&typeof c.rec==='object') addLib(c.rec['v-srckey']); }
+  if(doc.tabs&&doc.tabs.video) addLib(doc.tabs.video['v-srckey']);
+  return keys;
 }
 
 /* Public seam for the smoke suite and devtools poking. Deliberately explicit:

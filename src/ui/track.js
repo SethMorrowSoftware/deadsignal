@@ -239,8 +239,11 @@ function transHandle(clips, i, width) {
      never "first" in that sense — it fades up against whatever V1 is showing,
      wherever it sits in the array — so it keeps its handle. */
   if (!isOverlay(c) && isFirstOnTrack(clips, i)) return '';
-  // A cut is instant: there is no length to drag.
-  if (!(overlaps(c) || c.transition === 'dip')) return '';
+  // A cut is instant: there is no length to drag. Everything else — the
+  // overlapping transitions AND the whole flash family (dip, dipwhite, burn),
+  // all of which time their flash from xdur — has a length worth a grip. The
+  // old `=== 'dip'` gave dipwhite and burn no grip despite identical timing.
+  if (c.transition === 'cut') return '';
   const len = clipLength(c);
   const dur = Math.max(0, Math.min(Number(c.xdur) || 0, len, MAX_TRANSITION));
   const px = Math.max(4, Math.round((dur / Math.max(0.001, len)) * width));
@@ -356,7 +359,7 @@ export function renderTrack() {
     // Escaped for the attribute as well as the body: a sound's label arrives
     // from other people's project files exactly as a clip's does.
     return `<button type="button" class="${cls}" data-lane="A" data-i="${k}" data-thumb-key="${escHtml(thumbKeyOf(c))}"
-      style="left:${left}px;width:${width}px${thumb ? `;background-image:url("${thumb}")` : ''}"
+      style="left:${left}px;width:${width}px${thumb ? `;background-image:url('${thumb}')` : ''}"
       aria-label="Sound ${k + 1}, ${label}, ${len.toFixed(2)} seconds at ${(c.at ?? 0).toFixed(2)} seconds${
         c.mute ? ', muted' : `, gain ${(c.gain ?? 1).toFixed(2)}`}${c.loop ? ', looped' : ''}">
       <span class="tl-grip l" data-lane="A" data-i="${k}" data-edge="in" aria-hidden="true"></span>

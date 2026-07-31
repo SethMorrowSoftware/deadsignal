@@ -90,8 +90,13 @@ export function genWiring(){
 }
 export function validateBundle(){ const issues=[]; const seen={};
   assetsFor().forEach(it=>{ const file=it.name+"."+it.ext; const ext=it.ext.toLowerCase();
-    if(it.kind==="videos" && !["webm","mp4","ogv"].includes(ext)) issues.push({e:1,m:file+": video ext ."+ext+" not in a video folder"});
-    if(it.kind==="music" && !["wav","mp3","ogg"].includes(ext)) issues.push({e:1,m:file+": audio ext ."+ext+" not in a music folder"});
+    // A WARNING, not a hard error: media import (classify.js) deliberately
+    // accepts m4v/m4a/aac/flac/oga/weba as source material, and a single such
+    // row used to block the entire .zip export with no way to drop it short of
+    // deleting the import. The campaign engine may not decode these, so it is
+    // worth saying — but it must not stop an author shipping everything else.
+    if(it.kind==="videos" && !["webm","mp4","ogv"].includes(ext)) issues.push({e:0,m:file+": video ext ."+ext+" may not play in the campaign — ship webm/mp4/ogv to be safe"});
+    if(it.kind==="music" && !["wav","mp3","ogg"].includes(ext)) issues.push({e:0,m:file+": audio ext ."+ext+" may not play in the campaign — ship wav/mp3/ogg to be safe"});
     if(seen[it.kind+"/"+file]) issues.push({e:1,m:"duplicate filename: "+file}); seen[it.kind+"/"+file]=1;
     // A row restored from a project without its bytes still describes an asset
     // correctly — it just has nothing to put in the .zip, and shipping the

@@ -269,22 +269,34 @@ class StudioStorage
         // correct client's chunks sum to exactly the declared size). Without
         // this, nothing stopped a session that never calls complete() from
         // accumulating 100000 × 2·chunkSize in tmp/, bypassing quota entirely.
-        $meta = $this->readMeta($uploadId);
-        if ($meta !== null) {
-            $have = 0;
-            foreach (scandir($dir) ?: [] as $f) {
-                if ($f !== (string) $index && preg_match('/^\d+$/', $f)) {
-                    $have += (int) @filesize($dir . '/' . $f);
+        //
+        // The sum → check → move sequence runs under an exclusive per-session
+        // lock: concurrent chunk requests for one uploadId would otherwise each
+        // read the same stale total, all pass the bound, and all write — pushing
+        // tmp/ past the declared size by (concurrency − 1) chunks. The lock makes
+        // the declared-size bound actually hold under parallel uploads.
+        $lock = @fopen($dir . '/.lock', 'c');
+        if ($lock !== false) flock($lock, LOCK_EX);
+        try {
+            $meta = $this->readMeta($uploadId);
+            if ($meta !== null) {
+                $have = 0;
+                foreach (scandir($dir) ?: [] as $f) {
+                    if ($f !== (string) $index && preg_match('/^\d+$/', $f)) {
+                        $have += (int) @filesize($dir . '/' . $f);
+                    }
+                }
+                if ($have + $size > (int) $meta['size'] + $this->chunkSize()) {
+                    throw new \RuntimeException('Upload exceeds its declared size');
                 }
             }
-            if ($have + $size > (int) $meta['size'] + $this->chunkSize()) {
-                throw new \RuntimeException('Upload exceeds its declared size');
-            }
-        }
 
-        if (!@move_uploaded_file($tmpFile, $dir . '/' . $index)
-            && !@rename($tmpFile, $dir . '/' . $index)) {
-            throw new \RuntimeException('Could not store chunk');
+            if (!@move_uploaded_file($tmpFile, $dir . '/' . $index)
+                && !@rename($tmpFile, $dir . '/' . $index)) {
+                throw new \RuntimeException('Could not store chunk');
+            }
+        } finally {
+            if ($lock !== false) { @flock($lock, LOCK_UN); @fclose($lock); }
         }
         return (int) $size;
     }
