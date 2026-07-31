@@ -233,6 +233,133 @@ fx('pump', 'Pump / Gate', 'Dynamics', [
   },
 });
 
+/* A compressor in the ordinary studio sense. The one dynamics tool the chain had
+   was rhythmic (Pump / Gate); this one reacts to the material itself, which is
+   what "even this out" actually asks for. DynamicsCompressorNode is deterministic
+   for a given input, so the render stays reproducible. */
+fx('compressor', 'Compressor', 'Dynamics', [
+  { key: 'threshold', label: 'Threshold dB', min: -60, max: 0, step: 1, def: -24 },
+  { key: 'ratio', label: 'Ratio', min: 1, max: 20, step: 0.5, def: 4 },
+  { key: 'knee', label: 'Knee dB', min: 0, max: 40, step: 1, def: 24 },
+  { key: 'attack', label: 'Attack ms', min: 1, max: 300, step: 1, def: 10 },
+  { key: 'release', label: 'Release ms', min: 20, max: 1000, step: 10, def: 200 },
+  { key: 'makeup', label: 'Make-up dB', min: 0, max: 24, step: 0.5, def: 4 },
+], {
+  graph({ ctx, input, p }) {
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = p.threshold;
+    comp.ratio.value = p.ratio;
+    comp.knee.value = p.knee;
+    comp.attack.value = p.attack / 1000;
+    comp.release.value = p.release / 1000;
+    const makeup = ctx.createGain();
+    makeup.gain.value = Math.pow(10, p.makeup / 20);
+    input.connect(comp).connect(makeup);
+    return makeup;
+  },
+});
+
+/* Convolution reverb over a SYNTHESISED impulse response: exponentially decaying
+   noise from a local generator seeded off the decay, so the same settings always
+   build the same room. A recorded IR would be an asset; this stays a parameter. */
+fx('reverb', 'Reverb', 'Space', [
+  { key: 'decay', label: 'Decay s', min: 0.1, max: 8, step: 0.1, def: 1.8 },
+  { key: 'predelay', label: 'Pre-delay ms', min: 0, max: 200, step: 1, def: 20 },
+  { key: 'damp', label: 'Damping Hz', min: 500, max: 16000, step: 100, def: 6000 },
+  { key: 'mix', label: 'Mix %', min: 0, max: 100, step: 1, def: 30 },
+], {
+  graph({ ctx, input, p }) {
+    const sr = ctx.sampleRate;
+    const len = Math.max(1, Math.round(p.decay * sr));
+    const ir = ctx.createBuffer(2, len, sr);
+    // Deterministic on purpose: seeded from the decay, not Math.random, so a
+    // project renders the same tail every time on the same engine.
+    let seed = (0x2f6e2b1 ^ (Math.round(p.decay * 1000) * 2654435761)) >>> 0;
+    const prng = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = ir.getChannelData(ch);
+      for (let i = 0; i < len; i++) d[i] = (prng() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+    }
+    const conv = ctx.createConvolver();
+    conv.normalize = true; conv.buffer = ir;
+    const pre = ctx.createDelay(1); pre.delayTime.value = p.predelay / 1000;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = p.damp;
+    const wet = ctx.createGain(); wet.gain.value = p.mix / 100;
+    const sum = ctx.createGain();
+    input.connect(sum);                                  // dry
+    input.connect(pre).connect(conv).connect(lp).connect(wet).connect(sum);
+    return sum;
+  },
+});
+
+/* Saturation: a smooth waveshaper with a tone filter after it, because drive
+   without a lowpass is fizz. Same curve family engine.js's distortion uses. */
+fx('drive', 'Drive / Saturate', 'Tone', [
+  { key: 'amount', label: 'Drive', min: 0, max: 100, step: 1, def: 35 },
+  { key: 'tone', label: 'Tone Hz', min: 500, max: 16000, step: 100, def: 5200 },
+  { key: 'level', label: 'Level %', min: 10, max: 200, step: 1, def: 90 },
+], {
+  graph({ ctx, input, p }) {
+    const ws = ctx.createWaveShaper();
+    const k = (p.amount / 100) * 60 + 1, n = 1024, curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x)); }
+    ws.curve = curve;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = p.tone;
+    const out = ctx.createGain(); out.gain.value = p.level / 100;
+    input.connect(ws).connect(lp).connect(out);
+    return out;
+  },
+});
+
+/* The band-limited squawk of a handset: aggressive high-pass and low-pass with a
+   little grit between them. One effect rather than an EQ recipe because it is
+   asked for as a thing — "make it sound like a phone call". */
+fx('telephone', 'Telephone', 'Tone', [
+  { key: 'lowcut', label: 'Low cut Hz', min: 100, max: 1000, step: 10, def: 300 },
+  { key: 'highcut', label: 'High cut Hz', min: 1000, max: 8000, step: 50, def: 3400 },
+  { key: 'grit', label: 'Grit', min: 0, max: 100, step: 1, def: 25 },
+], {
+  graph({ ctx, input, p }) {
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = p.lowcut; hp.Q.value = 0.9;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = p.highcut; lp.Q.value = 0.9;
+    let tail = hp; input.connect(hp);
+    if (p.grit > 0) {
+      const ws = ctx.createWaveShaper();
+      const k = (p.grit / 100) * 25 + 1, n = 512, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x)); }
+      ws.curve = curve; tail.connect(ws); tail = ws;
+    }
+    tail.connect(lp);
+    return lp;
+  },
+});
+
+/* Tremolo: an LFO on the level. The one classic modulation the chain lacked —
+   chorus moves pitch, auto-pan moves position; this moves loudness. The
+   oscillator starts at phase zero, so the wobble lands identically every render. */
+fx('tremolo', 'Tremolo', 'Modulation', [
+  { key: 'rate', label: 'Rate Hz', min: 0.1, max: 20, step: 0.1, def: 5 },
+  { key: 'depth', label: 'Depth %', min: 0, max: 100, step: 1, def: 60 },
+  { key: 'shape', label: 'Shape', kind: 'select', def: 'sine', options: [
+    { value: 'sine', label: 'Sine (smooth)' },
+    { value: 'triangle', label: 'Triangle' },
+    { value: 'square', label: 'Square (chop)' },
+  ] },
+], {
+  graph({ ctx, input, dur, p }) {
+    const g = ctx.createGain();
+    const depth = p.depth / 100;
+    g.gain.value = 1 - depth / 2;
+    const lfo = ctx.createOscillator();
+    lfo.type = p.shape; lfo.frequency.value = p.rate;
+    const amp = ctx.createGain(); amp.gain.value = depth / 2;
+    lfo.connect(amp).connect(g.gain);
+    lfo.start(0); lfo.stop(dur + 0.1);
+    input.connect(g);
+    return g;
+  },
+});
+
 /* ============================================================== post ===== */
 
 /* Stutter: a slice is captured and repeated over the region that follows.
@@ -330,6 +457,65 @@ fx('pitch', 'Pitch Shift', 'Tone', [
       }
       return d;
     });
+  },
+});
+
+/* Worn record: crackle, hiss and a dulled top end. A post effect because the
+   crackle must be the SAME event in both channels — a tick that lands only on
+   the left reads as a glitch, not a record. */
+fx('vinyl', 'Vinyl / Crackle', 'Texture', [
+  { key: 'crackle', label: 'Crackle', min: 0, max: 100, step: 1, def: 40 },
+  { key: 'hiss', label: 'Hiss', min: 0, max: 100, step: 1, def: 18 },
+  { key: 'age', label: 'Age (dull)', min: 0, max: 100, step: 1, def: 30 },
+], {
+  post({ channels, sr, dur, p, rnd }) {
+    const len = channels[0].length;
+    if (p.age > 0) {
+      // One-pole lowpass; 100 dulls to ~2kHz.
+      const fc = 16000 - (p.age / 100) * 14000;
+      const a = 1 - Math.exp((-2 * Math.PI * fc) / sr);
+      for (const d of channels) { let y = 0; for (let i = 0; i < len; i++) { y += a * (d[i] - y); d[i] = y; } }
+    }
+    if (p.hiss > 0) {
+      const amp = (p.hiss / 100) * 0.012;
+      for (const d of channels) for (let i = 0; i < len; i++) d[i] += (rnd() * 2 - 1) * amp;
+    }
+    if (p.crackle > 0) {
+      // Events chosen once and written to every channel, so each tick is a
+      // single physical fact on the record rather than stereo confetti.
+      const events = Math.round((p.crackle / 100) * 18 * Math.max(1, dur));
+      for (let e = 0; e < events; e++) {
+        const at = Math.floor(rnd() * Math.max(1, len - 64));
+        const peak = 0.04 + rnd() * (p.crackle / 100) * 0.5;
+        const sign = rnd() > 0.5 ? 1 : -1;
+        const n = 6 + Math.floor(rnd() * 40);
+        for (const d of channels) for (let i = 0; i < n && at + i < len; i++) d[at + i] += sign * peak * Math.pow(1 - i / n, 3);
+      }
+    }
+    return channels;
+  },
+});
+
+/* Bit crush: sample-hold downsampling and bit-depth quantise — the audio twin of
+   the video Bit Crush. A post effect because a graph has no sample-and-hold node. */
+fx('crush', 'Bit Crush', 'Texture', [
+  { key: 'bits', label: 'Bits', min: 2, max: 16, step: 1, def: 8 },
+  { key: 'downsample', label: 'Hold ×', min: 1, max: 40, step: 1, def: 6 },
+  { key: 'mix', label: 'Mix %', min: 0, max: 100, step: 1, def: 100 },
+], {
+  post({ channels, p }) {
+    if (p.mix <= 0) return channels;
+    const steps = Math.pow(2, p.bits - 1);   // b-bit step over [-1,1]
+    const hold = Math.max(1, Math.round(p.downsample));
+    const mix = p.mix / 100;
+    for (const d of channels) {
+      let held = 0;
+      for (let i = 0; i < d.length; i++) {
+        if (i % hold === 0) held = Math.round(d[i] * steps) / steps;
+        d[i] = d[i] * (1 - mix) + held * mix;
+      }
+    }
+    return channels;
   },
 });
 

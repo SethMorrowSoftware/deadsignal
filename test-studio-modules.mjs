@@ -318,7 +318,9 @@ check(`all ${files.length} modules import cleanly`, namespaces.size === files.le
 {
   const F = namespaces.get('fx/filters.js');
   const X = namespaces.get('fx/filters-extra.js');
+  const X2 = namespaces.get('fx/filters-extra2.js');
   X.registerExtraFilters();
+  X2.registerExtraFilters2();
   const MAX_DIM = namespaces.get('core/formats.js').MAX_DIM;
   // The worst honest case: the smallest frame the size control allows, taken to
   // the largest. 64 is #v-w's own minimum.

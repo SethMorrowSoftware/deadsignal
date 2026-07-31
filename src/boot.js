@@ -53,6 +53,7 @@ import { readAudioCfg, renderAudio } from './audio/engine.js';
 import { SCENES, fillSceneSelect } from './video/scenes.js';
 import { registerExtraScenes } from './video/scenes-extra.js';
 import { registerExtraFilters } from './fx/filters-extra.js';
+import { registerExtraFilters2 } from './fx/filters-extra2.js';
 import { buildAudioLayerControls } from './ui/audiolayers.js';
 import { addAudioClip, addGraphicClip, addOverlayClip, addStillClip, addTimelineClip, addTitleClip, audioTimeline, buildSchedule, clearTimeline, clipSourceTime, commitAudioClips, editAudioClip, editClip, initTimelineTab, recordTimeline, renderTimelineFrame, renderTimelineTable, sequenceMix, setTimelineClips, startTimelinePreview, syncTimelineFromDoc, timeline } from './video/timeline.js';
 import { trackScale } from './ui/track.js';
@@ -79,7 +80,7 @@ export function boot(){
   // selects
   // Extra scenes register into the same SCENES map, so this has to run
   // BEFORE the pickers are filled or they would be missing from every list.
-  registerExtraScenes(); registerExtraTemplates(); registerExtraFilters();
+  registerExtraScenes(); registerExtraTemplates(); registerExtraFilters(); registerExtraFilters2();
   /* Registry audio layers generate their controls here, for the same reason as
      the pickers above: the document is seeded from the DOM a few lines down and
      the reset snapshot is taken from it, so a control that does not exist yet
