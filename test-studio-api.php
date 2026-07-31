@@ -544,6 +544,46 @@ $csrf = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 check('a mutating request without X-Requested-With is refused', $csrf === 403, (string) $csrf);
 
+/* ============================================================== extras == */
+section('duplicate, usage, rename');
+// Alice duplicates her own project: a new project she owns, same document, new id.
+[, $before] = req('/studio/projects/' . $pid, 'GET', null, $alice);
+[$s, $r] = req('/studio/projects/' . $pid . '/duplicate', 'POST', ['name' => 'A copy'], $alice);
+$copyId = $r['project']['id'] ?? 0;
+check('a project can be duplicated into your own account',
+    $s === 201 && $copyId && $copyId !== $pid, (string) $s);
+check('…under its own new uuid',
+    ($r['project']['uuid'] ?? '') !== ($before['project']['uuid'] ?? ''), (string) ($r['project']['uuid'] ?? ''));
+// The caller owns the copy, and it carries the source document.
+[$s, $c] = req('/studio/projects/' . $copyId, 'GET', null, $alice);
+check('…owned by the caller, carrying the source document',
+    $s === 200 && ($c['project']['access'] ?? '') === 'owner'
+    && ($c['project']['document'] ?? null) == ($before['project']['document'] ?? false), (string) $s);
+// Bob, an editor on the shared project, duplicates it into HIS account — the way
+// a shared project becomes one you own. The copy is his, not Alice's.
+[$s, $r] = req('/studio/projects/' . $pid . '/duplicate', 'POST', [], $bob);
+$bobCopyId = $r['project']['id'] ?? 0;
+check('a shared project duplicates for the grantee', $s === 201 && $bobCopyId, (string) $s);
+[$s, $c] = req('/studio/projects/' . $bobCopyId, 'GET', null, $bob);
+check('…into the grantee\'s own account', $s === 200 && ($c['project']['access'] ?? '') === 'owner', (string) $s);
+[$s] = req('/studio/projects/' . $bobCopyId, 'GET', null, $alice);
+check('…and Alice cannot see Bob\'s copy', $s === 404, (string) $s);
+
+// Usage: one call for the whole storage picture.
+[$s, $r] = req('/studio/usage', 'GET', null, $alice);
+check('usage reports quota and counts',
+    $s === 200 && isset($r['quota']['used'], $r['projects'], $r['assets'])
+    && (int) $r['projects'] >= 1 && (int) $r['assets'] >= 1, json_encode($r));
+
+// Rename an asset (owner only).
+[$s, $r] = req('/studio/assets/' . $tinyId, 'PATCH', ['name' => 'renamed.webm'], $alice);
+check('an asset can be renamed by its owner',
+    $s === 200 && ($r['asset']['original_name'] ?? '') === 'renamed.webm', (string) $s);
+[$s] = req('/studio/assets/' . $tinyId, 'PATCH', ['name' => 'hijack.webm'], $bob);
+check('…but not by anyone else (404)', $s === 404, (string) $s);
+[$s] = req('/studio/assets/' . $tinyId, 'PATCH', ['name' => ''], $alice);
+check('…and an empty name is refused', $s === 400, (string) $s);
+
 [$s] = req('/studio/projects/' . $pid, 'DELETE', null, $alice);
 check('the owner can delete the project', $s === 200, (string) $s);
 

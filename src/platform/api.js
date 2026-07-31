@@ -274,6 +274,15 @@ export const saveProject = (id, document, extra = {}) =>
   api('/studio/projects/' + encodeURIComponent(id), { method: 'PUT', body: { document, ...extra } });
 export const deleteProject = (id) =>
   api('/studio/projects/' + encodeURIComponent(id), { method: 'DELETE' });
+/** Copy a project into your own account. Works on one shared with you — the way
+    a read-only share becomes something you can edit. Name defaults to "… (copy)". */
+export const duplicateProject = (id, name) =>
+  api('/studio/projects/' + encodeURIComponent(id) + '/duplicate',
+      { method: 'POST', body: name ? { name } : {} });
+/** This account's storage picture: quota breakdown plus project and asset counts.
+    Named serverUsage, not usage, to stay clear of the storage backend's own
+    usage() method — the module graph test rightly flags the collision. */
+export const serverUsage = () => api('/studio/usage');
 export const listVersions = (id) => api('/studio/projects/' + encodeURIComponent(id) + '/versions');
 /** A named snapshot. Named versions are never pruned; autosaves are. */
 export const createVersion = (id, label) =>
@@ -446,6 +455,9 @@ export async function uploadAsset(blob, { name, kind = 'other', projectId, onPro
 
 export const deleteServerAsset = (id) =>
   api('/studio/assets/' + encodeURIComponent(id), { method: 'DELETE' });
+/** Rename an asset's display name (owner only). */
+export const renameServerAsset = (id, name) =>
+  api('/studio/assets/' + encodeURIComponent(id), { method: 'PATCH', body: { name } });
 
 /** Download an asset's bytes as a Blob. */
 export async function fetchAsset(id) {

@@ -557,6 +557,65 @@ class StudioController
         jsonResponse(['deleted' => true]);
     }
 
+    /** PATCH /studio/assets/:id — rename (owner only). */
+    public function renameAsset(array $params): void
+    {
+        $this->storage();
+        $asset = StudioAsset::findById((int) ($params['id'] ?? 0));
+        // 404, not 403, for someone else's asset — the same non-disclosure the
+        // project routes keep.
+        if (!$asset || (int) $asset['owner_id'] !== $this->userId()) jsonError('Asset not found', 404);
+        $name = trim((string) input('name', ''));
+        if ($name === '') jsonError('name is required');
+        if (mb_strlen($name) > 255) jsonError('name is too long');
+        StudioAsset::rename((int) $asset['id'], $name);
+        jsonResponse(['asset' => StudioAsset::findById((int) $asset['id'])]);
+    }
+
+    /* ------------------------------------------------------------- extras -- */
+
+    /** POST /studio/projects/:id/duplicate — copy into the caller's own account. */
+    public function duplicateProject(array $params): void
+    {
+        $storage = $this->storage();
+        // Viewer access is enough: duplicating a project shared with you into your
+        // OWN account is how a read-only share becomes something you can edit,
+        // without touching the original. The copy is owned by the caller.
+        $src = $this->requireProject($params['id'] ?? '', StudioShare::ROLE_VIEWER);
+        $uid = $this->userId();
+
+        $name = trim((string) input('name', ''));
+        if ($name === '') $name = mb_substr(((string) $src['name']) . ' (copy)', 0, 200);
+        if (mb_strlen($name) > 200) jsonError('name is too long');
+
+        // requireProject returns the document already decoded to an array
+        // (StudioProject::hydrate); re-encode it through the shared guard so the
+        // copy is stored as valid JSON, size-checked like any other write.
+        $json = $this->documentJson(is_array($src['document'] ?? null) ? $src['document'] : [], $storage);
+        // Charged to the caller, who now owns the copy.
+        $this->assertQuotaForWrite($storage, $uid, strlen($json));
+
+        $id = StudioProject::create(
+            $uid, self::uuid(), $name,
+            self::nullableText($src['description'] ?? null),
+            $json,
+            max(1, (int) ($src['schema_version'] ?? 1))
+        );
+        jsonResponse(['project' => StudioProject::findById($id)], 201);
+    }
+
+    /** GET /studio/usage — this account's storage picture, in one call. */
+    public function usage(array $params): void
+    {
+        $s = $this->storage();
+        $uid = $this->userId();
+        jsonResponse([
+            'quota'    => $s->quotaInfo($uid),
+            'projects' => StudioProject::countFor($uid),
+            'assets'   => StudioAsset::countFor($uid),
+        ]);
+    }
+
     /* ------------------------------------------------------------ helpers -- */
 
     private static function nullableText($v): ?string

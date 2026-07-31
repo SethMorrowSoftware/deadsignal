@@ -69,6 +69,15 @@ class StudioAsset
         return Database::execute('DELETE FROM studio_assets WHERE id = ?', [$id]) > 0;
     }
 
+    /** Rename an asset's display name. The value is bound, never interpolated. */
+    public static function rename(int $id, string $name): bool
+    {
+        return Database::execute(
+            'UPDATE studio_assets SET original_name = ? WHERE id = ?',
+            [$name, $id]
+        ) > 0;
+    }
+
     /** Bytes this owner's assets occupy. Deduped rows count once, as they should. */
     public static function quotaUsage(int $ownerId): int
     {
