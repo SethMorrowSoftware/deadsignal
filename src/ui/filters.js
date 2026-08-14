@@ -192,7 +192,13 @@ export function addToChain(key, id) {
     toast(`${MAX_FILTERS} is the limit`, 'err');
     return;
   }
-  chain.push(makeFilter({ id: pick, params: {}, enabled: true }));
+  /* A correction effect (grade, levels, the EQ) is identity at its declared
+     defaults — right for a saved step, wrong for a freshly added one, which
+     looks broken when adding it changes nothing. The registry's `seed` is the
+     visible starting point such a step arrives at; it is written into the
+     step's own params, so it is the author's value from here on and old
+     projects (whose steps carry their own params) are untouched. */
+  chain.push(makeFilter({ id: pick, params: { ...(c.registry[pick].seed || {}) }, enabled: true }));
   if (writeChain(key, chain)) { renderChain(key); c.onChange?.(); toast('+ ' + stepName(key, pick)); }
 }
 

@@ -54,9 +54,19 @@ export const FILTERS = {};
  *   kind defaults to a numeric slider. 'color' and 'text' take a def only;
  *   'select' additionally takes `options: [{ value, label }]`.
  * @param {Function} apply (ctx,W,H,p,t)
+ * @param {object}  [extra] optional registry extras. `seed` is the params a
+ *   NEWLY ADDED step starts at, for correction filters whose declared defaults
+ *   are identity (grade at 0/0/0/0/0, levels with a straight-through LUT).
+ *   Identity defaults are correct — a saved project holding such a step with
+ *   empty params must keep rendering as it always did, and resolveParams fills
+ *   missing keys from `def` at render time, so the defaults themselves cannot
+ *   change. But an author who ADDS one and sees nothing cannot tell a neutral
+ *   filter from a broken one, so the add writes these values in explicitly —
+ *   a visible starting point that is the author's to change, saved as their
+ *   own numbers like anything else they typed.
  */
-export function filter(id, name, group, params, apply) {
-  FILTERS[id] = { id, name, group, params, apply };
+export function filter(id, name, group, params, apply, extra) {
+  FILTERS[id] = { id, name, group, params, apply, ...(extra || {}) };
 }
 
 /** Every declared key, clamped, with defaults filled in. */
@@ -119,7 +129,10 @@ filter('grade', 'Colour Grade', 'Colour', [
     d[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
   }
   ctx.putImageData(img, 0, 0);
-});
+  /* A gently cold, contrasty starting grade for a freshly ADDED step — visible
+     on sight, mild enough to build from. The declared defaults above stay at
+     identity so existing projects render unchanged. */
+}, { seed: { contrast: 14, saturation: -18, temperature: -14 } });
 
 filter('duotone', 'Duotone', 'Colour', [
   { key: 'shadow', label: 'Shadows', kind: 'color', def: '#0a0f1e' },

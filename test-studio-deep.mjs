@@ -578,6 +578,78 @@ section('every filter, one at a time');
   const leaky = ids.filter((i) => res[i].bypassThrew || !res[i].bypassClean);
   check('every filter bypassed is exactly a no-op', leaky.length === 0,
     leaky.map((i) => `${i}${res[i].bypassThrew ? ': ' + res[i].bypassThrew : ''}`).join(', '));
+
+  /* THE SEED: the flip side of the identity check above. Identity defaults are
+     correct for a SAVED step and indistinguishable from a broken filter on a
+     freshly ADDED one — the audit's one open interface item. So every filter in
+     the identity set must declare a `seed` (the params a new step arrives at),
+     the seeded start must visibly change the picture, and the UI's add path
+     must actually install it. Checked in both directions: delete a seed, or
+     have addToChain stop writing it, and these go red — while the identity
+     check above pins the registry defaults exactly where they were. */
+  const seeded = await page.evaluate(async (idSet) => {
+    const F = await import('./src/fx/filters.js');
+    const out = {};
+    const W = 96; const H = 72;
+    const source = () => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d', { willReadFrequently: true });
+      for (let i = 0; i < 40; i++) {
+        x.fillStyle = `rgb(${(i * 37) % 256},${(i * 91) % 256},${(i * 53) % 256})`;
+        x.fillRect((i * 13) % W, (i * 7) % H, 11 + (i % 9), 9 + (i % 7));
+      }
+      x.fillStyle = '#fff'; x.fillRect(0, H / 2 - 1, W, 2);
+      return { c, x };
+    };
+    const hashOf = (x) => {
+      const d = x.getImageData(0, 0, W, H).data;
+      let h2 = 5381;
+      for (let i = 0; i < d.length; i += 4) h2 = (((h2 * 33) ^ (d[i] + d[i + 1] + d[i + 2])) >>> 0);
+      return h2;
+    };
+    for (const id of idSet) {
+      const f = F.FILTERS[id];
+      const seed = f && f.seed;
+      const r = { declared: !!(seed && Object.keys(seed).length) };
+      if (r.declared) {
+        try {
+          const p = F.resolveParams(id, seed);
+          const a = source();
+          const before = hashOf(a.x);
+          f.apply(a.x, W, H, p, 1);
+          r.changes = hashOf(a.x) !== before;
+        } catch (e) { r.threw = String(e && e.message || e).slice(0, 80); }
+      }
+      out[id] = r;
+    }
+    return out;
+  }, IDENTITY_AT_DEFAULT);
+  const unseeded = IDENTITY_AT_DEFAULT.filter((i) => !seeded[i].declared);
+  check('every identity-at-default filter declares a seed for a freshly added step',
+    unseeded.length === 0, unseeded.join(', ') || IDENTITY_AT_DEFAULT.join(', '));
+  const invisible = IDENTITY_AT_DEFAULT.filter((i) => seeded[i].declared && (seeded[i].threw || !seeded[i].changes));
+  check('…and the seeded start visibly changes the picture',
+    invisible.length === 0,
+    invisible.map((i) => `${i}${seeded[i].threw ? ': ' + seeded[i].threw : ''}`).join(', '));
+
+  /* Through the real add path, on both chains, cleaned up afterwards. The EQ
+     covers the audio registry's neutral set the same way. */
+  const addPath = await page.evaluate(async () => {
+    const S = window.DeadSignalStudio;
+    const F = await import('./src/fx/filters.js');
+    const A = await import('./src/audio/fx.js');
+    S.addFilter('grade');
+    S.addAudioFx('eq3');
+    await new Promise((r) => setTimeout(r, 120));
+    const v = (S.store.get('filters.video') || []).at(-1);
+    const a = (S.store.get('filters.audio') || []).at(-1);
+    S.clearFilters(); S.clearAudioFx();
+    const holds = (step, seed) => !!step && !!seed
+      && Object.keys(seed).every((k) => step.params && step.params[k] === seed[k]);
+    return { video: holds(v, F.FILTERS.grade.seed), audio: holds(a, A.AUDIO_FX.eq3.seed) };
+  });
+  check('＋ FILTER installs the seed into the new step’s own params', addPath.video === true);
+  check('＋ FX does the same on the audio chain (the EQ arrives audible)', addPath.audio === true);
 }
 
 /* ======================================================== audio layers === */

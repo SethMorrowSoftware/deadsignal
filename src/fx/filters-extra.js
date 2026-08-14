@@ -95,7 +95,10 @@ export function registerExtraFilters() {
       d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]];
     }
     ctx.putImageData(img, 0, 0);
-  });
+    /* A visible starting point for a freshly ADDED step: crushed blacks and a
+       slight mid lift — the classic "rescue a washed-out frame" move. The
+       declared defaults stay identity so existing projects render unchanged. */
+  }, { seed: { inLow: 18, inHigh: 240, gamma: 116 } });
 
   /* Duotone maps luminance across two colours. Three is a different look and
      the one most graded stills actually use — the midtones are where a grade

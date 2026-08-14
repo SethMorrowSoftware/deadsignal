@@ -77,7 +77,9 @@ export function registerExtraFilters2() {
       d[i] = clamp255(r); d[i + 1] = clamp255(g); d[i + 2] = clamp255(b);
     }
     ctx.putImageData(img, 0, 0);
-  });
+    /* A freshly ADDED step arrives with a visible rotation to dial from; the
+       declared defaults stay identity so existing projects render unchanged. */
+  }, { seed: { rotate: 40 } });
 
   /* A standalone, controllable vignette. The CRT stack has one baked in at a
      fixed shape; this one chooses its size, edge and colour, so it works as a

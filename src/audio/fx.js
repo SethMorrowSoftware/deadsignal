@@ -44,7 +44,12 @@ export const AUDIO_FX = {};
  * @param {string} name   label in the UI
  * @param {string} group  heading in the picker
  * @param {Array}  params [{ key, label, min, max, step, def, kind? }]
- * @param {object} spec   { graph } or { post }
+ * @param {object} spec   { graph } or { post }. May also carry `seed`: the
+ *   params a NEWLY ADDED step starts at, for correction effects whose declared
+ *   defaults are silence-transparent (the EQ flat at 0 dB). The defaults stay
+ *   neutral — a saved project holding such a step with empty params must keep
+ *   sounding as it always did — but an author who ADDS one and hears nothing
+ *   cannot tell a neutral EQ from a broken effect, so the add writes these in.
  */
 function fx(id, name, group, params, spec) {
   AUDIO_FX[id] = { id, name, group, params, ...spec };
@@ -101,6 +106,10 @@ fx('eq3', '3-Band EQ', 'Tone', [
     input.connect(ls).connect(pk).connect(hs);
     return hs;
   },
+  /* An audible starting tilt for a freshly ADDED step — low shelf up, mids
+     dipped, top opened. The declared defaults stay flat so existing projects
+     sound unchanged. */
+  seed: { low: 5, mid: -3.5, high: 4 },
 });
 
 /* Chorus and flanger are the same circuit at different delay times: a modulated
