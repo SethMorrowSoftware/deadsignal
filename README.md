@@ -47,26 +47,29 @@ php -S localhost:8000 router.php    # from the repo root
 index.html        markup + stylesheet links only
 setup.php         the installer (host check → database → schema → settings → account)
 preflight.php     "what can this host do?", before committing to an install
+watch.php         the public player page for a published asset (keep this one)
 router.php        rewrite shim for `php -S` (development only)
 api/              the backend's front controller + its .htaccess
 server/           the backend itself — classes, schema, config, storage
-  migrations/     six tables: studio_projects/assets/versions/shares + users/sessions
+  migrations/     seven tables: studio_projects/assets/versions/shares/publications
+                  + users/sessions
   models/         User Session StudioProject StudioAsset StudioVersion StudioShare
+                  StudioPublication
   controllers/    Auth System Studio
   migrate.php     `php server/migrate.php` — schema from the command line
   account.php     `php server/account.php add <name>` — asks for the password
 styles/           tokens · layout · controls · panels
-src/              the engine, 94 ES modules
+src/              the engine, 130 ES modules
   core/           dom blobs rng text palettes packs recipes formats
   doc/            the project document: schema store session undo migrations
                   timeline automation regions annotations
-  fx/             crt still filters filters-extra
-  media/          import audioimport
+  fx/             crt still filters filters-extra filters-extra2
+  media/          classify importfiles import audioimport fonts voice
   video/          scenes render capture gif timeline layers automation
   audio/          engine layers fx bed solo wav ui
   image/          chrome95 templates render stego annotate
   library/        library bundle merge zip
-  export/         encoder webm mp4 anim batch (offline WebCodecs + muxers)
+  export/         encoder webm mp4 ogg audiofile anim batch (WebCodecs + muxers)
   platform/       storage (IndexedDB) · api (the CLOUD backend client)
   campaign/       campaign targets + existing-file import
   onboarding/     the welcome card's sample project
@@ -103,7 +106,7 @@ to that world, which does two things:
 | Tab | Output | What it makes |
 |---|---|---|
 | **VIDEO** | `.webm` / `.mp4` | **48 scenes** (see below) — under a shared CRT/VHS stack (scanlines, static, vignette, flicker, chromatic aberration, bloom, phosphor **persistence**, shadow-mask, hum bar, tracking tear, camera shake, **vertical-hold roll**, ordered dither). Text modes: static / typewriter / **decode-in** / scroll, plus a **ｆｕｌｌｗｉｄｔｈ** vaporwave toggle, **Glitch** (coloured ghosting on the type) and **Corrupt**. HUD, timecode, Morse strip, **blink code**, **final-frame reveal**, **subliminal** injection. |
-| **AUDIO** | `.wav` (8/16/24-bit) | **26 layers** (see below) — into a **master FX bus** (ring-mod, tremolo, wow/flutter, distortion, delay, convolution **reverb**, telephone band, bitcrush, limiter, stereo width) and then an ordered **FX chain** (see below). Live **layer summary** (see what's on at a glance) + one-click **TIDY** (fold unused layers). Peak meter, **normalize**, and **auto-level on render**; single-instance **Play/Stop** (no stacked playback); loop crossfade. Preset packs for darksynth/ICE/mallsoft as well as analogue-horror. |
+| **AUDIO** | `.wav` / `.m4a` / `.ogg` | **26 layers** (see below) — into a **master FX bus** (ring-mod, tremolo, wow/flutter, distortion, delay, convolution **reverb**, telephone band, bitcrush, limiter, stereo width) and then an ordered **FX chain** (see below). Live **layer summary** (see what's on at a glance) + one-click **TIDY** (fold unused layers). Peak meter, **normalize**, and **auto-level on render**; single-instance **Play/Stop** (no stacked playback); loop crossfade. Preset packs for darksynth/ICE/mallsoft as well as analogue-horror. |
 | **SCREEN** | `.png` / `.jpg` | **46 templates** (see below) on a Win95 chrome engine — Terminal, BSOD (9x + NT STOP), Camera still, Keycard, Error dialog, File Explorer, Boot/Shutdown, Fake desktop, Redacted doc, Missing poster, Task Manager, Hex editor, CRT test pattern, Registry editor, Cyberpunk Terminal, Corp Login, Cyber Implant ID, Vapor Desktop, Mall Directory, Cassette J-card, HTTP 404, BIOS Setup, Chat Window, ATM / Kiosk, VHS Label, Patient Monitor, Receipt, Search Results — with a CRT + paper-aging post stack, **stego** (LSB) embed/decode, invert-to-reveal text, and 1–4× supersampled export. |
 | **TIMELINE** | `.webm` / `.mp4` | Cut several scenes into **one clip**. Build a look on VIDEO and press **＋ SCENE**, or a screen on SCREEN and press **＋ STILL**; then edit on the **track** — drag a block to reorder, drag its edge to **trim**, click to select (arrows trim, Alt+arrows reorder). Each clip carries its **own transition** — cut / crossfade / dip-to-black — plus its own scene, text and FX; only W/H/FPS are unified. The table under the track is the same edit for when you would rather type `4.25` than drag at it. A **sound bed** covers the sequence, and each clip can carry its own over the top. `Video In` clips play your imported footage live. |
 
@@ -122,6 +125,17 @@ downloads the whole session's recipes as JSON.
   and re-exports it as **`.webm`**, an animated **`.gif`**, or a frame-strip
   (GIF/strip seek the clip frame-accurately). Any browser-playable source works
   (`.webm`/`.mp4`).
+- **Import a font** (drop a `.ttf` / `.otf` / `.woff` / `.woff2` anywhere over
+  the studio): the face joins every typeface picker under **Your fonts** — a
+  library row like any other import, persisted, saved with the project, usable
+  on VIDEO, SCREEN and a title clip. The look of this material is one
+  pixel-font drop away from the look of a default, and now that drop exists.
+  A file that is not a loadable font is refused with a reason; nothing is ever
+  fetched from the network.
+- **Record a voiceover** (⏺ on the media bin): the microphone straight into
+  the library as a WAV take — named `voiceover`, undoable, ready for the audio
+  lane, a clip bed or the sequence bed. Analogue horror is a voice over a
+  broken picture, and the voice no longer needs another application.
 - **Image FX** (great on imported art): **duotone / gradient-map**, **halftone**
   dot-screen, **posterize**, and **pixel-sort** glitch.
 - **Multi-scene TIMELINE**: cut any number of scenes — and SCREEN stills — into
@@ -320,6 +334,33 @@ All three are capped at 640px for the same reason: these are for a message, a
 README or a social post, and a lossless 1080×1920 animation is a download nobody
 wants.
 
+## Three audio files
+
+The AUDIO tab rendered `.wav` and nothing else — the right master and the
+wrong delivery: ten seconds of 48kHz stereo is 1.9 MB nobody uploads. The
+**File** picker beside the download now chooses:
+
+| | |
+|---|---|
+| **WAV** | The lossless master. Byte-stable, honours the Bits control (8/16/24), what the library row and the sequence keep using. |
+| **M4A** | AAC in the same MP4 container the video export writes — plays essentially everywhere. **The one to hand to a phone or an upload.** |
+| **OGG** | Opus, smallest and open. Every current browser, Discord, VLC. |
+
+Neither compressed format needed a new encoder — WebCodecs already encodes
+AAC and Opus for the tracks muxed into video. What they needed was somewhere
+to put the packets: `.m4a` is the existing ISO BMFF muxer opened by an
+audio-only door (same `esds` descriptor nesting, same two-pass index), and
+`.ogg` is a small hand-written Ogg page muxer (RFC 7845 mapping, real page
+CRCs, ~1s of packets per page) whose output a test decodes with an
+**independent** parser, byte for byte.
+
+Where a build has no such encoder — plain `http://` on a non-localhost
+address — the export writes a **WAV and says so**, the same degrade MP4 video
+makes, and the filename records what was actually written. Bit depth belongs
+to WAV alone: AAC and Opus are perceptual codecs fed the float render
+directly, so the Bits control keeps meaning what it always meant and simply
+does not apply to them.
+
 ## The waveform is an editor
 
 It used to be a readout. You could see that the third second was too loud or
@@ -452,11 +493,17 @@ chain is a true no-op and every project made before it renders identically.
 
 | Group | |
 |---|---|
-| **Tone** | **3-Band EQ** · **Pitch Shift** |
-| **Modulation** | **Chorus / Flanger** · **Auto-Pan** |
-| **Space** | **Ping-Pong Delay** |
-| **Dynamics** | **Pump / Gate** |
+| **Tone** | **3-Band EQ** · **Pitch Shift** · **Drive / Saturate** · **Telephone** |
+| **Modulation** | **Chorus / Flanger** · **Auto-Pan** · **Tremolo** |
+| **Space** | **Ping-Pong Delay** · **Reverb** |
+| **Dynamics** | **Pump / Gate** · **Compressor** |
+| **Texture** | **Vinyl / Crackle** · **Bit Crush** |
 | **Rhythm** | **Stutter** · **Reverse Sections** |
+
+A freshly added **EQ arrives audible** — a gentle shelf tilt written into the
+step's own params — because a correction effect that is silent at its defaults
+is indistinguishable from a broken one. The registry defaults stay flat, so a
+saved project holding an untouched EQ keeps sounding exactly as it did.
 
 ### Why some of these work differently
 
@@ -556,15 +603,16 @@ stack. Reorder with ↑ ↓, bypass with ◉ (which keeps the step and its setti
 remove with ✕. Up to eight steps. An empty chain is a true no-op, so every
 project made before the chain existed renders exactly as it did.
 
-**45 filters in five groups:**
+**55 filters in five groups** — and the same chain runs on SCREEN, over a
+still, stored at its own document path:
 
 | Group | |
 |---|---|
-| **Colour** | Colour Grade · **Levels / Curves** · Duotone · **Gradient Map** · **Retro Palette** (CGA, EGA, Game Boy, Teletext, C64, amber mono) · Invert · Solarize · Posterize · Bit Crush · Threshold |
-| **Sharpness** | Blur · **Directional Blur** · **Tilt Shift** · Sharpen · Edge Detect · **Neon Edge** |
-| **Analogue** | CRT Curvature · Interlace · Ghosting · VHS Head Switch · Scan Tear · Datamosh · Lens Aberration · Film Grain · **NTSC Composite** · **Row RGB Shift** · **Rolling Shutter** · **Light Leak** · **Anamorphic Streak** · **CMYK Misregistration** · **Risograph** |
-| **Pattern** | Halftone · Crosshatch · Pixel Sort · Mosaic · **Error Diffusion** · **ASCII** · **Kaleidoscope** · **Slit Scan** · **Feedback Echo** |
-| **Frame** | Letterbox · Border · Text Stamp · **Lower Third** · **Timecode Burn** |
+| **Colour** | Colour Grade · **Levels / Curves** · **Hue / Colourise** · Duotone · **Gradient Map** · **Retro Palette** (CGA, EGA, Game Boy, Teletext, C64, amber mono) · Invert · Solarize · Posterize · Bit Crush · Threshold |
+| **Sharpness** | Blur · **Directional Blur** · **Tilt Shift** · **Zoom Blur** · Sharpen · **Emboss** · Edge Detect · **Neon Edge** |
+| **Analogue** | CRT Curvature · Interlace · Ghosting · VHS Head Switch · Scan Tear · Datamosh · Lens Aberration · Film Grain · **Bloom / Glow** · **Old Film** · **NTSC Composite** · **Row RGB Shift** · **Rolling Shutter** · **Light Leak** · **Anamorphic Streak** · **CMYK Misregistration** · **Risograph** |
+| **Pattern** | Halftone · Crosshatch · Pixel Sort · Mosaic · **Bulge / Pinch** · **Twirl** · **Wave Warp** · **Mirror** · **Error Diffusion** · **ASCII** · **Kaleidoscope** · **Slit Scan** · **Feedback Echo** |
+| **Frame** | Letterbox · Border · **Vignette** · Text Stamp · **Lower Third** · **Timecode Burn** |
 
 Some of them are the same idea as a built-in done properly rather than a
 duplicate: **Retro Palette** snaps to a real machine's fixed colours, which
@@ -573,6 +621,13 @@ rainbowing of luma and chroma sharing one wire, not the flat sideways offset the
 built-in Chroma control makes; **Error Diffusion** carries each pixel's rounding
 error into its neighbours, so the texture follows the picture instead of the 4×4
 grid the built-in dither lays over it.
+
+The three correction filters — **Colour Grade**, **Levels / Curves**,
+**Hue / Colourise** — are identity at their declared defaults, which is right
+for a saved step and looks broken on a freshly added one. So a new step
+**arrives with a visible starting point** written into its own params (a
+gently cold grade, a crushed-blacks curve, a 40° rotation), while the
+defaults stay identity and every project already on disk renders unchanged.
 
 ### One rule, and what it costs
 
@@ -1373,6 +1428,15 @@ machines:
   deduplicated by content so a re-run sends only what changed.
 - **Sharing** — grant a named person viewer/commenter/editor access, or mint a
   read-only link that works for someone with no account (shown once; revocable).
+- **PUBLISH** — one uploaded asset gets a **stable public URL**
+  (`<studio>/watch.php?t=…`, a player page) anyone can open with no account:
+  the missing last step of the pipeline, from *make and download* to *make
+  and hand someone the link*. The address streams with real Range support, so
+  a video seeks instead of buffering whole; publishing twice returns the same
+  URL; revoking kills it immediately, and deleting the asset takes the URL
+  with it. A share link guards a whole project and is shown once — a
+  publication is one finished file whose token *is* the address, re-showable
+  by design.
 - **ASSETS ON THE SERVER → LIBRARY** — pulls files back down on another
   machine: opening a project brings the recipe, this brings the media it
   refers to.
@@ -1388,7 +1452,8 @@ host check → database → schema → studio settings → first account, then c
 the API from your browser so a missing rewrite shows up as a red line here
 rather than as a mystery a week later. It needs PHP 8 and MySQL 5.7.8+ (or
 MariaDB 10.2.7+) and nothing else. Delete `setup.php` and `preflight.php`
-afterwards.
+afterwards — but keep `watch.php`, which is the player page every published
+asset's URL points at.
 
 **You do not have to make the database first.** Give the wizard a MySQL user and
 the name you want, and if that database does not exist it is created for you
@@ -1451,9 +1516,11 @@ The minimum upload set and the full walkthrough are in
   licensed codec some Chromium builds ship without; asking for MP4 there gets
   you a **WebM and a console line saying why**, and the library records the
   extension actually written. The campaign plays `.webm` natively.
-- Audio export is **`.wav`/PCM** only (OfflineAudioContext renders faster than
-  real-time); the WebCodecs Opus encoder is used only for the audio track muxed
-  into video. No `.mp3`/`.ogg` encoder ships without a library.
+- Audio export is **`.wav`** (the lossless master, always available),
+  **`.m4a`** (AAC) and **`.ogg`** (Opus) — the compressed pair need WebCodecs
+  and degrade to a WAV with a note where it is missing. No `.mp3` encoder
+  ships without a library; `.m4a` is the delivery format that plays where
+  `.mp3` does.
 - The library is **project state and it persists**. Row metadata (name, kind,
   gated, release beat) lives in the document and is autosaved; the bytes go to
   an IndexedDB asset store keyed per row and are re-attached on the next load,

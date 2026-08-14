@@ -192,6 +192,12 @@ if ($s !== 200 || empty($cfg['enabled'])) {
     exit(1);
 }
 
+// Bob's world before this run adds anything — the isolation check below is a
+// delta against this, so leftovers from an earlier run against the same
+// accounts read as the baseline they are rather than as a regression.
+[, $b0] = req('/studio/projects', 'GET', null, $bob);
+$bobProjectsBefore = (int) ($b0['total'] ?? 0);
+
 /* ============================================================== projects == */
 section('projects');
 [$s, $r] = req('/studio/projects', 'POST',
@@ -209,8 +215,17 @@ section('isolation');
 check('another user gets 404, not 403 (existence is not disclosed)', $s === 404, (string) $s);
 [$s] = req('/studio/projects/' . $pid, 'PUT', ['document' => ['x' => 1]], $bob);
 check('…and cannot write it', $s === 404, (string) $s);
+/* A delta, not an absolute — the same doctrine the asset checks state below.
+   `total === 0` was only true on a fresh install: run with name:password
+   accounts the suite did not create, anything an earlier run left in Bob's
+   account (the duplicate-for-the-grantee copy used to survive the run) made
+   run two fail on a count that was not a regression. What isolation actually
+   promises is that ALICE's project is not in Bob's listing. */
 [, $r] = req('/studio/projects', 'GET', null, $bob);
-check('…and it is not in their listing', ($r['total'] ?? -1) === 0, (string) ($r['total'] ?? -1));
+check('…and it is not in their listing',
+    ($r['total'] ?? -1) === $bobProjectsBefore
+    && !in_array($pid, array_column($r['projects'] ?? [], 'id'), true),
+    'total ' . (string) ($r['total'] ?? -1) . ' vs baseline ' . $bobProjectsBefore);
 
 section('versions');
 [$s, $r] = req('/studio/projects/' . $pid, 'PUT',
@@ -583,6 +598,13 @@ check('an asset can be renamed by its owner',
 check('…but not by anyone else (404)', $s === 404, (string) $s);
 [$s] = req('/studio/assets/' . $tinyId, 'PATCH', ['name' => ''], $alice);
 check('…and an empty name is refused', $s === 400, (string) $s);
+
+// The two duplicate copies go: run with accounts the suite did not create,
+// rows it leaves behind outlive the run — and it was exactly Bob's leftover
+// copy that made the isolation count fail on the SECOND run against the same
+// install. A suite that litters is a suite people stop running.
+req('/studio/projects/' . $copyId, 'DELETE', null, $alice);
+req('/studio/projects/' . $bobCopyId, 'DELETE', null, $bob);
 
 /* ========================================================== publishing == */
 section('publishing — one file, one public URL');

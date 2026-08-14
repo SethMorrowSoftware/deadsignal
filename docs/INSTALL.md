@@ -5,10 +5,11 @@ There are two things you can install, and they are independent.
 1. **The studio.** A folder of static files. Copy it onto any web server and
    open it. Every generator, every export and the whole editor run in the
    browser. No PHP, no database, no build step, no accounts.
-2. **The backend** (`api/` + `server/`). Optional. It adds the three things one
-   browser cannot do alone: projects that follow you between machines, assets
-   stored somewhere other than IndexedDB, and sharing a project with someone
-   else.
+2. **The backend** (`api/` + `server/` + `watch.php`). Optional. It adds the
+   things one browser cannot do alone: projects that follow you between
+   machines, assets stored somewhere other than IndexedDB, sharing a project
+   with someone else, and **publishing** — a finished file given a stable
+   public URL with a player page anyone can open.
 
 A studio with no backend is a **supported deployment**, not a degraded one. If
 all you want is the tool, stop after part 1.
@@ -57,6 +58,7 @@ That is the entire tool. Add these only if you want the backend:
 api/            ← including api/.htaccess  (see the warning below)
 server/
 setup.php
+watch.php       ← the public player page for published assets — keep it
 ```
 
 And these are development/administration only — **delete them from a live host**:
@@ -126,7 +128,7 @@ Six steps:
 |---|---|
 | **1 Host** | The preflight report. Blockers stop you here; warnings do not. |
 | **2 Database** | Connection details → writes `server/env.php`. |
-| **3 Schema** | Applies `server/migrations/` — six tables, all `CREATE TABLE IF NOT EXISTS`. |
+| **3 Schema** | Applies `server/migrations/` — seven tables, all `CREATE TABLE IF NOT EXISTS`. |
 | **4 Studio** | Quotas, upload limits, storage path → writes `server/config/studio.php`. |
 | **5 Account** | Creates the first account. |
 | **6 Done** | Locks the install and tells you to delete `setup.php`. |
@@ -153,6 +155,12 @@ is open by design — it is what creates the first account. Once one exists, it
 refuses to run for an anonymous visitor and demands `?reconfirm_key=` (the
 database password, or `setup.secret` from `server/env.php` when the password is
 empty). That guard is real, but deleting the file is better than relying on it.
+
+**Keep `watch.php`.** It is not an installer — it is the public player page a
+published asset's URL points at, anonymous on purpose the way a share link is.
+Delete it and every published link starts answering 404 from the web server
+instead of the studio's own "withdrawn" page (the bytes route under `api/`
+would still work, but nobody holds that URL).
 
 **Never commit `server/env.php`.** It holds the database password. The shipped
 `.gitignore` already excludes it, along with `server/config/`, `server/data/`

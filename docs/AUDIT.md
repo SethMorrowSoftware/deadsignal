@@ -287,7 +287,8 @@ Recorded because "we looked and it was fine" is a result.
 
 ## Still open
 
-Three items. None blocks the beta.
+Three items were open at the end of round four; the interface one has since
+been closed (below). None blocks the beta.
 
 **Repository**
 - **There is no `LICENSE`.** That is an ownership decision, not one this audit
@@ -303,12 +304,16 @@ Three items. None blocks the beta.
   each of these, so a beta tester on another engine can say which are missing.
 
 **Interface**
-- **`grade` and `levels` do nothing at their default parameters.** They are
-  adjustment filters and identity defaults are the defensible choice, but an
-  author who adds one and sees no change cannot tell that from a filter that is
-  broken. Every other filter in the set changes the picture on sight. Either a
-  non-identity default or a word in the row would fix it; both are product
-  decisions rather than audit findings.
+- ~~**`grade` and `levels` do nothing at their default parameters.**~~
+  **Closed.** The registry entry now carries an optional `seed` — the params a
+  freshly ADDED step arrives at — and `addToChain` writes it into the step's
+  own params. Identity defaults were the right call for a *saved* step
+  (resolveParams fills missing keys from `def` at render time, so moving the
+  defaults would change every old project) and the wrong experience for a new
+  one; the seed splits the two cases. Covers `grade`, `levels`, `hue` and the
+  audio EQ. The deep suite pins both halves: the registry defaults stay
+  identity, and the add path installs a visible start — verified backwards,
+  with the seed install reverted both add-path checks go red.
 
 Every other finding this audit raised has been either fixed above or recorded
 under *Investigated and found NOT to be defects*. Two caveats on that, because
