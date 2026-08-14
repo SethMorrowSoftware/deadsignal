@@ -320,6 +320,20 @@ signal integrity: 100%</textarea>
           <div class="row"><label for="a-sr">Rate</label><select id="a-sr" class="grow"><option value="22050">22050</option><option value="44100">44100</option><option value="48000">48000</option></select></div>
           <div class="row"><label for="a-bits">Bits</label><select id="a-bits" class="grow"><option value="16">16</option><option value="8">8</option><option value="24">24</option></select></div>
         </div>
+        <!-- Options declared here, not filled at init: startSession records each
+             select's boot default from the markup, and a list that arrives later
+             records "" (the seven-blank-selects failure this file already
+             documents). WAV stays the master; the compressed pair encode the
+             float render, so Bits applies to WAV alone. Where WebCodecs is
+             missing the export writes a WAV and says so, like MP4 video. -->
+        <div class="split2">
+          <div class="row"><label for="a-format">File</label><select id="a-format" class="grow" title="What ⤓ downloads. WAV is the lossless master; M4A (AAC) plays everywhere; OGG (Opus) is smallest. The library and the sequence keep using the WAV master either way.">
+            <option value="wav">WAV (lossless)</option>
+            <option value="m4a">M4A (AAC)</option>
+            <option value="ogg">OGG (Opus)</option>
+          </select></div>
+          <div class="row"><span class="hint">Bits applies to WAV; M4A/OGG encode the render itself.</span></div>
+        </div>
         <div class="split3">
           <div class="row"><label for="a-fade">Fade s</label><input type="number" id="a-fade" value="0.4" min="0" max="5" step="0.1"></div>
           <div class="row"><label for="a-loop">Loop xf</label><input type="checkbox" id="a-loop" title="seamless loop crossfade"></div>

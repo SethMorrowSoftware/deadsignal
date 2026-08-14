@@ -256,6 +256,77 @@ function trak(t, offsets) {
 /* ---------------------------------------------------------------- mux ---- */
 
 /**
+ * An AAC track object from encodeAudioTrack()'s output shape.
+ * The audio timescale is the sample rate, so an AAC frame is exactly 1024
+ * ticks — no rounding at all, which is what keeps a long clip in sync.
+ */
+function audioTrackOf(id, audio) {
+  const rate = audio.sampleRate || 48000;
+  let dts = 0;
+  return {
+    id, kind: 'audio', timescale: rate, channels: audio.channels || 2,
+    description: audio.description,
+    samples: audio.frames.map((f) => {
+      const n = Math.max(1, Math.round(((f.durationUs || 0) / 1e6) * rate) || 1024);
+      const s = { data: f.data, key: true, dts, duration: n };
+      dts += n;
+      return s;
+    }),
+  };
+}
+
+/**
+ * The container around any set of finished tracks: chunk, interleave, and the
+ * two-pass moov-before-mdat write. Shared by the A/V mux and the audio-only
+ * one, because the index arithmetic is the part nobody should write twice.
+ */
+function muxTracks(tracks, ftyp, mime) {
+  for (const t of tracks) t.chunks = chunkify(t.samples, t.timescale);
+
+  /* Chunks from every track, in time order — so a player reading forward always
+     has the audio for the picture it just decoded. */
+  const interleaved = [];
+  for (const t of tracks) {
+    for (const c of t.chunks) interleaved.push({ t, c, at: c.startDts / t.timescale });
+  }
+  interleaved.sort((a, b) => a.at - b.at);
+
+  const movieDur = Math.max(...tracks.map(
+    (t) => t.samples.reduce((n, s) => n + s.duration, 0) / t.timescale));
+  const mvhd = fullBox('mvhd', 0, 0,
+    u32(EPOCH_1904), u32(EPOCH_1904), u32(1000), u32(Math.round(movieDur * 1000)),
+    u32(0x00010000), u16(0x0100), u16(0), u32(0), u32(0),
+    UNITY_MATRIX, new Uint8Array(24), u32(tracks.length + 1));
+
+  /* Two passes. The first learns how big moov is with placeholder offsets; the
+     second writes the real ones. Every field is fixed width, so the second moov
+     is byte-for-byte the same size as the first — this is exact rather than a
+     fixed point to iterate toward. */
+  const build = (offsetsByTrack) => box('moov', mvhd,
+    ...tracks.map((t) => trak(t, offsetsByTrack.get(t))));
+  const zeros = new Map(tracks.map((t) => [t, t.chunks.map(() => 0)]));
+  const moovSize = build(zeros).length;
+
+  const mdatStart = ftyp.length + moovSize + 8;   // + mdat's own header
+  const offsets = new Map(tracks.map((t) => [t, []]));
+  let at = mdatStart;
+  const payload = [];
+  for (const { t, c } of interleaved) {
+    offsets.get(t).push(at);
+    for (const s of c.samples) { payload.push(s.data); at += s.data.length; }
+  }
+
+  const moov = build(offsets);
+  if (moov.length !== moovSize) {
+    // Cannot happen with fixed-width fields; if it ever does, a silently
+    // corrupt index is far worse than a failed export.
+    throw new Error(`moov size changed between passes (${moovSize} -> ${moov.length})`);
+  }
+  const mdat = boxList('mdat', payload);
+  return new Blob([ftyp, moov, mdat], { type: mime });
+}
+
+/**
  * Mux H.264 (and optionally AAC) into an MP4.
  *
  * @param {object}   opts
@@ -296,68 +367,33 @@ export function muxMP4({ frames, width, height, description, audio }) {
   };
 
   const tracks = [video];
-  if (audio && audio.frames && audio.frames.length) {
-    /* The audio timescale is the sample rate, so an AAC frame is exactly 1024
-       ticks — no rounding at all, which is what keeps a long clip in sync. */
-    const rate = audio.sampleRate || 48000;
-    let dts = 0;
-    tracks.push({
-      id: 2, kind: 'audio', timescale: rate, channels: audio.channels || 2,
-      description: audio.description,
-      samples: audio.frames.map((f) => {
-        const n = Math.max(1, Math.round(((f.durationUs || 0) / 1e6) * rate) || 1024);
-        const s = { data: f.data, key: true, dts, duration: n };
-        dts += n;
-        return s;
-      }),
-    });
-  }
-
-  for (const t of tracks) t.chunks = chunkify(t.samples, t.timescale);
-
-  /* Chunks from every track, in time order — so a player reading forward always
-     has the audio for the picture it just decoded. */
-  const interleaved = [];
-  for (const t of tracks) {
-    for (const c of t.chunks) interleaved.push({ t, c, at: c.startDts / t.timescale });
-  }
-  interleaved.sort((a, b) => a.at - b.at);
-
-  const movieDur = Math.max(...tracks.map(
-    (t) => t.samples.reduce((n, s) => n + s.duration, 0) / t.timescale));
-  const mvhd = fullBox('mvhd', 0, 0,
-    u32(EPOCH_1904), u32(EPOCH_1904), u32(1000), u32(Math.round(movieDur * 1000)),
-    u32(0x00010000), u16(0x0100), u16(0), u32(0), u32(0),
-    UNITY_MATRIX, new Uint8Array(24), u32(tracks.length + 1));
+  if (audio && audio.frames && audio.frames.length) tracks.push(audioTrackOf(2, audio));
 
   const ftyp = box('ftyp', str('isom'), u32(0x200), str('isom'), str('iso2'), str('avc1'), str('mp41'));
+  return muxTracks(tracks, ftyp, 'video/mp4');
+}
 
-  /* Two passes. The first learns how big moov is with placeholder offsets; the
-     second writes the real ones. Every field is fixed width, so the second moov
-     is byte-for-byte the same size as the first — this is exact rather than a
-     fixed point to iterate toward. */
-  const build = (offsetsByTrack) => box('moov', mvhd,
-    ...tracks.map((t) => trak(t, offsetsByTrack.get(t))));
-  const zeros = new Map(tracks.map((t) => [t, t.chunks.map(() => 0)]));
-  const moovSize = build(zeros).length;
-
-  const mdatStart = ftyp.length + moovSize + 8;   // + mdat's own header
-  const offsets = new Map(tracks.map((t) => [t, []]));
-  let at = mdatStart;
-  const payload = [];
-  for (const { t, c } of interleaved) {
-    offsets.get(t).push(at);
-    for (const s of c.samples) { payload.push(s.data); at += s.data.length; }
-  }
-
-  const moov = build(offsets);
-  if (moov.length !== moovSize) {
-    // Cannot happen with fixed-width fields; if it ever does, a silently
-    // corrupt index is far worse than a failed export.
-    throw new Error(`moov size changed between passes (${moovSize} -> ${moov.length})`);
-  }
-  const mdat = boxList('mdat', payload);
-  return new Blob([ftyp, moov, mdat], { type: 'video/mp4' });
+/**
+ * Mux AAC alone into an .m4a — the same file MP4 audio rides in, minus the
+ * picture. The sample entry, the esds descriptor nesting and the two-pass
+ * index all come from the A/V path above, which is the entire reason this is
+ * a page of code rather than a second muxer.
+ *
+ * @param {object}   opts
+ * @param {Array}    opts.frames      [{ data, timestampUs, durationUs }]
+ * @param {Uint8Array} [opts.description] AudioSpecificConfig from the encoder
+ * @param {number}   [opts.sampleRate]
+ * @param {number}   [opts.channels]
+ * @returns {Blob} 'audio/mp4'
+ */
+export function muxM4A({ frames, description, sampleRate, channels }) {
+  if (!frames || !frames.length) throw new Error('nothing to mux');
+  const track = audioTrackOf(1, { frames, description, sampleRate, channels });
+  /* The M4A brand first, which is what tells iTunes/Apple players this is an
+     audio file rather than a movie with no picture; isom/mp42 keep everyone
+     else reading it as the plain MP4 it also is. */
+  const ftyp = box('ftyp', str('M4A '), u32(0x200), str('M4A '), str('mp42'), str('isom'));
+  return muxTracks([track], ftyp, 'audio/mp4');
 }
 
 /** Whether a codec string is one this muxer can carry. */

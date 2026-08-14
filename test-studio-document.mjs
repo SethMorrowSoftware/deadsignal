@@ -68,7 +68,9 @@ import { AUDIO_EXT, IMAGE_EXT, KINDS, MAX_IMPORT_BYTES, VIDEO_EXT, classifyFile,
          importOrder, stemOf }
   from './src/media/classify.js';
 import { muxWebM, opusHead } from './src/export/webm.js';
-import { muxMP4, mp4CanCarry } from './src/export/mp4.js';
+import { muxMP4, muxM4A, mp4CanCarry } from './src/export/mp4.js';
+import { muxOggOpus } from './src/export/ogg.js';
+import { AUDIO_FILE_FORMATS, audioFormatOf } from './src/export/audiofile.js';
 import { MAX_REGIONS, REGION_OPS, applyRegions, editedSeconds, makeRegion, normalizeRegions }
   from './src/doc/regions.js';
 import { MAX_SOLO, SOLO_SOURCES, applySolo, normalizeSolo, soloDisabledNames, soloNotice,
@@ -1569,6 +1571,239 @@ section('MP4 muxing');
     String(longTables && longTables.mdatBytes));
   check('…and the boxes still account for the whole file',
     longTables && longTables.topLevelAccounted, String(longBytes));
+}
+
+/* ============================================= audio-only files: m4a ===== */
+/* The AUDIO tab's delivery formats. .m4a is the MP4 next door minus the
+   picture — same trak, same esds nesting, same two-pass index — so what these
+   assert is that the audio-only door into that machinery declares the right
+   brand, carries the AudioSpecificConfig, and stays deterministic. */
+section('m4a muxer');
+{
+  const boxes = (u8, start = 0, end = u8.length) => {
+    const out = [];
+    let at = start;
+    while (at + 8 <= end) {
+      const size = (u8[at] << 24 | u8[at + 1] << 16 | u8[at + 2] << 8 | u8[at + 3]) >>> 0;
+      const type = String.fromCharCode(u8[at + 4], u8[at + 5], u8[at + 6], u8[at + 7]);
+      if (size < 8 || at + size > end) break;
+      out.push({ type, size, at, body: at + 8, bodyEnd: at + size });
+      at += size;
+    }
+    return out;
+  };
+  const findIn = (u8, type, start, end) => boxes(u8, start, end).find((b) => b.type === type);
+  const u32At = (u8, at) => new DataView(u8.buffer, u8.byteOffset, u8.byteLength).getUint32(at);
+  const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+  const ASC = new Uint8Array([0x11, 0x90]);        // AAC LC, 48kHz, stereo
+  const packets = (n) => Array.from({ length: n }, (_, i) => ({
+    data: new Uint8Array(24).fill((i % 250) + 1),
+    timestampUs: Math.round((i * 1024 / 48000) * 1e6),
+    durationUs: Math.round((1024 / 48000) * 1e6),
+  }));
+
+  const m4a = await bytesOf(muxM4A({ frames: packets(90), description: ASC, sampleRate: 48000, channels: 2 }));
+
+  check('the file declares itself an M4A first and an MP4 second', (() => {
+    const ftyp = boxes(m4a)[0];
+    const tops = boxes(m4a).map((b) => b.type);
+    const brand = String.fromCharCode(...m4a.slice(8, 12));
+    const compat = new TextDecoder('latin1').decode(m4a.slice(16, ftyp.bodyEnd));
+    return tops[0] === 'ftyp' && tops.includes('moov') && tops.includes('mdat')
+      && brand === 'M4A ' && compat.includes('isom');
+  })(), String.fromCharCode(...m4a.slice(8, 12)));
+  check('one trak, and it is a sound track', (() => {
+    const moov = boxes(m4a).find((b) => b.type === 'moov');
+    const traks = boxes(m4a, moov.body, moov.bodyEnd).filter((b) => b.type === 'trak');
+    const txt = new TextDecoder('latin1').decode(m4a);
+    return traks.length === 1 && txt.includes('soun') && txt.includes('smhd')
+      && txt.includes('mp4a') && !txt.includes('avc1') && !txt.includes('vmhd');
+  })());
+  check('the esds carries the AudioSpecificConfig it was handed', (() => {
+    const at = m4a.findIndex((_, i) => String.fromCharCode(...m4a.slice(i, i + 4)) === 'esds');
+    if (at < 0) return false;
+    const body = at + 4 + 4;
+    if (m4a[body] !== 0x03) return false;          // ES_Descriptor
+    const dcd = body + 1 + 4 + 3;
+    if (m4a[dcd] !== 0x04) return false;           // DecoderConfigDescriptor
+    const dsi = dcd + 1 + 4 + 13;
+    return m4a[dsi] === 0x05 && m4a[dsi + 5] === ASC[0] && m4a[dsi + 6] === ASC[1];
+  })());
+  check('the index points at real payload inside mdat', (() => {
+    const moov = boxes(m4a).find((b) => b.type === 'moov');
+    const trak = findIn(m4a, 'trak', moov.body, moov.bodyEnd);
+    const mdia = findIn(m4a, 'mdia', trak.body, trak.bodyEnd);
+    const minf = findIn(m4a, 'minf', mdia.body, mdia.bodyEnd);
+    const stbl = findIn(m4a, 'stbl', minf.body, minf.bodyEnd);
+    const co64 = findIn(m4a, 'co64', stbl.body, stbl.bodyEnd);
+    const mdat = boxes(m4a).find((b) => b.type === 'mdat');
+    const first = u32At(m4a, co64.body + 8 + 4);   // low half of the first u64
+    return first === mdat.body && m4a[first] === 1;
+  })());
+  check('the track declares the whole duration at the sample rate', (() => {
+    const moov = boxes(m4a).find((b) => b.type === 'moov');
+    const trak = findIn(m4a, 'trak', moov.body, moov.bodyEnd);
+    const mdia = findIn(m4a, 'mdia', trak.body, trak.bodyEnd);
+    const mdhd = findIn(m4a, 'mdhd', mdia.body, mdia.bodyEnd);
+    // Version 1 mdhd: 8+8 creation/modification, then u32 timescale, u64 duration.
+    const ts = u32At(m4a, mdhd.body + 4 + 16);
+    const dur = u32At(m4a, mdhd.body + 4 + 20 + 4);
+    return ts === 48000 && dur === 90 * 1024;
+  })());
+  check('every top-level box accounts for its bytes', (() => {
+    return boxes(m4a).reduce((n, b) => n + b.size, 0) === m4a.length;
+  })());
+  check('the same render muxes byte-identically twice', await (async () => {
+    const a = await bytesOf(muxM4A({ frames: packets(30), description: ASC, sampleRate: 48000, channels: 2 }));
+    const b = await bytesOf(muxM4A({ frames: packets(30), description: ASC, sampleRate: 48000, channels: 2 }));
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  })());
+  check('an empty render is refused', (() => {
+    try { muxM4A({ frames: [], description: ASC }); return false; }
+    catch (e) { return /nothing to mux/.test(e.message); }
+  })());
+}
+
+/* ========================================= audio-only files: ogg opus ==== */
+/* Verified the way the GIF encoder is: an INDEPENDENT decoder, written from
+   the spec rather than from the muxer, walks every page — its own CRC, its own
+   lacing reassembly — and the packets must come back byte-exact. A page
+   framing bug is precisely the "plays at the top, breaks later" class. */
+section('ogg opus muxer');
+{
+  const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+  /* Bitwise CRC, no table — deliberately a different implementation shape from
+     the muxer's, so a shared mistake cannot agree with itself. */
+  const crcRef = (bytes) => {
+    let crc = 0;
+    for (const b of bytes) {
+      crc = (crc ^ (b << 24)) >>> 0;
+      for (let k = 0; k < 8; k++) {
+        crc = (crc & 0x80000000) ? ((((crc << 1) >>> 0) ^ 0x04c11db7) >>> 0) : ((crc << 1) >>> 0);
+      }
+    }
+    return crc >>> 0;
+  };
+  const parsePages = (u8) => {
+    const pages = [];
+    let at = 0;
+    let carry = null;                              // a packet continued across pages
+    while (at < u8.length) {
+      if (String.fromCharCode(u8[at], u8[at + 1], u8[at + 2], u8[at + 3]) !== 'OggS') {
+        return { error: `no capture pattern at ${at}`, pages };
+      }
+      const dv = new DataView(u8.buffer, u8.byteOffset + at);
+      const type = u8[at + 5];
+      const granule = dv.getUint32(6, true) + dv.getUint32(10, true) * 2 ** 32;
+      const serial = dv.getUint32(14, true);
+      const seq = dv.getUint32(18, true);
+      const crc = dv.getUint32(22, true);
+      const nseg = u8[at + 26];
+      const lacing = Array.from(u8.slice(at + 27, at + 27 + nseg));
+      const payloadLen = lacing.reduce((n, v) => n + v, 0);
+      const pageEnd = at + 27 + nseg + payloadLen;
+      const whole = u8.slice(at, pageEnd);
+      const zeroed = whole.slice();
+      zeroed[22] = 0; zeroed[23] = 0; zeroed[24] = 0; zeroed[25] = 0;
+      const crcOk = crcRef(zeroed) === crc;
+      const packets = [];
+      let p = at + 27 + nseg;
+      let cur = carry || [];
+      carry = null;
+      for (let i = 0; i < nseg; i++) {
+        cur.push(...u8.slice(p, p + lacing[i]));
+        p += lacing[i];
+        if (lacing[i] < 255) { packets.push(new Uint8Array(cur)); cur = []; }
+      }
+      if (cur.length) carry = cur;
+      pages.push({ type, granule, serial, seq, crcOk, packets, nseg });
+      at = pageEnd;
+    }
+    return { pages, trailing: carry ? carry.length : 0 };
+  };
+  const opusPackets = (n, size = 120) => Array.from({ length: n }, (_, i) => ({
+    data: new Uint8Array(size).fill((i % 250) + 1).map((v, j) => (v + j) & 255),
+    timestampUs: i * 20000, durationUs: 20000,
+  }));
+
+  const frames = opusPackets(60);                  // 1.2s — must split pages
+  const ogg = await bytesOf(muxOggOpus({ frames, channels: 2, sampleRate: 48000 }));
+  const parsed = parsePages(ogg);
+
+  check('every byte parses as a page and nothing is left over',
+    !parsed.error && !parsed.trailing
+    && parsed.pages.length >= 3, parsed.error || `${parsed.pages.length} pages`);
+  check('every page CRC verifies against an independent implementation',
+    parsed.pages.every((p) => p.crcOk),
+    parsed.pages.map((p, i) => (p.crcOk ? '' : `page ${i}`)).filter(Boolean).join(', '));
+  check('page sequence numbers are contiguous from zero',
+    parsed.pages.every((p, i) => p.seq === i));
+  check('one serial number throughout',
+    new Set(parsed.pages.map((p) => p.serial)).size === 1);
+  check('the first page is BOS and carries exactly the OpusHead', (() => {
+    const p = parsed.pages[0];
+    return p.type === 0x02 && p.granule === 0 && p.packets.length === 1
+      && String.fromCharCode(...p.packets[0].slice(0, 8)) === 'OpusHead'
+      && p.packets[0][9] === 2;                    // channel count
+  })());
+  check('the second page is the OpusTags comment header', (() => {
+    const p = parsed.pages[1];
+    return p.type === 0 && p.granule === 0 && p.packets.length === 1
+      && String.fromCharCode(...p.packets[0].slice(0, 8)) === 'OpusTags';
+  })());
+  check('only the last page carries EOS', (() => {
+    const eos = parsed.pages.map((p, i) => [(p.type & 0x04) !== 0, i]).filter(([e]) => e);
+    return eos.length === 1 && eos[0][1] === parsed.pages.length - 1;
+  })());
+  check('a second of packets per page, not one page or a page each', (() => {
+    const audio = parsed.pages.slice(2);
+    return audio.length === 2 && audio[0].packets.length === 50 && audio[1].packets.length === 10;
+  })(), `${parsed.pages.length - 2} audio pages`);
+  check('the packets come back byte-exact through an independent reassembly', (() => {
+    const got = parsed.pages.slice(2).flatMap((p) => p.packets);
+    return got.length === frames.length
+      && got.every((p, i) => p.length === frames[i].data.length
+        && p.every((v, j) => v === frames[i].data[j]));
+  })());
+  check('granule positions accumulate 48kHz samples and end on the total', (() => {
+    const audio = parsed.pages.slice(2);
+    const perPacket = 960;                          // 20ms at 48kHz
+    return audio[0].granule === 50 * perPacket
+      && audio[1].granule === 60 * perPacket
+      && audio.every((p, i) => i === 0 || p.granule > audio[i - 1].granule);
+  })(), parsed.pages.slice(2).map((p) => p.granule).join(', '));
+  check('an encoder-supplied OpusHead is used verbatim', await (async () => {
+    const head = opusHead(1, 48000, 500);
+    const one = await bytesOf(muxOggOpus({ frames: opusPackets(3), description: head }));
+    const p = parsePages(one).pages[0].packets[0];
+    return p.length === head.length && p.every((v, i) => v === head[i]);
+  })());
+  check('a packet that divides 255 exactly gets its zero terminator', await (async () => {
+    const exact = [{ data: new Uint8Array(510).fill(7), timestampUs: 0, durationUs: 20000 }];
+    const one = await bytesOf(muxOggOpus({ frames: exact, channels: 2, sampleRate: 48000 }));
+    const parsedOne = parsePages(one);
+    const page = parsedOne.pages[2];
+    return page.nseg === 3 && page.packets.length === 1 && page.packets[0].length === 510
+      && page.packets[0].every((v) => v === 7);
+  })());
+  check('the same packets mux byte-identically twice', await (async () => {
+    const a = await bytesOf(muxOggOpus({ frames: opusPackets(10), channels: 2, sampleRate: 48000 }));
+    const b = await bytesOf(muxOggOpus({ frames: opusPackets(10), channels: 2, sampleRate: 48000 }));
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  })());
+  check('an empty render is refused', (() => {
+    try { muxOggOpus({ frames: [] }); return false; }
+    catch (e) { return /nothing to mux/.test(e.message); }
+  })());
+
+  /* The format table the picker builds from: wav first (the master and the
+     fallback), each entry naming a real extension, unknown ids answered with
+     the fallback rather than undefined. */
+  check('the audio format table starts at wav and answers unknown ids with it',
+    AUDIO_FILE_FORMATS[0].id === 'wav'
+    && AUDIO_FILE_FORMATS.every((f) => f.id && f.ext && f.label && f.note)
+    && audioFormatOf('nope').id === 'wav' && audioFormatOf(undefined).id === 'wav'
+    && audioFormatOf('ogg').ext === 'ogg' && audioFormatOf('m4a').ext === 'm4a');
 }
 
 /* ================================================== audio region edits === */

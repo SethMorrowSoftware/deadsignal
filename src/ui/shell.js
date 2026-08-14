@@ -39,12 +39,18 @@ export function validateVideo(){ const cfg=readVideoCfg(); const items=[];
   if(cfg.ss && cfg.W*cfg.H>1280*720) items.push({msg:"2× supersample at this size renders "+(cfg.W*2)+"×"+(cfg.H*2)+" offscreen — turn it off if the preview stalls.",fix:()=>{setVal("v-ss",false); startVideoPreview();}});
   if(items.length) setBanner("v-banners",items); else clearBanner("v-banners"); }
 export let _liveT=null;
-export function wireLive(viewId,fn){ const c=$(viewId); if(!c)return; c.addEventListener("input",()=>{ clearTimeout(_liveT); _liveT=setTimeout(fn,70); }); }
+/* Every control id the debounce collapsed, not just the last one — so a view
+   can treat a delivery-only control differently from a render setting (the
+   audio File picker must not mark a format-independent render stale) without
+   a slider edit hiding behind it in the same 70ms window. */
+let _liveIds=new Set();
+/* fn receives the array of control ids that changed since it last ran. */
+export function wireLive(viewId,fn){ const c=$(viewId); if(!c)return; c.addEventListener("input",(e)=>{ _liveIds.add((e.target&&e.target.id)||""); clearTimeout(_liveT); _liveT=setTimeout(()=>{ const ids=[..._liveIds]; _liveIds.clear(); fn(ids); },70); }); }
 /* Drop a pending live callback. A render reads the CURRENT document, so any
    edit still sitting in the 70ms debounce is already reflected in it — letting
    that callback land afterwards would mark fresh output stale and disable its
-   download. */
-export function cancelLive(){ clearTimeout(_liveT); }
+   download. The id buffer goes with it, for the same reason. */
+export function cancelLive(){ clearTimeout(_liveT); _liveIds.clear(); }
 /* Nudge every slider on the active tab, seeded so the same seed gives the same
    shove twice.
  *

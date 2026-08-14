@@ -1,5 +1,5 @@
 /* Dead Signal Studio — boot.js */
-import { doRenderAudio, initAudioTab, markAudioStale } from './audio/ui.js';
+import { doRenderAudio, initAudioTab, markAudioStale, syncAudioDlLabel } from './audio/ui.js';
 import { fillContainerSelect } from './export/encoder.js';
 import { primeSizing } from './ui/sizing.js';
 import { download } from './core/blobs.js';
@@ -129,7 +129,9 @@ export function boot(){
       const step=(label,fn)=>{ try{ fn(); }catch(e){ log("Refresh failed ("+label+"): "+e.message,"warn"); } };
       step("video preview", startVideoPreview);
       step("screen", renderImage);
-      step("audio", ()=>{ markAudioStale(); updateAudioLayerFlags(); });
+      // The download button's label follows the File picker, which undo and
+      // project load both move without an input event for wireLive to see.
+      step("audio", ()=>{ markAudioStale(); updateAudioLayerFlags(); syncAudioDlLabel(); });
       // The clip list is a projection of the document, so it is rebuilt rather
       // than re-rendered; the timeline loop also snapshots its schedule when it
       // starts, so it has to be restarted or it keeps playing the pre-undo

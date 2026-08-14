@@ -30,7 +30,7 @@ const REASONS = {
   /* Audio: the panel where this matters most. */
   'a-play':        ['Play the rendered sound',
                     'No sound has been rendered yet — press ◆ RENDER first.'],
-  'a-dl':          ['Download the rendered sound as a .wav',
+  'a-dl':          ['Download the rendered sound — the File picker chooses .wav, .m4a or .ogg',
                     'No sound has been rendered yet — press ◆ RENDER first.'],
   'a-norm':        ['Raise the level so the loudest peak just reaches full scale',
                     'No sound has been rendered yet — press ◆ RENDER first.'],

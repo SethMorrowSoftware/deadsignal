@@ -1,6 +1,7 @@
 /* Dead Signal Studio — audio/ui.js */
 import { applyEdgeFades, readAudioCfg, renderAudio } from './engine.js';
 import { bufferPeakRms, encodeWav } from './wav.js';
+import { audioFormatOf, encodeAudioFile } from '../export/audiofile.js';
 import { download, makeUrl, revokeUrl } from '../core/blobs.js';
 import { $, chk, log, setEnabled, setVal, toast, val } from '../core/dom.js';
 import { saveUserPreset } from '../core/recipes.js';
@@ -110,6 +111,31 @@ export async function doRenderAudio(){ if(aRendering)return; aRendering=true; co
       clearBanner("a-banners"); }
   }catch(e){ log("Audio render failed: "+e.message,"err"); $("a-status").textContent="Render failed."; }
   finally{ aRendering=false; const b=$("a-render"); if(b)b.disabled=false; } }
+/* The download button names the file it will write, from the File picker —
+   the same promise the RECORD button makes about its container, kept the same
+   way. Read from the SELECTED format, not the last export: this runs before
+   anything has been written, and the export can still degrade m4a/ogg to WAV
+   on a build without WebCodecs — which it announces and names the file for. */
+export function syncAudioDlLabel(){ const b=$("a-dl"); if(!b)return; b.textContent="⤓ ."+audioFormatOf(val("a-format")).ext; }
+/* In-flight guard: an AAC/Opus encode is async and a double-click would run
+   two. The WAV path is synchronous and never queues. */
+let aEncoding=false;
+export async function downloadAudio(){
+  if(!lastAudio||!lastAudio.blob||aEncoding)return;
+  const name=slug(val("a-morse-w")||"audio");
+  const fmt=audioFormatOf(val("a-format")).id;
+  if(fmt==="wav"){ download(lastAudio.blob, name+".wav"); return; }
+  const b=$("a-dl"); aEncoding=true; if(b)b.textContent="… encoding";
+  try{
+    const r=await encodeAudioFile(lastAudio.channels,lastAudio.sr,lastAudio.bits,fmt);
+    /* A format the build cannot write costs the format, not the file — but
+       silently is how an author uploads a .wav named .m4a, so it is loud. */
+    if(r.note){ toast(r.note,"err"); log("Audio export: "+r.note,"warn"); }
+    download(r.blob, name+"."+r.ext);
+    log("Audio exported "+name+"."+r.ext+" — "+(r.blob.size/1024).toFixed(0)+" KB.","ok");
+  }catch(e){ toast("Audio export failed","err"); log("Audio export failed: "+e.message,"err"); }
+  finally{ aEncoding=false; syncAudioDlLabel(); }
+}
 export function normalizeAudio(){ if(!lastAudio)return; const pr=bufferPeakRms(lastAudio.channels); if(pr.peak<=0)return; const g=0.97/pr.peak;
   // Rescales lastAudio.channels IN PLACE, so anything holding those arrays —
   // the bed's 'last' choice, the lane's waveform thumbnails — is now stale.
@@ -132,8 +158,9 @@ export function initAudioTab(){
   initSolo(()=>markAudioStale());
   $("a-preset").addEventListener("change", ()=>loadPreset("audio","view-audio"));
   $("a-render").addEventListener("click", doRenderAudio); $("a-play").addEventListener("click", toggleAudioPlayback);
-  $("a-dl").addEventListener("click", ()=>{ if(lastAudio&&lastAudio.blob) download(lastAudio.blob, slug(val("a-morse-w")||"audio")+".wav"); });
+  $("a-dl").addEventListener("click", downloadAudio);
   $("a-norm").addEventListener("click", normalizeAudio); $("a-savepreset").addEventListener("click", ()=>saveUserPreset("audio","view-audio"));
+  syncAudioDlLabel();
   if($("a-loadaudio")){
     $("a-loadaudio").addEventListener("click", ()=>$("a-samplefile").click());
     $("a-samplefile").addEventListener("change", async (e)=>{
@@ -155,7 +182,11 @@ export function initAudioTab(){
     });
   }
   updateSampleName();
-  wireLive("view-audio",()=>{ markAudioStale(); updateAudioLayerFlags(); });
+  /* The File picker is a delivery choice, not a render setting: the render is
+     format-independent (the compressed pair encode the same float channels on
+     click), so choosing one must not stale a fresh render and grey its own
+     download button. Any OTHER edit in the same debounce window still does. */
+  wireLive("view-audio",(ids)=>{ if(!Array.isArray(ids)||ids.some((id)=>id!=="a-format")) markAudioStale(); updateAudioLayerFlags(); syncAudioDlLabel(); });
 }
 export function updateSampleName(){ const t=$("a-sample-name"); if(!t)return;
   t.textContent = hasImportedAudio()

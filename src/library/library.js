@@ -202,7 +202,7 @@ export function previewItem(it){ if(!it||!it.url)return; const ext=(it.ext||"").
   closePreviews(); // one preview at a time — no stacked media
   const ov=document.createElement("div"); ov.className="preview-overlay";
   const box=document.createElement("div"); box.className="pv-box"; let el;
-  if(it.kind==="music" || ["wav","mp3","ogg"].includes(ext)){ el=document.createElement("audio"); el.controls=true; el.autoplay=true; }
+  if(it.kind==="music" || ["wav","mp3","ogg","m4a","aac","flac","oga","weba"].includes(ext)){ el=document.createElement("audio"); el.controls=true; el.autoplay=true; }
   else if(it.kind==="videos" || ["webm","mp4","ogv"].includes(ext)){ el=document.createElement("video"); el.controls=true; el.autoplay=true; el.loop=true; el.playsInline=true; }
   else { el=document.createElement("img"); el.alt=it.name; }
   el.addEventListener("error",()=>{ if(el.isConnected){ log("Preview failed to load "+it.name+"."+it.ext,"err"); toast("Preview could not load","err"); } });

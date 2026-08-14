@@ -941,6 +941,70 @@ section('exports produce real files');
         wav && wav.size > 1000 && wav.riff === 'RIFF' && wav.wave === 'WAVE',
         wav ? `${wav.size} bytes ${wav.riff}/${wav.wave}` : '(none)');
 
+  /* The compressed pair, through the same picker and the same button. OGG is
+     unconditional — Chromium always carries an Opus encoder. Choosing a format
+     is a delivery choice, not a render setting, so the fresh render must stay
+     fresh and its download button must stay live. */
+  const oggx = await page.evaluate(async () => {
+    const fmt = document.getElementById('a-format');
+    fmt.value = 'ogg';
+    fmt.dispatchEvent(new Event('input', { bubbles: true }));
+    fmt.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    const btn = document.getElementById('a-dl');
+    const label = btn.textContent;
+    const off = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+    const stale = document.getElementById('a-stale').textContent;
+    window.__blobs.length = 0;
+    btn.click();
+    for (let i = 0; i < 100 && !window.__blobs.length; i++) await new Promise((r) => setTimeout(r, 100));
+    const b = window.__blobs.at(-1);
+    if (!b) return { label, off, stale };
+    const head = [...new Uint8Array(await b.slice(0, 4).arrayBuffer())];
+    return { label, off, stale, size: b.size, type: b.type,
+             magic: String.fromCharCode(...head) };
+  });
+  check('choosing OGG renames the download button and keeps a fresh render fresh',
+        oggx && oggx.label === '⤓ .ogg' && !oggx.off && oggx.stale === 'fresh',
+        JSON.stringify({ label: oggx?.label, off: oggx?.off, stale: oggx?.stale }));
+  check('OGG export produces real Ogg pages, smaller than the WAV',
+        oggx && oggx.magic === 'OggS' && oggx.type === 'audio/ogg'
+        && oggx.size > 500 && wav && oggx.size < wav.size,
+        oggx ? `${oggx.size} bytes vs wav ${wav && wav.size}` : '(none)');
+
+  /* M4A is honest about the platform: AAC encoding is licensed and some
+     Chromium builds ship without it. Where it exists the file is a real .m4a;
+     where it does not, the export writes a WAV and SAYS so — the same degrade
+     MP4 video makes, and the check accepts exactly those two outcomes. */
+  const m4ax = await page.evaluate(async () => {
+    const E = await import('./src/export/encoder.js');
+    const support = await E.audioEncoderSupport(2, 'mp4');
+    const fmt = document.getElementById('a-format');
+    fmt.value = 'm4a';
+    fmt.dispatchEvent(new Event('input', { bubbles: true }));
+    fmt.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 150));
+    window.__blobs.length = 0;
+    document.getElementById('a-dl').click();
+    for (let i = 0; i < 100 && !window.__blobs.length; i++) await new Promise((r) => setTimeout(r, 100));
+    const b = window.__blobs.at(-1);
+    // Back to the default so nothing downstream inherits a format this check chose.
+    fmt.value = 'wav';
+    fmt.dispatchEvent(new Event('input', { bubbles: true }));
+    fmt.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!b) return { supported: support.available };
+    const head = [...new Uint8Array(await b.slice(0, 12).arrayBuffer())];
+    return { supported: support.available, size: b.size, type: b.type,
+             ftyp: String.fromCharCode(...head.slice(4, 8)),
+             brand: String.fromCharCode(...head.slice(8, 12)),
+             riff: String.fromCharCode(...head.slice(0, 4)) };
+  });
+  check('M4A export writes a real .m4a where AAC exists, an honest WAV where not',
+        m4ax && (m4ax.supported
+          ? (m4ax.ftyp === 'ftyp' && m4ax.brand === 'M4A ' && m4ax.type === 'audio/mp4')
+          : (m4ax.riff === 'RIFF' && m4ax.type === 'audio/wav')),
+        JSON.stringify(m4ax));
+
   // WebM recording — the headline export. Short, but real.
   const webm = await page.evaluate(async () => {
     document.querySelector('.tab[data-view="video"]').click();
