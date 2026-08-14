@@ -459,6 +459,17 @@ export const deleteServerAsset = (id) =>
 export const renameServerAsset = (id, name) =>
   api('/studio/assets/' + encodeURIComponent(id), { method: 'PATCH', body: { name } });
 
+/* Publishing: one uploaded file, given a stable public URL by its owner.
+   Idempotent on the server — publishing again returns the same token — so the
+   CLOUD tab can always re-show an address, unlike a share link's one-time
+   reveal. days: 1–365, or 0/undefined for never. */
+export const publishAsset = (id, days) =>
+  api('/studio/assets/' + encodeURIComponent(id) + '/publish',
+    { method: 'POST', body: { expiresInDays: days ?? 0 } });
+export const unpublishAsset = (id) =>
+  api('/studio/assets/' + encodeURIComponent(id) + '/publish', { method: 'DELETE' });
+export const listPublications = () => api('/studio/publications');
+
 /** Download an asset's bytes as a Blob. */
 export async function fetchAsset(id) {
   const res = await api('/studio/assets/' + encodeURIComponent(id) + '/raw', { raw: true });

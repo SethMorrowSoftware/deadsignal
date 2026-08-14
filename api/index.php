@@ -102,6 +102,17 @@ $router->get('/studio/assets',                 [StudioController::class, 'listAs
 $router->get('/studio/assets/:id/raw',         [StudioController::class, 'downloadAsset'],  $authed);
 $router->patch('/studio/assets/:id',           [StudioController::class, 'renameAsset'],    $authed);
 $router->delete('/studio/assets/:id',          [StudioController::class, 'deleteAsset'],    $authed);
+// Publishing: one finished FILE, given a public address on purpose, by its
+// owner. The bytes route is the counterpart to /studio/shared/:token with the
+// same discipline — 256-bit token, shape-checked, expiring by the DB clock,
+// rate-limited by route pattern — but it serves MEDIA, so it speaks Range and
+// real Content-Types rather than JSON. watch.php beside index.html is the
+// page that wraps it in a player.
+$router->post('/studio/assets/:id/publish',    [StudioController::class, 'publishAsset'],   $authed);
+$router->delete('/studio/assets/:id/publish',  [StudioController::class, 'unpublishAsset'], $authed);
+$router->get('/studio/publications',           [StudioController::class, 'listPublications'], $authed);
+$router->get('/studio/p/:token/meta',          [StudioController::class, 'publicAssetMeta'], [Middleware::rateLimit(60, 60)]);
+$router->get('/studio/p/:token',               [StudioController::class, 'publicAsset'],    [Middleware::rateLimit(240, 60)]);
 
 // CORS preflight, for the deployment where the studio and its API are on
 // different origins. No credentials are echoed and no origin is allowlisted
@@ -115,6 +126,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 // Some shared hosts block PUT and DELETE outright. Allow a POST to say what it
 // really meant, so those hosts are not left with a read-only studio.
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+// A HEAD is a GET whose body the SAPI discards — mod_php, php-fpm and the
+// built-in server all do that themselves. Dispatching it as GET means a
+// player or a curl -I probing a published media URL sees the real headers
+// instead of a 404 from a method table that never listed HEAD.
+if ($method === 'HEAD') $method = 'GET';
 if ($method === 'POST') {
     $override = $_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE'] ?? $_GET['_method'] ?? null;
 

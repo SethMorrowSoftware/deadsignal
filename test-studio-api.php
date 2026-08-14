@@ -584,6 +584,104 @@ check('…but not by anyone else (404)', $s === 404, (string) $s);
 [$s] = req('/studio/assets/' . $tinyId, 'PATCH', ['name' => ''], $alice);
 check('…and an empty name is refused', $s === 400, (string) $s);
 
+/* ========================================================== publishing == */
+section('publishing — one file, one public URL');
+/* The one door through which asset BYTES reach someone with no account. The
+   discipline mirrors share links (256-bit token, DB-clock expiry, 404 for
+   everything wrong) but the payload is MEDIA: real Content-Type, inline
+   disposition, Range — a <video> that cannot seek buffers the whole file. */
+
+/** Raw media request: [status, headers-as-string, body]. */
+$mediaReq = static function (string $path, array $hdrs = [], bool $nobody = false) use (&$base): array {
+    $ch = curl_init($base . $path);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true,
+        CURLOPT_NOBODY => $nobody, CURLOPT_HTTPHEADER => $hdrs, CURLOPT_TIMEOUT => 30,
+    ]);
+    $out = (string) curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $hlen = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+    curl_close($ch);
+    return [$status, substr($out, 0, $hlen), substr($out, $hlen)];
+};
+
+[$s, $r] = req('/studio/assets/' . $tinyId . '/publish', 'POST', [], $alice);
+$tok = (string) ($r['publication']['token'] ?? '');
+check('the owner can publish an asset', $s === 201 && preg_match('/^[a-f0-9]{64}$/', $tok), (string) $s);
+[$s, $r2] = req('/studio/assets/' . $tinyId . '/publish', 'POST', [], $alice);
+check('publishing again returns the SAME address, not a second one',
+    $s === 201 && ($r2['publication']['token'] ?? '') === $tok);
+[$s] = req('/studio/assets/' . $tinyId . '/publish', 'POST', [], $bob);
+check('nobody else can publish it (404)', $s === 404, (string) $s);
+[$s] = req('/studio/assets/' . $tinyId . '/publish', 'POST', ['expiresInDays' => 9999], $alice);
+check('an absurd expiry is refused', $s === 400, (string) $s);
+
+// Anonymous, no headers at all: the token is the whole credential.
+[$s, $hdr, $bytes] = $mediaReq('/studio/p/' . $tok);
+check('anyone with the address gets the bytes, byte for byte',
+    $s === 200 && $bytes === $tiny, $s . ' / ' . strlen($bytes) . ' bytes');
+check('…served as media, inline, seekable and cacheable — not as the API\'s JSON',
+    stripos($hdr, 'Content-Type: application/octet-stream') !== false
+    && stripos($hdr, 'Content-Disposition: inline') !== false
+    && stripos($hdr, 'Accept-Ranges: bytes') !== false
+    && stripos($hdr, 'Cache-Control: private, max-age') !== false
+    && stripos($hdr, 'Cache-Control: no-store') === false,
+    preg_match_all('/^(Content-Type|Content-Disposition|Accept-Ranges|Cache-Control):[^\r\n]*/mi', $hdr, $m)
+        ? implode(' | ', $m[0]) : 'headers missing');
+[$s, $hdr] = $mediaReq('/studio/p/' . $tok, [], true);
+check('HEAD answers with the same headers and no body',
+    $s === 200 && stripos($hdr, 'Accept-Ranges: bytes') !== false, (string) $s);
+
+// Range: what a player's seek actually sends.
+[$s, $hdr, $slice] = $mediaReq('/studio/p/' . $tok, ['Range: bytes=100-199']);
+check('a byte range comes back 206 with exactly that slice',
+    $s === 206 && $slice === substr($tiny, 100, 100)
+    && stripos($hdr, 'Content-Range: bytes 100-199/' . strlen($tiny)) !== false,
+    $s . ' / ' . strlen($slice) . ' bytes');
+[$s, $hdr, $slice] = $mediaReq('/studio/p/' . $tok, ['Range: bytes=-40']);
+check('the suffix form serves the last bytes',
+    $s === 206 && $slice === substr($tiny, -40), (string) $s);
+[$s, $hdr] = $mediaReq('/studio/p/' . $tok, ['Range: bytes=999999-']);
+check('an unsatisfiable range is 416 with the file size',
+    $s === 416 && stripos($hdr, 'Content-Range: bytes */' . strlen($tiny)) !== false, (string) $s);
+
+[$s, $r] = req('/studio/p/' . $tok . '/meta');
+check('the player page\'s meta names the file and nothing about its owner',
+    $s === 200 && ($r['name'] ?? '') === 'renamed.webm' && ($r['size'] ?? 0) === strlen($tiny)
+    && !isset($r['owner_id']) && !isset($r['owner_name']), json_encode($r));
+
+[$s, $r] = req('/studio/publications', 'GET', null, $alice);
+check('the owner\'s publication list carries the token, re-showable by design',
+    $s === 200 && in_array($tok, array_column($r['publications'] ?? [], 'token'), true));
+[$s, $r] = req('/studio/publications', 'GET', null, $bob);
+check('…and it is not in anyone else\'s list',
+    $s === 200 && !in_array($tok, array_column($r['publications'] ?? [], 'token'), true));
+
+$fake = str_repeat('ab', 32);
+[$s] = req('/studio/p/' . $fake);
+check('a well-shaped token that was never minted is 404', $s === 404, (string) $s);
+[$s] = req('/studio/p/not-a-token');
+check('a malformed token is 404 before the database is asked', $s === 404, (string) $s);
+
+[$s] = req('/studio/assets/' . $tinyId . '/publish', 'DELETE', null, $bob);
+check('nobody else can revoke it (404)', $s === 404, (string) $s);
+[$s, $r] = req('/studio/assets/' . $tinyId . '/publish', 'DELETE', null, $alice);
+check('the owner revokes it', $s === 200 && ($r['revoked'] ?? false) === true, (string) $s);
+[$s] = $mediaReq('/studio/p/' . $tok);
+check('…and the address stops working immediately', $s === 404, (string) $s);
+
+// Republish mints a FRESH address — revocation was real, not a pause.
+[, $r] = req('/studio/assets/' . $tinyId . '/publish', 'POST', [], $alice);
+$tok2 = (string) ($r['publication']['token'] ?? '');
+check('republishing after a revocation mints a new address',
+    preg_match('/^[a-f0-9]{64}$/', $tok2) && $tok2 !== $tok);
+// Deleting the asset takes its publication with it (the FK cascade): a
+// published URL can never outlive — or leak — a deleted file.
+[$s] = req('/studio/assets/' . $tinyId, 'DELETE', null, $alice);
+check('the asset deletes', $s === 200, (string) $s);
+[$s] = $mediaReq('/studio/p/' . $tok2);
+check('…and its published address dies with it', $s === 404, (string) $s);
+
 [$s] = req('/studio/projects/' . $pid, 'DELETE', null, $alice);
 check('the owner can delete the project', $s === 200, (string) $s);
 

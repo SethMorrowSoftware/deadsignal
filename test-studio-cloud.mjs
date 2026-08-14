@@ -314,6 +314,32 @@ ok('→ LIBRARY pulls the asset back down',
    await p.evaluate(()=>window.DeadSignalStudio.library.length));
 ok('…with its real bytes',
    (await p.evaluate(()=>window.DeadSignalStudio.library[0]?.blob?.size||0))>0);
+
+console.log('\n[publishing]');
+// The Public column: PUBLISH → the file gets a stable anonymous URL and the
+// cell flips to 🔗 URL + revoke. Verified from OUTSIDE the session — a plain
+// fetch with no headers is exactly what "public" claims.
+ok('an unpublished asset offers PUBLISH', !!(await p.$('#cloud-assets button[data-pub]')));
+await p.click('#cloud-assets button[data-pub]'); await p.waitForTimeout(2000);
+ok('publishing flips the cell to a copyable URL and a revoke',
+   !!(await p.$('#cloud-assets button[data-puburl]')) && !!(await p.$('#cloud-assets button[data-unpub]')));
+const pubBytes = await p.evaluate(async (api)=>{
+  const l=await fetch(api+'/studio/publications',{headers:{
+    'Authorization':'Bearer '+JSON.parse(localStorage.getItem('deadsignal.studio.apiToken')||'null'),
+    'X-Requested-With':'XMLHttpRequest'}});
+  const pub=(await l.json()).publications?.[0];
+  if(!pub) return { status: 0 };
+  const r=await fetch(api+'/studio/p/'+pub.token);   // anonymous on purpose
+  return { status: r.status, size: (await r.blob()).size,
+           range: (await fetch(api+'/studio/p/'+pub.token,{headers:{Range:'bytes=0-9'}})).status };
+}, API_BASE);
+ok('anyone with the address gets the bytes, no account, no headers',
+   pubBytes.status===200 && pubBytes.size>0, JSON.stringify(pubBytes));
+ok('…and the URL speaks Range for a seeking player', pubBytes.range===206, pubBytes.range);
+await p.click('#cloud-assets button[data-unpub]'); await p.waitForTimeout(1800);
+ok('revoking returns the cell to PUBLISH',
+   !!(await p.$('#cloud-assets button[data-pub]')) && !(await p.$('#cloud-assets button[data-unpub]')));
+
 await p.click('#cloud-assets button[data-rmasset]'); await p.waitForTimeout(1800);
 ok('✕ deletes it from the server',
    (await p.$$eval('#cloud-assets tbody tr', r=>r.length))===0);

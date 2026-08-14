@@ -23,6 +23,10 @@ let _tokenFor = null;    // the project the one-time share link on screen belong
 let _versions = [];
 let _shares = [];
 let _assets = [];
+/* asset_id -> publication row. A publication is an asset's public URL, and
+   unlike a share token it is re-showable by design — the server hands the
+   token back on every list, because the address IS the product. */
+let _pubs = new Map();
 
 export const openProjectId = () => _openId;
 
@@ -228,14 +232,25 @@ function renderAssets() {
   }
   tableIn(box,
     '<th scope="col">File</th><th scope="col">Kind</th><th scope="col">Size</th>'
-    + '<th scope="col">Uploaded</th><th scope="col"><span class="sr-only">Actions</span></th>',
-    _assets.map((a) =>
-      '<tr><td>' + escHtml(a.original_name || '(unnamed)') + '</td>'
-      + '<td>' + escHtml(a.kind || '') + '</td>'
-      + '<td>' + fmtSize(a.size || 0) + '</td>'
-      + '<td>' + fmtWhen(a.created_at) + '</td>'
-      + '<td><button class="btn small" data-get="' + escHtml(String(a.id)) + '">→ LIBRARY</button> '
-      + '<button class="btn small" data-rmasset="' + escHtml(String(a.id)) + '">✕</button></td></tr>').join(''));
+    + '<th scope="col">Uploaded</th><th scope="col">Public</th>'
+    + '<th scope="col"><span class="sr-only">Actions</span></th>',
+    _assets.map((a) => {
+      const pub = _pubs.get(Number(a.id));
+      /* Published: the address is one click away and revocation beside it.
+         Not: one button that makes it so. The label carries the state — a
+         cell that says "🔗 URL" IS the answer to "is this public". */
+      const pubCell = pub
+        ? '<button class="btn small" data-puburl="' + escHtml(String(a.id)) + '" title="Copy the public link — anyone with it can watch this file">🔗 URL</button> '
+          + '<button class="btn small" data-unpub="' + escHtml(String(a.id)) + '" title="Revoke the public link — it stops working immediately">✕</button>'
+        : '<button class="btn small" data-pub="' + escHtml(String(a.id)) + '" title="Give this file a public link anyone can open — no account needed">PUBLISH</button>';
+      return '<tr><td>' + escHtml(a.original_name || '(unnamed)') + '</td>'
+        + '<td>' + escHtml(a.kind || '') + '</td>'
+        + '<td>' + fmtSize(a.size || 0) + '</td>'
+        + '<td>' + fmtWhen(a.created_at) + '</td>'
+        + '<td>' + pubCell + '</td>'
+        + '<td><button class="btn small" data-get="' + escHtml(String(a.id)) + '">→ LIBRARY</button> '
+        + '<button class="btn small" data-rmasset="' + escHtml(String(a.id)) + '">✕</button></td></tr>';
+    }).join(''));
 }
 
 /* The server actions are dead without a signed-in backend. Disabled with the
@@ -282,6 +297,13 @@ export async function refreshCloud({ force = false } = {}) {
     catch (e) { _projects = []; _projectsTotal = 0; log('Could not list projects: ' + e.message, 'err'); }
     try { _assets = (await API.listServerAssets()).assets || []; }
     catch (e) { _assets = []; log('Could not list assets: ' + e.message, 'err'); }
+    try {
+      const pubs = (await API.listPublications()).publications || [];
+      _pubs = new Map(pubs.map((p) => [Number(p.asset_id), p]));
+    }
+    /* An older backend has no publications route; the studio must keep
+       working against it, minus the Public column's buttons doing anything. */
+    catch (e) { _pubs = new Map(); log('Could not list publications: ' + e.message, 'warn'); }
     // A project that no longer exists must not keep a stale detail pane open.
     if (_detailId && !_projects.some((p) => String(p.id) === String(_detailId))) {
       _detailId = null; _versions = []; _shares = [];
@@ -289,7 +311,7 @@ export async function refreshCloud({ force = false } = {}) {
       await loadDetail(_detailId);
     }
   } else {
-    _projects = []; _assets = []; _detailId = null; _versions = []; _shares = [];
+    _projects = []; _assets = []; _pubs = new Map(); _detailId = null; _versions = []; _shares = [];
   }
   renderCloud();
   return _state;
@@ -579,6 +601,24 @@ async function addShare() {
   await refreshCloud();
 }
 
+/**
+ * The public address for a publication token: watch.php beside index.html,
+ * resolved against THIS page's own URL — so a studio in a subdirectory mints
+ * links into that subdirectory, the same rule the API discovery lives by.
+ */
+const publicUrlFor = (token) => new URL('watch.php?t=' + token, location.href).href;
+
+/** Copy a URL, with the same insecure-context fallback the share box has. */
+function copyUrl(url) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(
+      () => toast('Public link copied'),
+      () => { prompt('Copy the public link:', url); });
+  } else {
+    prompt('Copy the public link:', url);
+  }
+}
+
 /** Pull a server asset back into this session's library. */
 async function pullAsset(id) {
   const a = _assets.find((x) => String(x.id) === String(id));
@@ -701,8 +741,29 @@ export function initCloud() {
   $('cloud-assets')?.addEventListener('click', (e) => {
     const get = e.target.closest('button[data-get]');
     const rm = e.target.closest('button[data-rmasset]');
+    const pub = e.target.closest('button[data-pub]');
+    const puburl = e.target.closest('button[data-puburl]');
+    const unpub = e.target.closest('button[data-unpub]');
     if (get) guard(() => pullAsset(get.dataset.get), 'Download');
-    else if (rm) {
+    else if (pub) {
+      guard(async () => {
+        const r = await API.publishAsset(pub.dataset.pub);
+        const url = publicUrlFor(r.publication.token);
+        copyUrl(url);
+        log('Published asset ' + pub.dataset.pub + ' — ' + url, 'ok');
+        await refreshCloud();
+      }, 'Publish');
+    } else if (puburl) {
+      const p = _pubs.get(Number(puburl.dataset.puburl));
+      if (p) copyUrl(publicUrlFor(p.token));
+    } else if (unpub) {
+      guard(async () => {
+        await API.unpublishAsset(unpub.dataset.unpub);
+        toast('Public link revoked');
+        log('Unpublished asset ' + unpub.dataset.unpub + '.', 'ok');
+        await refreshCloud();
+      }, 'Unpublish');
+    } else if (rm) {
       if (!confirm('Delete this asset from the server?')) return;
       guard(async () => {
         await API.deleteServerAsset(rm.dataset.rmasset);

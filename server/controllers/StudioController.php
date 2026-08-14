@@ -27,6 +27,11 @@
  *   POST   /studio/assets/complete        Assemble, verify, register
  *   GET    /studio/assets/:id/raw         Download the bytes
  *   DELETE /studio/assets/:id             Delete
+ *   POST   /studio/assets/:id/publish     Give the file a public URL (owner)
+ *   DELETE /studio/assets/:id/publish     Revoke it (owner)
+ *   GET    /studio/publications           Every live URL on your assets
+ *   GET    /studio/p/:token               The published bytes (public, Range)
+ *   GET    /studio/p/:token/meta          Name/kind/mime/size for the player
  *
  * Every route is authenticated by middleware. Authorisation — who may read or
  * write which project — is decided here, in one place, by requireProject().
@@ -555,6 +560,170 @@ class StudioController
             $storage->deleteAssetFile((int) $asset['owner_id'], (string) $asset['sha256']);
         }
         jsonResponse(['deleted' => true]);
+    }
+
+    /* ------------------------------------------------------ publications -- */
+
+    /**
+     * POST /studio/assets/:id/publish — give one finished file a public URL.
+     *
+     * Owner-only, like /raw: publication is the one door through which asset
+     * BYTES reach someone with no account, so it opens only from the owner's
+     * own hand. Idempotent — publishing again returns the same address (and
+     * may move its expiry), because a stable URL is the whole product.
+     */
+    public function publishAsset(array $params): void
+    {
+        $this->storage();
+        $asset = StudioAsset::findById((int) ($params['id'] ?? 0));
+        if (!$asset || (int) $asset['owner_id'] !== $this->userId()) jsonError('Asset not found', 404);
+
+        $days = input('expiresInDays');
+        $seconds = null;
+        if ($days !== null && $days !== '' && (int) $days !== 0) {
+            $days = (int) $days;
+            if ($days < 1 || $days > 365) jsonError('expiresInDays must be between 1 and 365, or 0 for never');
+            $seconds = $days * 86400;
+        }
+        $pub = StudioPublication::publish((int) $asset['id'], $this->userId(), $seconds);
+        jsonResponse(['publication' => $pub], 201);
+    }
+
+    /** DELETE /studio/assets/:id/publish — the URL stops working, now. */
+    public function unpublishAsset(array $params): void
+    {
+        $this->storage();
+        $asset = StudioAsset::findById((int) ($params['id'] ?? 0));
+        if (!$asset || (int) $asset['owner_id'] !== $this->userId()) jsonError('Asset not found', 404);
+        StudioPublication::revokeForAsset((int) $asset['id']);
+        jsonResponse(['revoked' => true]);
+    }
+
+    /** GET /studio/publications — every live URL on this account's assets. */
+    public function listPublications(array $params): void
+    {
+        $this->storage();
+        jsonResponse(['publications' => StudioPublication::listFor($this->userId())]);
+    }
+
+    /**
+     * GET /studio/p/:token — the published bytes, for anyone with the address.
+     *
+     * This is a MEDIA route in a JSON API, so it undoes what the global
+     * headers assumed: real Content-Type, cacheable (the URL is an unguessable
+     * capability and the payload immutable-by-sha), inline disposition so a
+     * browser plays rather than downloads, and honest Range support — a
+     * <video> that cannot seek is a player that buffers the whole file to
+     * move the playhead.
+     */
+    public function publicAsset(array $params): void
+    {
+        $storage = $this->storage();
+        $token = (string) ($params['token'] ?? '');
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) jsonError('Not found', 404);
+        $pub = StudioPublication::findByToken($token);
+        if (!$pub) jsonError('This link is not valid or has expired', 404);
+
+        $path = $storage->assetPath((int) $pub['owner_id'], (string) $pub['sha256']);
+        if (!is_file($path)) jsonError('The stored file is missing', 410);
+        $this->streamInline($path, (string) ($pub['mime_type'] ?: 'application/octet-stream'),
+            (string) $pub['original_name']);
+    }
+
+    /** GET /studio/p/:token/meta — what the player page needs, nothing more. */
+    public function publicAssetMeta(array $params): void
+    {
+        $this->storage();
+        $token = (string) ($params['token'] ?? '');
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) jsonError('Not found', 404);
+        $pub = StudioPublication::findByToken($token);
+        if (!$pub) jsonError('This link is not valid or has expired', 404);
+        // The owner's identity is deliberately absent — a published file
+        // discloses the work, not the account behind it (the share-link rule).
+        jsonResponse(['name' => $pub['original_name'], 'kind' => $pub['kind'],
+                      'mime' => $pub['mime_type'], 'size' => $pub['size']]);
+    }
+
+    /**
+     * One Range header, parsed against a file size.
+     *
+     * Returns [start, end] inclusive, null to serve the whole file (no header,
+     * a form this ignores, or a multi-range — RFC 7233 allows a server to
+     * ignore Range entirely, and 200-with-everything is what players expect
+     * then), or false for a range that cannot be satisfied (=> 416).
+     *
+     * Public and static so the unit suite can hold it to the RFC without a
+     * database or a request.
+     */
+    public static function parseRange(?string $header, int $size)
+    {
+        if ($header === null || $header === '' || $size <= 0) return null;
+        if (!preg_match('/^bytes=(\d*)-(\d*)$/', trim($header), $m)) return null;
+        [$whole, $a, $b] = $m;
+        if ($a === '' && $b === '') return null;
+        if ($a === '') {
+            // Suffix form: the LAST $b bytes.
+            $n = (int) $b;
+            if ($n === 0) return false;
+            $start = max(0, $size - $n);
+            return [$start, $size - 1];
+        }
+        $start = (int) $a;
+        if ($start >= $size) return false;
+        $end = $b === '' ? $size - 1 : min((int) $b, $size - 1);
+        if ($end < $start) return false;
+        return [$start, $end];
+    }
+
+    /** Stream a file inline, honouring a single byte range. */
+    private function streamInline(string $path, string $mime, string $name): void
+    {
+        $size = (int) filesize($path);
+        $range = self::parseRange($_SERVER['HTTP_RANGE'] ?? null, $size);
+        if ($range === false) {
+            http_response_code(416);
+            header('Content-Range: bytes */' . $size);
+            exit;
+        }
+
+        $ascii = preg_replace('/[^A-Za-z0-9._-]/', '_', $name) ?: 'asset';
+        $disposition = 'inline; filename="' . $ascii . '"';
+        if ($name !== '' && $name !== $ascii) {
+            $disposition .= "; filename*=UTF-8''" . rawurlencode($name);
+        }
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: ' . $disposition);
+        header('Accept-Ranges: bytes');
+        // The address is an unguessable capability and the bytes are immutable
+        // by sha — re-fetching a 50 MB clip on every seek would be the cost of
+        // keeping the global no-store here. private: a shared cache should not
+        // hold a capability URL's payload for other users.
+        header('Cache-Control: private, max-age=86400');
+        header('X-Content-Type-Options: nosniff');
+
+        [$start, $end] = $range ?? [0, $size - 1];
+        if ($range !== null) {
+            http_response_code(206);
+            header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
+        }
+        header('Content-Length: ' . ($end - $start + 1));
+
+        // Chunked rather than readfile(): bounded memory whatever the file
+        // size, and a seek costs only the slice the player asked for.
+        while (ob_get_level() > 0) ob_end_clean();
+        $fh = fopen($path, 'rb');
+        if ($fh === false) { http_response_code(500); exit; }
+        fseek($fh, $start);
+        $left = $end - $start + 1;
+        while ($left > 0 && !feof($fh)) {
+            $chunk = fread($fh, min(512 * 1024, $left));
+            if ($chunk === false) break;
+            echo $chunk;
+            $left -= strlen($chunk);
+            flush();
+        }
+        fclose($fh);
+        exit;
     }
 
     /** PATCH /studio/assets/:id — rename (owner only). */

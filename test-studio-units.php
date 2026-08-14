@@ -249,6 +249,54 @@ check('generated uuids look like uuid v4',
         StudioController::uuid()));
 check('uuids are not repeated', StudioController::uuid() !== StudioController::uuid());
 
+/* ============================================== Range header parsing == */
+section('StudioController — the Range header on a published file');
+// The published-bytes route is the one place this API serves media, and a
+// <video> that cannot seek buffers the whole file to move the playhead. The
+// parser is pinned to RFC 7233: [start, end] for one satisfiable range, null
+// to serve everything, false for 416.
+
+check('no header serves the whole file',
+    StudioController::parseRange(null, 1000) === null
+    && StudioController::parseRange('', 1000) === null);
+check('a plain range is inclusive on both ends',
+    StudioController::parseRange('bytes=0-499', 1000) === [0, 499]
+    && StudioController::parseRange('bytes=500-999', 1000) === [500, 999]);
+check('an open-ended range runs to the last byte',
+    StudioController::parseRange('bytes=200-', 1000) === [200, 999]);
+check('an end past the file is clamped, not refused',
+    StudioController::parseRange('bytes=900-5000', 1000) === [900, 999]);
+check('the suffix form takes the LAST n bytes',
+    StudioController::parseRange('bytes=-100', 1000) === [900, 999]
+    && StudioController::parseRange('bytes=-5000', 1000) === [0, 999]);
+check('a start past the end is unsatisfiable (416)',
+    StudioController::parseRange('bytes=1000-', 1000) === false
+    && StudioController::parseRange('bytes=1500-1600', 1000) === false);
+check('a backwards range is unsatisfiable',
+    StudioController::parseRange('bytes=500-100', 1000) === false);
+check('a zero-length suffix is unsatisfiable',
+    StudioController::parseRange('bytes=-0', 1000) === false);
+check('multi-ranges and junk are ignored rather than misread — 200 with everything',
+    StudioController::parseRange('bytes=0-1,5-6', 1000) === null
+    && StudioController::parseRange('bytes=', 1000) === null
+    && StudioController::parseRange('lines=0-5', 1000) === null
+    && StudioController::parseRange('bytes=abc-def', 1000) === null);
+check('an empty file has no satisfiable range',
+    StudioController::parseRange('bytes=0-', 0) === null);
+check('a one-byte file serves its one byte',
+    StudioController::parseRange('bytes=0-0', 1) === [0, 0]
+    && StudioController::parseRange('bytes=-1', 1) === [0, 0]);
+
+// The publications migration ships with the schema set, or a fresh install
+// mints tokens the shared/:token discipline cannot resolve.
+check('the publications migration ships',
+    is_file($SERVER_DIR . '/migrations/007_studio_publications.sql')
+    && str_contains((string) file_get_contents($SERVER_DIR . '/migrations/007_studio_publications.sql'),
+        'CREATE TABLE IF NOT EXISTS studio_publications'));
+check('its token column matches the 64-hex shape every route checks for',
+    (bool) preg_match('/token\s+CHAR\(64\)\s+NOT NULL/',
+        (string) file_get_contents($SERVER_DIR . '/migrations/007_studio_publications.sql')));
+
 /* ========================================================== preflight == */
 section('StudioPreflight — the capability profile is a trust boundary');
 // It decides what the client is allowed to offer, and setup.php writes it from
