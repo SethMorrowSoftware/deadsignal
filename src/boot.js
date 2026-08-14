@@ -59,6 +59,8 @@ import { addAudioClip, addGraphicClip, addOverlayClip, addStillClip, addTimeline
 import { trackScale } from './ui/track.js';
 import { activeSection, initSections, sectionsOf, showSection } from './ui/sections.js';
 import { importDroppedFiles, initDropTarget, useAsset } from './ui/importui.js';
+import { initLibraryFonts } from './media/fonts.js';
+import { initFontPickers } from './ui/fontpick.js';
 import { dropAsset } from './ui/lanedrop.js';
 
 let studioSession=null, studioBackend=null, studioAutosave=null;
@@ -339,6 +341,12 @@ export function boot(){
   /* Dropping files on a video tool is the gesture everyone already knows, and
      it was the one thing this one did not accept. */
   initDropTarget();
+  /* Imported typefaces: register a FontFace per library font row and keep the
+     two tab pickers offering them. The nudge redraws both previews when a face
+     finishes loading — the load is async and the frame drawn before it lands
+     used the fallback stack, which is exactly one redraw out of date. */
+  initLibraryFonts(()=>{ startVideoPreview(); renderImage(); });
+  initFontPickers();
   // enhanceFieldsets() gives every section a ↺. For KEYFRAMES the section IS
   // the tracks, so point its reset at them — otherwise it would reset the
   // parameter picker and appear to have done nothing.
@@ -555,11 +563,13 @@ async function rehydrateAssets(backend, session, { arrivedByShareLink=false, res
 }
 
 /* Every asset key a document references, as BARE keys (the form listAssets and
-   the library rows use). Beyond the library rows, keys hide in three places the
+   the library rows use). Beyond the library rows, keys hide in these places the
    schema keeps as authored `lib:<key>` strings: the timeline audio lane's
-   `source`, a clip's `bed`, and footage `v-srckey` (in each clip's recipe and on
-   the live video tab). Conservative by construction — an extra key here costs a
-   kept orphan; a missing one costs someone's imported media. */
+   `source`, a clip's `bed`, footage `v-srckey` (in each clip's recipe and on
+   the live video tab), and the FONT pickers — the two tab families, a title
+   clip's face, and the family captured into any clip's recipe. Conservative by
+   construction — an extra key here costs a kept orphan; a missing one costs
+   someone's imported media. */
 function docReferencedKeys(doc){
   const keys=new Set();
   if(!doc || typeof doc!=='object') return keys;
@@ -568,8 +578,10 @@ function docReferencedKeys(doc){
   const audio=doc.timeline&&doc.timeline.audio;
   if(Array.isArray(audio)) for(const a of audio) addLib(a&&a.source);
   const clips=doc.timeline&&doc.timeline.clips;
-  if(Array.isArray(clips)) for(const c of clips){ if(!c) continue; addLib(c.bed); if(c.rec&&typeof c.rec==='object') addLib(c.rec['v-srckey']); }
-  if(doc.tabs&&doc.tabs.video) addLib(doc.tabs.video['v-srckey']);
+  if(Array.isArray(clips)) for(const c of clips){ if(!c) continue; addLib(c.bed);
+    if(c.rec&&typeof c.rec==='object'){ addLib(c.rec['v-srckey']); addLib(c.rec['v-fontfam']); addLib(c.rec['i-fontfam']); addLib(c.rec['t-font']); } }
+  if(doc.tabs&&doc.tabs.video){ addLib(doc.tabs.video['v-srckey']); addLib(doc.tabs.video['v-fontfam']); }
+  if(doc.tabs&&doc.tabs.image) addLib(doc.tabs.image['i-fontfam']);
   return keys;
 }
 

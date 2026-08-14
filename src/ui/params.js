@@ -107,7 +107,7 @@ const P = {
 
   'lock-v-text': ['Lock text', 2, 'Keeps this section untouched by Randomize AND by loading a preset — so you can try any look you like without losing wording a puzzle depends on.'],
   'lock-v-out': ['Lock output', 2, 'Keeps the frame size, rate, length and codec untouched by Randomize and by loading a preset. Lock it once you have settled on a delivery format.'],
-  'v-fontfam': ['Typeface', 1, 'The family every glyph is drawn in. Monospace is the terminal look; Heavy is for posters and title cards; Handwritten is the note left on a door. System faces only — nothing is fetched.'],
+  'v-fontfam': ['Typeface', 1, 'The family every glyph is drawn in. Monospace is the terminal look; Heavy is for posters and title cards; Handwritten is the note left on a door. Drop a .ttf/.otf/.woff2 anywhere over the studio and it joins this list under "Your fonts". Nothing is fetched from the network.'],
   'v-wrap': ['Wrap lines', 2, 'Breaks a line too long for the frame instead of letting it run off the edge. Off by default so clips made before this existed render exactly as they did; your own line breaks are always kept.'],
   'v-text':     ['Text', 1, 'What appears on screen. Line breaks are kept. Macros like {{date}} and {{seed}} are substituted at render time.'],
   'v-textmode': ['Text mode', 1, 'How the text arrives: all at once, typed a character at a time, decoding out of noise, or scrolling upward.'],
@@ -221,7 +221,7 @@ const P = {
   'i-body':     ['Body text', 1, 'The main content. Most templates read line by line; some use | to separate columns.'],
   'i-font':     ['Font size', 2, 'Text size in pixels.', 'px'],
   'i-extra':    ['Extra', 3, 'Template-specific: the icon on a dialog, the stamp on a document. Meaning depends on the template.'],
-  'i-fontfam':  ['Typeface', 1, 'The family every glyph is drawn in. Serif for a memo, Handwritten for a note, Heavy for a poster. System faces only — nothing is fetched.'],
+  'i-fontfam':  ['Typeface', 1, 'The family every glyph is drawn in. Serif for a memo, Handwritten for a note, Heavy for a poster. Drop a .ttf/.otf/.woff2 anywhere over the studio and it joins this list under "Your fonts". Nothing is fetched from the network.'],
   'i-wrap':     ['Wrap lines', 2, 'Breaks a line too long for its box instead of letting it run off the edge. Applies to every template with a prose body — the BSODs, the dialog, the memo, the poster, the 404, the journal, the certificate and the rest. Templates that lay out a table, a hex dump or a column of menu items are deliberately left alone: breaking "ARCHIVE_0347.TAP|C:\\TAPES|14.2 MB" across two lines is not word wrap, it is damage. Off by default, so an existing project renders exactly as it did.'],
   'lock-i-text': ['Lock content', 2, 'Keeps the title, body and extra untouched by Randomize AND by loading a preset — try any template you like while your words stay put.'],
   'lock-i-out': ['Lock output', 2, 'Keeps the size, scale and colours untouched by Randomize and by loading a preset.'],

@@ -25,8 +25,12 @@ import { activateTab } from './shell.js';
    the character pair that opens a block comment — and a `/`+`*` inside a string
    is exactly the hazard this project has been bitten by before: any tool that
    strips comments before strings (ours included) starts a comment there and
-   swallows the code after it. */
-const ACCEPT = ['video', 'audio', 'image'].map((t) => `${t}/` + '*').join(',');
+   swallows the code after it. Fonts are listed by extension as well as MIME:
+   plenty of systems report a .ttf as application/octet-stream or nothing at
+   all, and the picker's filter would hide the files the author is pointing
+   at. */
+const ACCEPT = ['video', 'audio', 'image', 'font'].map((t) => `${t}/` + '*').join(',')
+  + ',.ttf,.otf,.woff,.woff2';
 
 /* The drag payload for an asset moving from the bin to the sequence. A custom
    type so the window-level file-drop handler ignores it: that one only reacts
@@ -117,7 +121,7 @@ export function initDropTarget() {
   overlay.setAttribute('aria-hidden', 'true');
   const card = document.createElement('div');
   card.className = 'drop-card';
-  card.textContent = 'Drop footage, stills or sound to add them to your media';
+  card.textContent = 'Drop footage, stills, sound or fonts to add them to your media';
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 
@@ -185,6 +189,17 @@ export function useAsset(it) {
       activateTab('image');
       log(`Using ${it.name}.${it.ext} as the screen image`, 'ok');
     });
+    return true;
+  }
+  if (it.kind === 'fonts') {
+    /* "Use" a typeface = make it the active tab's face. SCREEN when that is
+       where the author is, VIDEO otherwise — the same "take me to it" contract
+       as the rows above, and an ordinary undoable edit either way. */
+    const view = document.querySelector('.tab.active')?.dataset.view;
+    const target = view === 'image' ? 'i-fontfam' : 'v-fontfam';
+    setVal(target, `lib:${it.key}`);
+    activateTab(view === 'image' ? 'image' : 'video');
+    toast(`${it.name} is now the ${view === 'image' ? 'screen' : 'video'} typeface`);
     return true;
   }
   /* Sound is already addressable by every picker that offers a bed — the

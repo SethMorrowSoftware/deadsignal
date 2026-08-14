@@ -56,7 +56,7 @@ import { monitorMode, monitorTarget, onMonitorMode, setMonitorMode } from './mon
 import { ALPHA_BLEND } from '../doc/layers.js';
 import { isFirstOnTrack, isOverlay } from '../doc/timeline.js';
 import { EASE_NAMES } from '../doc/automation.js';
-import { FONTS } from '../core/text.js';
+import { FONTS, customFonts } from '../core/text.js';
 import { isIdentity, offFrame, transformSummary } from '../doc/transform.js';
 import { AUTOMATABLE, clipParamValue } from '../video/automation.js';
 import { getStore } from '../doc/session.js';
@@ -134,9 +134,14 @@ function optionsFor(field, value) {
   if (field.optionsFrom === 'templates') return cloneOptions('i-tpl', value);
   /* From the FONTS registry rather than a cloned control: the title's face
      picker has no counterpart on any tab to clone from — a title is edited
-     here and nowhere else. */
+     here and nowhere else. Imported faces follow, so a title can be set in
+     the same Chicago the poster template uses; a face whose row is gone is
+     kept as an option below rather than silently re-pointed. */
   if (field.optionsFrom === 'fonts') {
-    return Object.entries(FONTS).map(([v, f]) => ({ v, t: f.label }));
+    const out = Object.entries(FONTS).map(([v, f]) => ({ v, t: f.label }));
+    for (const [v, f] of customFonts()) out.push({ v, t: f.label });
+    if (value && !out.some((o) => o.v === value)) out.push({ v: value, t: 'saved (not loaded)' });
+    return out;
   }
   return [];
 }

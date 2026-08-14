@@ -14,13 +14,13 @@
  * headless suite instead of only being exercised by dragging a file onto a
  * browser.
  *
- * The library's vocabulary is three kinds — `videos`, `music`, `image` — and it
- * is enforced by the LIBRARY table's own picker. Import speaks that vocabulary
- * rather than inventing a fourth.
+ * The library's vocabulary is four kinds — `videos`, `music`, `image`,
+ * `fonts` — and it is enforced by the LIBRARY table's own picker. Import
+ * speaks that vocabulary rather than inventing a fifth.
  */
 
 /** The library's kinds. Anything else is not a thing this tool files. */
-export const KINDS = ['videos', 'music', 'image'];
+export const KINDS = ['videos', 'music', 'image', 'fonts'];
 
 /* What a browser will actually play or draw. Deliberately a list of what works
    rather than "anything with a video/ MIME type": a .mov or a .avi has a MIME
@@ -29,6 +29,13 @@ export const KINDS = ['videos', 'music', 'image'];
 export const VIDEO_EXT = ['webm', 'mp4', 'm4v', 'ogv'];
 export const AUDIO_EXT = ['wav', 'mp3', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'weba'];
 export const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'];
+/* The faces FontFace() actually loads. Type in this studio is most of the
+   picture — a ransom note, a MISSING poster and a terminal are three typefaces
+   before they are anything else — and the built-in list is six system stacks.
+   A dropped font file becomes a library row like any other import, usable on
+   VIDEO, SCREEN and title clips. (.eot and .svg fonts are the web's dead
+   formats and FontFace does not load them; refusing is honest.) */
+export const FONT_EXT = ['ttf', 'otf', 'woff', 'woff2'];
 
 /** 64 MB. Past this a browser tab is the wrong place to be holding the file. */
 export const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
@@ -74,10 +81,12 @@ export function classifyFile(file) {
   const kind = VIDEO_EXT.includes(ext) ? 'videos'
     : AUDIO_EXT.includes(ext) ? 'music'
       : IMAGE_EXT.includes(ext) ? 'image'
-        : type.startsWith('video/') ? 'videos'
-          : type.startsWith('audio/') ? 'music'
-            : type.startsWith('image/') ? 'image'
-              : null;
+        : FONT_EXT.includes(ext) ? 'fonts'
+          : type.startsWith('video/') ? 'videos'
+            : type.startsWith('audio/') ? 'music'
+              : type.startsWith('image/') ? 'image'
+                : type.startsWith('font/') ? 'fonts'
+                  : null;
 
   if (!kind) {
     return { ok: false, why: `${name || 'that file'} is not a kind of media this tool can open` };
@@ -96,7 +105,7 @@ export function classifyFile(file) {
  * thing imported is the thing most likely to be wanted as a source.
  */
 export function importOrder(list) {
-  const rank = { videos: 0, image: 1, music: 2 };
+  const rank = { videos: 0, image: 1, music: 2, fonts: 3 };
   return [...list].sort((a, b) => {
     const ka = classifyFile(a), kb = classifyFile(b);
     const ra = ka.ok ? rank[ka.kind] : 9;

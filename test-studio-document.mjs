@@ -64,9 +64,10 @@ import { FLIPS, HANDLE_PX, MAX_OFFSET, MAX_SCALE, MIN_SCALE, PLACES, ROT_ARM_PX,
          offFrame, patchForPlace, placeOf, rotAt, scaleAt, transformSummary, transformedBox }
   from './src/doc/transform.js';
 import { dbfs, isClipping, peakLabel, peakLevel, peaksOf } from './src/audio/peaks.js';
-import { AUDIO_EXT, IMAGE_EXT, KINDS, MAX_IMPORT_BYTES, VIDEO_EXT, classifyFile, extOf,
+import { AUDIO_EXT, FONT_EXT, IMAGE_EXT, KINDS, MAX_IMPORT_BYTES, VIDEO_EXT, classifyFile, extOf,
          importOrder, stemOf }
   from './src/media/classify.js';
+import { DEFAULT_FONT, FONTS, setCustomFont, setFontStack } from './src/core/text.js';
 import { muxWebM, opusHead } from './src/export/webm.js';
 import { muxMP4, muxM4A, mp4CanCarry } from './src/export/mp4.js';
 import { muxOggOpus } from './src/export/ogg.js';
@@ -2705,17 +2706,45 @@ section('import — what a dropped file is, and what to call it');
   check('footage is filed as video', classifyFile(f('shot.mp4', 'video/mp4')).kind === 'videos');
   check('sound is filed as music', classifyFile(f('room.wav', 'audio/wav')).kind === 'music');
   check('a still is filed as an image', classifyFile(f('grab.png', 'image/png')).kind === 'image');
+  check('a typeface is filed as a font, from any of the four extensions',
+    ['ttf', 'otf', 'woff', 'woff2'].every((e) => classifyFile(f(`face.${e}`, '')).kind === 'fonts')
+    && FONT_EXT.length === 4);
   check('every kind it reports is one the library actually has',
-    [VIDEO_EXT[0], AUDIO_EXT[0], IMAGE_EXT[0]]
+    [VIDEO_EXT[0], AUDIO_EXT[0], IMAGE_EXT[0], FONT_EXT[0]]
       .every((e) => KINDS.includes(classifyFile(f(`x.${e}`, '')).kind)));
 
   /* The extension decides and MIME is the tie-break, in that order: browsers
      report application/octet-stream for plenty of good media depending on where
      the file came from, and the decoder is handed the bytes either way. */
   check('a file the browser mislabels is still classified by its extension',
-    classifyFile(f('shot.webm', 'application/octet-stream')).kind === 'videos');
+    classifyFile(f('shot.webm', 'application/octet-stream')).kind === 'videos'
+    && classifyFile(f('face.ttf', 'application/octet-stream')).kind === 'fonts');
   check('…and one with no extension falls back to its MIME type',
-    classifyFile(f('clipboard', 'image/png')).kind === 'image');
+    classifyFile(f('clipboard', 'image/png')).kind === 'image'
+    && classifyFile(f('typeface', 'font/woff2')).kind === 'fonts');
+
+  /* The renderer's side of an imported face: a registered `lib:` id resolves
+     to its own stack, an unregistered one falls back VISIBLY to the default,
+     and unregistering restores the fallback — the round trip a deleted (or
+     undone-away) font row takes. */
+  check('a registered custom font resolves; an unknown one falls back to the default', (() => {
+    setCustomFont('lib:testface', { label: 'Test', stack: '"ds-font-test",monospace' });
+    const resolved = setFontStack('lib:testface');
+    const fallback = setFontStack('lib:missing');
+    setCustomFont('lib:testface', null);
+    const after = setFontStack('lib:testface');
+    setFontStack(DEFAULT_FONT);
+    return resolved === '"ds-font-test",monospace'
+      && fallback === FONTS[DEFAULT_FONT].stack
+      && after === FONTS[DEFAULT_FONT].stack;
+  })());
+  check('built-in ids are never shadowed by the custom map', (() => {
+    setCustomFont('mono', { label: 'Evil', stack: 'comic-sans' });
+    const stack = setFontStack('mono');
+    setCustomFont('mono', null);
+    setFontStack(DEFAULT_FONT);
+    return stack === FONTS.mono.stack;
+  })());
 
   /* A .mov has a MIME type and will not decode. A row that looks fine and is
      silently unusable is worse than a refusal that says why. */

@@ -40,6 +40,7 @@ const THUMB_H = 120;
 async function probe(blob, kind) {
   if (kind === 'image') return probeImage(blob);
   if (kind === 'videos') return probeVideo(blob);
+  if (kind === 'fonts') return probeFont(blob);
   return probeAudio(blob);
 }
 
@@ -110,6 +111,45 @@ async function probeVideo(blob) {
     try { v.load(); } catch { /* already torn down */ }
     URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * Unlike the soft probes above, an unloadable font THROWS — and the throw is
+ * the point. A clip without a poster frame is still a clip; a font FontFace
+ * cannot parse is a row that can never draw anything, which is the "looks fine
+ * and is silently unusable" class the classifier exists to refuse. The thrown
+ * message lands in the import report beside the filename.
+ *
+ * The thumbnail is a real specimen drawn WITH the loaded face — which the bin
+ * can only have because the probe loads it anyway to find out if it works.
+ */
+async function probeFont(blob) {
+  const buf = await blob.arrayBuffer();
+  let face;
+  try {
+    face = new FontFace('ds-font-probe', buf);
+    await face.load();
+  } catch {
+    throw new Error('is not a font this browser can load');
+  }
+  let thumb = '';
+  try {
+    document.fonts.add(face);
+    const c = canvasFor(THUMB_W, THUMB_H);
+    const x = c.getContext('2d');
+    x.fillStyle = '#05080a'; x.fillRect(0, 0, THUMB_W, THUMB_H);
+    x.fillStyle = '#39ff9e';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '44px ds-font-probe';
+    x.fillText('Aa', THUMB_W / 2, THUMB_H / 2 - 16);
+    x.font = '20px ds-font-probe';
+    x.fillText('0123 QUIET', THUMB_W / 2, THUMB_H / 2 + 34);
+    thumb = c.toDataURL('image/png');
+  } catch { /* no specimen; the row is still good */ }
+  finally {
+    try { document.fonts.delete(face); } catch { /* already gone */ }
+  }
+  return { seconds: 0, thumb };
 }
 
 async function probeAudio(blob) {

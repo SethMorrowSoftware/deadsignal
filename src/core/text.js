@@ -112,9 +112,17 @@ export const FONTS={
   hand:   { label:"Handwritten",stack:'"Comic Sans MS","Segoe Print","Bradley Hand",cursive' },
 };
 export const DEFAULT_FONT="mono";
+/* Imported faces, registered by media/fonts.js as `lib:<key>` -> {label,stack}.
+   Held HERE rather than there so setFontStack stays the one resolver and this
+   module keeps importing nothing above core. An id nobody registered — a
+   project whose font row is gone, an older build's file — falls through to the
+   default stack, which is visible rather than silent. */
+const CUSTOM_FONTS=new Map();
+export function setCustomFont(id,entry){ if(entry&&entry.stack)CUSTOM_FONTS.set(id,entry); else CUSTOM_FONTS.delete(id); }
+export function customFonts(){ return CUSTOM_FONTS; }
 let _stack=FONTS[DEFAULT_FONT].stack;
 /** Set the family every subsequent setFont() uses. Called once per frame. */
-export function setFontStack(name){ _stack=(FONTS[name]||FONTS[DEFAULT_FONT]).stack; return _stack; }
+export function setFontStack(name){ _stack=(FONTS[name]||CUSTOM_FONTS.get(name)||FONTS[DEFAULT_FONT]).stack; return _stack; }
 export function fontStack(){ return _stack; }
 
 /* Letter-spacing, in EM, set once per frame exactly like the family above and

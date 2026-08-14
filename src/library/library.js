@@ -98,7 +98,7 @@ export function defaultBeat(kind){ return defaultBeatFor(kind); }
  * which is not a line that can work. A row's name becomes a filename and a
  * RetroScript argument, so it is not somewhere a caller gets to be careless. */
 export function addToLibrary(blob,ext,kind,name,seconds){ const key=newKey();
-  const it={id:++libSeq,key,blob,url:makeUrl(blob),ext,kind,name:uniqueName(slug(name),kind,ext),seconds:seconds||0,gated:kind!=="image",beat:defaultBeat(kind),seed:currentSeed(),size:blob.size};
+  const it={id:++libSeq,key,blob,url:makeUrl(blob),ext,kind,name:uniqueName(slug(name),kind,ext),seconds:seconds||0,gated:kind!=="image"&&kind!=="fonts",beat:defaultBeat(kind),seed:currentSeed(),size:blob.size};
   _blobs.set(key,blob);
   library.push(it); commitLibrary("add asset"); _persist?.(key,blob,it);
   renderLibTable(); renderCoverage(); log("Library + "+it.name+"."+ext+" ("+(blob.size/1024).toFixed(0)+"KB)","ok"); return it; }
@@ -168,7 +168,7 @@ export function renderLibTable(){ const b=$("lib-body"); if(!b)return; b.replace
     const dis=it.blob?"":" disabled";
     tr.innerHTML='<td>'+it.id+'</td>'+
       '<td><input type="text" value="'+escHtml(it.name)+'" data-id="'+it.id+'" data-k="name" style="width:150px"> .'+escHtml(it.ext)+'</td>'+
-      '<td><select data-id="'+it.id+'" data-k="kind"><option'+(it.kind==="videos"?" selected":"")+'>videos</option><option'+(it.kind==="music"?" selected":"")+'>music</option><option'+(it.kind==="image"?" selected":"")+'>image</option></select></td>'+
+      '<td><select data-id="'+it.id+'" data-k="kind"><option'+(it.kind==="videos"?" selected":"")+'>videos</option><option'+(it.kind==="music"?" selected":"")+'>music</option><option'+(it.kind==="image"?" selected":"")+'>image</option><option'+(it.kind==="fonts"?" selected":"")+'>fonts</option></select></td>'+
       '<td style="text-align:center"><input type="checkbox" data-id="'+it.id+'" data-k="gated"'+(it.gated?" checked":"")+'></td>'+
       '<td><select data-id="'+it.id+'" data-k="beat">'+campaignBeats().map(x=>'<option'+(it.beat===x?" selected":"")+'>'+escHtml(x)+'</option>').join("")+'</select></td>'+
       '<td>'+bytes+'</td>'+

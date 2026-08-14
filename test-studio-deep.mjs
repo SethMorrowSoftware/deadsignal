@@ -958,6 +958,92 @@ section('every audio FX, one at a time');
   check('every audio FX bypassed is exactly the untouched signal', leaky.length === 0, leaky.join(', '));
 }
 
+/* ================================================ imported typefaces === */
+/* A dropped .ttf becomes a library row, a picker entry and a face the
+   renderer draws with. Driven with a REAL font — a system DejaVu, read off
+   this machine — because FontFace refuses fabricated bytes and a plumbing
+   test that never loads a face would pass with the renderer half of the
+   feature broken. Skipped cleanly on a machine with no system font to lend,
+   the same courtesy the suites extend to a missing Playwright. */
+section('imported typefaces — your own font file, end to end');
+{
+  const fontPath = [
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf',
+    '/usr/share/fonts/TTF/DejaVuSans.ttf',
+    '/usr/share/fonts/dejavu/DejaVuSans.ttf',
+  ].find((p) => existsSync(p));
+
+  if (!fontPath) {
+    check('a system font was available to test with (skipped — none found)', true, 'no DejaVu on this machine');
+  } else {
+    const fontB64 = readFileSync(fontPath).toString('base64');
+    const res = await page.evaluate(async (b64) => {
+      const S = window.DeadSignalStudio;
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const file = new File([bytes], 'Specimen.ttf', { type: 'font/ttf' });
+      const before = S.library.length;
+      const report = await S.importDroppedFiles([file]);
+      const row = S.library.at(-1);
+      const out = {
+        added: report?.added?.length || 0,
+        failed: report?.failed?.length || 0,
+        kind: row?.kind, name: row?.name, hasThumb: !!row?.thumb, grew: S.library.length === before + 1,
+      };
+      if (!row || row.kind !== 'fonts') return out;
+
+      // The picker gained the row, grouped under "Your fonts".
+      const sel = document.getElementById('v-fontfam');
+      const opt = [...sel.options].find((o) => o.value === 'lib:' + row.key);
+      out.inPicker = !!opt && opt.textContent === row.name;
+      out.grouped = !!opt && opt.parentElement?.tagName === 'OPTGROUP';
+
+      // The renderer resolves it — and draws DIFFERENT pixels with it. Same
+      // seed, same t, FX identical; the family is the only variable.
+      const T = await import('./src/core/text.js');
+      const stack = T.setFontStack('lib:' + row.key);
+      out.resolves = stack.includes('ds-font-');
+      await document.fonts.ready;
+      const draw = (fam) => {
+        const c = document.createElement('canvas'); c.width = 200; c.height = 120;
+        const x = c.getContext('2d', { willReadFrequently: true });
+        const cfg = S.readVideoCfg();
+        S.renderVideoFrame(x, 200, 120, { ...cfg, scene: 'terminal', text: 'QUIET SIGNAL', fontFamily: fam }, 1.0);
+        return x.getImageData(0, 0, 200, 120).data;
+      };
+      const a = draw('mono'), b = draw('lib:' + row.key);
+      let diff = 0;
+      for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1]) diff++;
+      out.pixelsDiffer = diff > 50;
+      out.diff = diff;
+
+      // A garbage "font" is refused with a reason, and costs no row.
+      const junk = new File([new Uint8Array(400).fill(7)], 'broken.ttf', { type: 'font/ttf' });
+      const bad = await S.importDroppedFiles([junk]);
+      out.junkRefused = bad?.failed?.length === 1 && /not a font/.test(bad.failed[0]?.why || '');
+      out.junkCostNoRow = S.library.length === before + 1;
+
+      // Cleanup: the row out of the library (undo restores nothing here — the
+      // library write and the import are the same entry, so one undo).
+      S.store.undo();
+      return out;
+    }, fontB64);
+
+    check('a dropped .ttf becomes a fonts row with a specimen thumbnail',
+      res.added === 1 && res.failed === 0 && res.kind === 'fonts' && res.grew && res.hasThumb,
+      JSON.stringify({ kind: res.kind, thumb: res.hasThumb, failed: res.failed }));
+    check('…listed in the typeface picker under "Your fonts", by its own name',
+      res.inPicker === true && res.grouped === true, JSON.stringify({ inPicker: res.inPicker, grouped: res.grouped }));
+    check('…resolved by setFontStack to its own registered family',
+      res.resolves === true);
+    check('…and the renderer draws different pixels with it than with Monospace',
+      res.pixelsDiffer === true, `${res.diff} pixels differ`);
+    check('a file that is not a font is refused with a reason, costing no row',
+      res.junkRefused === true && res.junkCostNoRow === true,
+      JSON.stringify({ refused: res.junkRefused, noRow: res.junkCostNoRow }));
+  }
+}
+
 /* ================================================== titles === */
 /* A title is the one renderer whose correctness is mostly about what it does
    NOT draw. Everything else in this tool fills its buffer; this one clears it,
