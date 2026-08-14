@@ -732,15 +732,24 @@ const setControl = (id, value) => page.evaluate(({ id, value }) => {
   check('importing an image switches the scene in the DOCUMENT, not just the widget',
         after.doc === 'kenburns' && after.cfg === 'kenburns', JSON.stringify(after));
 
-  // The real proof: the imported picture is on the canvas.
+  // The real proof: the imported picture is on the canvas. Sampled a few
+  // times rather than once — Ken Burns is a MOVING crop of the checkerboard,
+  // and a single wall-clock instant can land the zoom deep in one dark square
+  // (measured: 201 bright px on one run, 22899 on the next, same build). Any
+  // sample finding the picture proves the import rendered; only every sample
+  // dark means it did not.
   await page.waitForTimeout(600);
-  const lit = await page.evaluate(() => {
-    const c = document.getElementById('vcanvas');
-    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-    let white = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) white++;
-    return white;
-  });
+  let lit = 0;
+  for (let tries = 0; tries < 4 && lit <= 500; tries++) {
+    if (tries) await page.waitForTimeout(450);
+    lit = await page.evaluate(() => {
+      const c = document.getElementById('vcanvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let white = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) white++;
+      return white;
+    });
+  }
   check('…and the imported image actually renders', lit > 500, `${lit} bright px`);
 
   await page.click('.tab[data-view="image"]');

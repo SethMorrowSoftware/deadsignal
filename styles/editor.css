@@ -618,6 +618,9 @@ body.nle .nle-status{ display:flex; }
 }
 .nle-bin-import:hover:not(:disabled){ background:var(--phos); border-color:var(--phos); color:var(--on-accent); }
 .nle-bin-import:disabled{ opacity:.5; cursor:default; }
+/* A live microphone is a state worth a colour: the ⏺ button widens into its
+   own elapsed readout and goes red for exactly as long as the mic is open. */
+.nle-bin-import.rec{ width:auto; padding:0 8px; background:var(--red,#b03030); border-color:var(--red,#b03030); color:#fff; }
 .nle-bin-note{ margin:0 0 8px; font-size:12px; color:var(--amber); }
 
 /* The whole window is the drop target — the overlay is what says so. Pointer

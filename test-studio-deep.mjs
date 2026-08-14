@@ -1044,6 +1044,61 @@ section('imported typefaces — your own font file, end to end');
   }
 }
 
+/* ================================================ voiceover recording === */
+/* ⏺ VOICE on the media bin: microphone in, WAV library row out. Driven with
+   Chromium's fake capture device — a real getUserMedia grant, a real
+   MediaRecorder, real decode — in a browser of its own, because the fake-mic
+   switches are launch-level flags the shared browser must not carry. */
+section('voiceover — the microphone lands in the library as a take');
+{
+  const mic = await chromium.launch({
+    ...(EXEC ? { executablePath: EXEC } : {}),
+    args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+  });
+  try {
+    const ctx = await mic.newContext();
+    const p2 = await ctx.newPage();
+    await p2.goto(PAGE, { waitUntil: 'domcontentloaded' });
+    await p2.waitForFunction(() => document.documentElement.dataset.studio === 'ready', null, { timeout: 30000 });
+    const res = await p2.evaluate(async () => {
+      const S = window.DeadSignalStudio;
+      document.getElementById('welcome-close')?.click();
+      const btn = document.getElementById('nle-voice');
+      if (!btn) return { noButton: true };
+      const before = S.library.length;
+      btn.click();
+      await new Promise((r) => setTimeout(r, 400));
+      const during = { label: btn.textContent, red: btn.classList.contains('rec') };
+      await new Promise((r) => setTimeout(r, 1100));
+      btn.click();                                   // stop
+      for (let i = 0; i < 100 && S.library.length === before; i++) await new Promise((r) => setTimeout(r, 100));
+      const row = S.library.at(-1);
+      const after = { label: btn.textContent, red: btn.classList.contains('rec') };
+      if (!row || S.library.length !== before + 1) return { during, after, added: false };
+      const head = [...new Uint8Array(await row.blob.slice(0, 4).arrayBuffer())];
+      return {
+        during, after, added: true,
+        kind: row.kind, ext: row.ext, name: row.name, seconds: row.seconds,
+        riff: String.fromCharCode(...head),
+      };
+    });
+    check('pressing ⏺ starts a visible recording — elapsed time on a red button',
+      !res.noButton && res.during && /■/.test(res.during.label) && res.during.red === true,
+      JSON.stringify(res.during || res));
+    check('pressing it again saves the take as a WAV music row named voiceover',
+      res.added === true && res.kind === 'music' && res.ext === 'wav'
+      && /^voiceover/.test(res.name || '') && res.riff === 'RIFF',
+      JSON.stringify({ kind: res.kind, ext: res.ext, name: res.name, riff: res.riff }));
+    check('…of roughly the length that was recorded, and the button comes back',
+      res.seconds >= 0.5 && res.seconds <= 5
+      && res.after && res.after.label === '⏺' && res.after.red === false,
+      JSON.stringify({ seconds: res.seconds, after: res.after }));
+    await ctx.close();
+  } finally {
+    await mic.close();
+  }
+}
+
 /* ================================================== titles === */
 /* A title is the one renderer whose correctness is mostly about what it does
    NOT draw. Everything else in this tool fills its buffer; this one clears it,

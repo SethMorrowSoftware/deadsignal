@@ -38,6 +38,7 @@ import { $, toast } from '../core/dom.js';
 import { download } from '../core/blobs.js';
 import { syncChromeToSkin } from '../core/palettes.js';
 import { BIN_DRAG_TYPE, chooseFiles, useAsset } from './importui.js';
+import { toggleVoiceRecording } from '../media/voice.js';
 import { getStore } from '../doc/session.js';
 import { MAX_START, MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
 import { library, onLibraryChange } from '../library/library.js';
@@ -893,10 +894,24 @@ function buildBin() {
   const imp = el('button', 'nle-bin-import', '＋');
   imp.type = 'button';
   imp.id = 'nle-import';
-  imp.title = 'Import footage, stills or sound — or just drop files anywhere';
+  imp.title = 'Import footage, stills, sound or fonts — or just drop files anywhere';
   imp.setAttribute('aria-label', 'Import media files');
   imp.addEventListener('click', () => chooseFiles());
   head.appendChild(imp);
+  /* Voiceover, beside import, because a take lands where an import lands. The
+     button is its own readout: ⏺ idle, ■ with elapsed seconds while live. */
+  const mic = el('button', 'nle-bin-import', '⏺');
+  mic.type = 'button';
+  mic.id = 'nle-voice';
+  mic.title = 'Record a voiceover from your microphone into the media bin';
+  mic.setAttribute('aria-label', 'Record a voiceover');
+  mic.addEventListener('click', () => toggleVoiceRecording((on, s) => {
+    mic.textContent = on ? `■ ${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '⏺';
+    mic.classList.toggle('rec', on);
+    mic.title = on ? 'Stop recording and save the take to the media bin'
+      : 'Record a voiceover from your microphone into the media bin';
+  }));
+  head.appendChild(mic);
   pane.appendChild(head);
   const body = el('div', 'nle-bin-body');
   const note = el('p', 'nle-bin-note');
