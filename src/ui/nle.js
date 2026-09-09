@@ -331,9 +331,18 @@ export const hasCopiedClip = () => !!_clip;
  */
 function transportTargets() {
   const view = document.querySelector('.tab.active')?.dataset.view;
-  if (view === 'timeline') return { view, play: $('tl-playpause'), scrub: $('tl-scrub'), fps: () => Number($('tl-fps')?.value) || 12, dur: () => buildSchedule().duration };
-  if (view === 'audio') return { view, play: $('a-play'), scrub: null, fps: () => 12, dur: () => Number($('a-dur')?.value) || 0 };
-  if (view === 'video') return { view, play: $('v-playpause'), scrub: $('v-scrub'), fps: () => Number($('v-fps')?.value) || 12, dur: () => Number($('v-dur')?.value) || 0 };
+  /* `playing` reads the proxied control's own state rather than being derived
+     from a glyph. Video and timeline write ▮▮/❚❚ while running, so pattern
+     matching worked there by accident; AUDIO's ▶ PLAY becomes ■ STOP, which
+     matches nothing — so the transport showed ▶ for the whole time the sound
+     was playing, and an author who pressed the button expecting to start it
+     stopped it instead. */
+  if (view === 'timeline') return { view, play: $('tl-playpause'), scrub: $('tl-scrub'), fps: () => Number($('tl-fps')?.value) || 12, dur: () => buildSchedule().duration,
+    playing: () => /[▮❚]/.test($('tl-playpause')?.textContent || '') };
+  if (view === 'audio') return { view, play: $('a-play'), scrub: null, fps: () => 12, dur: () => Number($('a-dur')?.value) || 0,
+    playing: () => /STOP|■/.test($('a-play')?.textContent || '') };
+  if (view === 'video') return { view, play: $('v-playpause'), scrub: $('v-scrub'), fps: () => Number($('v-fps')?.value) || 12, dur: () => Number($('v-dur')?.value) || 0,
+    playing: () => /[▮❚]/.test($('v-playpause')?.textContent || '') };
   return null;
 }
 
@@ -374,7 +383,7 @@ function syncTransport() {
   if (play) {
     play.disabled = !t;
     // ▮/❚ in the proxied button's label means "playing — click pauses".
-    play.textContent = !t ? '▶ ❚❚' : /[▮❚]/.test(t.play?.textContent || '') ? '❚❚' : '▶';
+    play.textContent = !t ? '▶ ❚❚' : t.playing() ? '❚❚' : '▶';
     /* A proxy for a button that is standing right beside it is not a proxy, it
        is a second play button. VIDEO and TIMELINE carry their own scrub row and
        that row is docked into this bar (see dockScrub), so on those two the

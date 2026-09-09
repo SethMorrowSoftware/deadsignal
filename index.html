@@ -140,7 +140,7 @@
       <div class="panel">
         <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="v-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
         <fieldset data-section="Look" class="macros"><legend>QUICK LOOK</legend><div class="row"><label for="v-macro-grime">Grime</label><input type="range" id="v-macro-grime" min="0" max="100" value="0" class="grow"></div><div class="row"><label for="v-macro-decay">Decay</label><input type="range" id="v-macro-decay" min="0" max="100" value="0" class="grow"></div><p class="hint">One dial each. They write the individual settings below, so everything stays adjustable.</p></fieldset>
-        <div class="row"><label for="v-preset">Preset</label><select id="v-preset" class="grow"></select><button class="btn small" id="v-gallery-btn" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="v-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
+        <div class="row"><label for="v-preset">Preset</label><select id="v-preset" class="grow"></select><button class="btn small" id="v-gallery-btn" aria-controls="v-gallery" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="v-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
         <div class="gallery" id="v-gallery" data-generated style="display:none"></div>
         <div class="row"><label for="v-scene">Scene</label><select id="v-scene" class="grow"></select></div>
           <div class="row"><label for="v-srckey">Footage</label><select id="v-srckey" class="grow" title="Which imported clip the Video In scene plays — captured with the clip, so a sequence can cut between different files"></select></div>
@@ -313,7 +313,7 @@ signal integrity: 100%</textarea>
         <div class="hint" id="a-active" style="margin-bottom:6px">no layers enabled</div>
         <div class="solo-banner" id="a-solo-banner" role="status" aria-live="polite" style="display:none"></div>
         <fieldset data-section="Quick" class="macros"><legend>QUICK SOUND</legend><div class="row"><label for="a-macro-warmth">Warmth</label><input type="range" id="a-macro-warmth" min="0" max="100" value="0" class="grow"></div><div class="row"><label for="a-macro-degrade">Degrade</label><input type="range" id="a-macro-degrade" min="0" max="100" value="0" class="grow"></div><p class="hint">One dial each. They write the individual settings below, so everything stays adjustable.</p></fieldset>
-        <div class="row"><label for="a-preset">Preset</label><select id="a-preset" class="grow"></select><button class="btn small" id="a-gallery-btn" title="Browse every preset by what it turns on" aria-expanded="false">⊞</button><button class="btn small" id="a-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
+        <div class="row"><label for="a-preset">Preset</label><select id="a-preset" class="grow"></select><button class="btn small" id="a-gallery-btn" aria-controls="a-gallery" title="Browse every preset by what it turns on" aria-expanded="false">⊞</button><button class="btn small" id="a-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
         <div class="gallery" id="a-gallery" data-generated style="display:none"></div>
         <div class="split3">
           <div class="row"><label for="a-dur">Seconds</label><input type="number" id="a-dur" value="8" min="1" max="60"></div>
@@ -484,7 +484,7 @@ signal integrity: 100%</textarea>
       </div>
       <div class="panel">
         <h2>SETTINGS <span class="hdr-actions"><button class="btn small" id="i-reset" title="reset this whole tab to defaults">⟲ RESET</button></span></h2>
-        <div class="row"><label for="i-preset">Preset</label><select id="i-preset" class="grow"></select><button class="btn small" id="i-gallery-btn" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="i-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
+        <div class="row"><label for="i-preset">Preset</label><select id="i-preset" class="grow"></select><button class="btn small" id="i-gallery-btn" aria-controls="i-gallery" title="Browse every preset as a thumbnail" aria-expanded="false">⊞</button><button class="btn small" id="i-preset-manage" title="Rename, duplicate, delete, import or export your saved presets">⚙</button></div>
         <div class="gallery" id="i-gallery" data-generated style="display:none"></div>
         <div class="row"><label for="i-tpl">Template</label><select id="i-tpl" class="grow"></select></div>
         <fieldset data-section="Look"><legend>OUTPUT <span class="lk"><input type="checkbox" id="lock-i-out" title="keep this section when a preset is loaded or Randomize runs"> <label for="lock-i-out">lock</label></span></legend>

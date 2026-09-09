@@ -159,6 +159,38 @@ export function sectionsOf(viewId) {
   return _entries.find((e) => e.view.id === viewId)?.names.slice() ?? [];
 }
 
+/**
+ * Hide the strip buttons that now lead nowhere, and leave the panel on one
+ * that does.
+ *
+ * The detail level and the section strip are independent filters over the same
+ * fieldsets, and at a low level a whole section can end up with nothing in it —
+ * on VIDEO at Simple, MOTION (layers, filters, keyframes) is entirely level 2
+ * and above. A segmented button that opens an empty pane is the classic "the
+ * tool is broken" reading, and it is the one a first-time user meets, because
+ * Simple is what a new browser gets.
+ *
+ * A button, not a whole section: raising the level brings both straight back,
+ * and nothing here touches what the fieldsets contain.
+ */
+export function syncSectionStrip() {
+  for (const entry of _entries) {
+    const alive = (name) => entry.fieldsets.some(
+      (f) => f.dataset.section === name && !f.classList.contains('level-hidden'));
+    let showing = activeSection(entry.view.id);
+    for (const b of entry.panel.querySelectorAll(':scope > .sec-strip > button')) {
+      b.hidden = !alive(b.dataset.section);
+    }
+    /* If the section that was open is the one that just emptied, move to the
+       first that is not — otherwise the panel shows a blank pane and no button
+       is pressed, which reads worse than the empty section did. */
+    if (showing && !alive(showing)) {
+      const next = entry.names.find(alive);
+      if (next) apply(entry, next);
+    }
+  }
+}
+
 /** Show a named section directly. Returns what is showing afterwards. */
 export function showSection(viewId, name) {
   const entry = _entries.find((e) => e.view.id === viewId);

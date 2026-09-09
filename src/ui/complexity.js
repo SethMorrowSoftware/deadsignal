@@ -12,6 +12,7 @@
  */
 import { $ } from '../core/dom.js';
 import { PARAMS } from './params.js';
+import { syncSectionStrip } from './sections.js';
 
 export const LEVEL_NAMES = { 1: 'Simple', 2: 'Studio', 3: 'Deep' };
 const STORAGE_KEY = 'deadsignal.complexity';
@@ -106,6 +107,12 @@ export function applyLevel(level) {
       fs.classList.toggle('level-hidden', !anyVisible);
     }
   }
+
+  /* A section whose every fieldset this level hides must not keep a button on
+     the strip — see syncSectionStrip. Guarded because initComplexity runs at
+     boot BEFORE initSections, when there are no strips to sync yet; the call is
+     idempotent, and initSections applies the level again once they exist. */
+  syncSectionStrip();
 
   const sel = $('complexity');
   if (sel && sel.value !== String(current)) sel.value = String(current);   /* dom-only: header chrome, not a document control */

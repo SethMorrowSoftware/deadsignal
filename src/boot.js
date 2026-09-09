@@ -359,6 +359,10 @@ export function boot(){
   /* After the legends are enhanced, so the strip sits above finished sections
      rather than half-built ones. */
   initSections();
+  /* The strips exist now, so re-apply the level: initComplexity ran long before
+     this and had no strip to prune, which would leave a MOTION button opening
+     an empty pane at the Simple level. */
+  applyLevel(getLevel());
   /* A layer that is switched off is not what anyone is looking at. Folding them
      up front is what takes AUDIO from ten screens of scroll to something you
      can read. */
