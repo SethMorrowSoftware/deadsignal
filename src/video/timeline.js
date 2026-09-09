@@ -736,6 +736,11 @@ export let tlPreviewRAF=null, tlPlaying=true, tlScrubT=0, tlRecording=false;
 /* Separate handle: the throttle schedules with setTimeout, which
    cancelAnimationFrame cannot clear. */
 let tlPreviewTimer=null;
+/* Which loop is the live one — the same generation token the video preview
+   carries, for the same reason and against the same fault. See vPreviewGen in
+   video/capture.js: one handle slot per loop cannot cancel a loop whose handle
+   a newer one overwrote, and the survivor keeps drawing from a stale schedule. */
+let tlPreviewGen=0;
 /* Roughly a frame at 60Hz — see the note in video/capture.js. */
 const TL_FRAME_BUDGET_MS = 24;
 export function initTimelineTab(){
@@ -805,7 +810,7 @@ export function initTimelineTab(){
    Every path that must go quiet already comes through here — leaving the tab
    (ui/shell.js), starting either export, and the restart at the top of
    startTimelinePreview — so there is no fourth place to forget. */
-export function stopTimelinePreview(){ if(tlPreviewRAF){ cancelAnimationFrame(tlPreviewRAF); tlPreviewRAF=null; }
+export function stopTimelinePreview(){ tlPreviewGen++; if(tlPreviewRAF){ cancelAnimationFrame(tlPreviewRAF); tlPreviewRAF=null; }
   if(tlPreviewTimer){ clearTimeout(tlPreviewTimer); tlPreviewTimer=null; }
   haltPreviewSound(); }
 function timelineVisible(){ const v=$("view-timeline"); return !v || v.classList.contains("active"); }
@@ -824,7 +829,8 @@ export function startTimelinePreview(){ stopTimelinePreview(); if(!timelineVisib
      time is the fallback, not the default: two clocks that both claim to say
      where the sequence is drift apart, and the one the speakers are using is
      the one the author can hear. */
-  (function loop(){ let T; if(tlPlaying){ const aT=sequenceAudioTime(); T=aT!=null?aT:((performance.now()-start)/1000)%sched.total; tlScrubT=T; if($("tl-scrub"))$("tl-scrub").value=Math.round(T/sched.total*1000);   /* dom-only: playhead readout, written every frame */ } else T=tlScrubT;
+  const gen=tlPreviewGen;                                  // see tlPreviewGen
+  (function loop(){ if(gen!==tlPreviewGen) return; let T; if(tlPlaying){ const aT=sequenceAudioTime(); T=aT!=null?aT:((performance.now()-start)/1000)%sched.total; tlScrubT=T; if($("tl-scrub"))$("tl-scrub").value=Math.round(T/sched.total*1000);   /* dom-only: playhead readout, written every frame */ } else T=tlScrubT;
     const fps=tl.fps||12, frame=Math.round(T*fps);
     if(frame!==lastFrame){
       lastFrame=frame;
@@ -844,7 +850,8 @@ export function startTimelinePreview(){ stopTimelinePreview(); if(!timelineVisib
       const cost=performance.now()-t0;
       cooldown = cost > TL_FRAME_BUDGET_MS ? Math.min(500, Math.round(cost * 1.2)) : 0;
     }
-    if(cooldown>0) tlPreviewTimer=setTimeout(()=>{ tlPreviewTimer=null; tlPreviewRAF=requestAnimationFrame(loop); }, cooldown);
+    if(gen!==tlPreviewGen) return;                          // stopped while this frame was being drawn
+    if(cooldown>0) tlPreviewTimer=setTimeout(()=>{ if(gen!==tlPreviewGen) return; tlPreviewTimer=null; tlPreviewRAF=requestAnimationFrame(loop); }, cooldown);
     else tlPreviewRAF=requestAnimationFrame(loop); })(); }
 export function updateTimelineInfo(sched){ if($("tl-info"))$("tl-info").textContent=sched.clips.length+" clip(s) · "+(sched.duration??sched.total).toFixed(1)+"s · "+sched.tl.W+"×"+sched.tl.H;
   renderTrack();

@@ -108,3 +108,22 @@ table.srv th{ color:var(--muted); font-weight:normal }
 .filter-params input[type=range]{ width:100% }
 .filter-params input[type=text]{ width:100%; min-width:0 }
 .filter-params input[type=color]{ width:100%; height:20px; padding:0 }
+
+/* ------------------------------------------------- stage action bars --- */
+
+/* The ⋯ MORE fold (see ui/actionbar.js). The bar under the picture keeps the
+   verbs used mid-preview; the alternate encodings and the imports live in a
+   popover anchored to it, so the bar is one line at every window size and the
+   height it is not using goes to the monitor above it. */
+.btns{ position:relative }
+.btns-more-btn[aria-expanded="true"]{ border-color:var(--phos); color:var(--phos) }
+.btns-more{
+  position:absolute; z-index:40; top:100%; left:0; margin-top:6px;
+  display:flex; flex-wrap:wrap; gap:6px; max-width:min(420px,90vw); padding:8px;
+  background:var(--panel2); border:1px solid var(--edge2); border-radius:var(--radius,4px);
+  box-shadow:0 12px 32px rgba(0,0,0,.55);
+  text-align:left;
+}
+/* A number box in the popover keeps a usable width — `.btns input` has no
+   sizing of its own and collapsed to the flex minimum here. */
+.btns-more input[type=number]{ width:5em }

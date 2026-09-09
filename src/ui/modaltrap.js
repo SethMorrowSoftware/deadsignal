@@ -13,6 +13,36 @@ import { $ } from '../core/dom.js';
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
+/**
+ * Is any modal overlay on screen right now?
+ *
+ * Asked structurally — "is anything claiming aria-modal being rendered" —
+ * rather than from a list of ids, so the fifth overlay is covered the day it is
+ * written rather than the day someone remembers to add it here. Four claim it
+ * today: the welcome card (index.html), the command palette, the preset
+ * manager and the keyboard-shortcut sheet.
+ *
+ * `getClientRects().length` rather than a `hidden` or `style.display` test:
+ * the four are closed in three different ways (`hidden`, `style.display`, a
+ * class), and the question every caller is actually asking is whether the user
+ * can see the thing.
+ *
+ * WHAT THIS IS FOR. Every bare-key shortcut in the studio has to be inert while
+ * a modal is up, and the guard existed in exactly one of the two handlers that
+ * need it. The other — the 1-8 / R / G handler in boot.js — had none, so on a
+ * first run, with the welcome card still on screen and focus inside it,
+ * pressing R rendered and exported a real file the user could not see, G
+ * randomised the document behind the card, and 1-8 switched workspaces behind
+ * it. Nothing on screen changed, which is what made it a bug rather than a
+ * surprise.
+ */
+export function anyModalOpen() {
+  for (const el of document.querySelectorAll('[aria-modal="true"]')) {
+    if (el.getClientRects().length) return true;
+  }
+  return false;
+}
+
 /** Hide the rest of the page from assistive tech while a modal is up. */
 export function setBackgroundInert(on) {
   const head = document.querySelector('header.top');

@@ -3313,6 +3313,16 @@ section('a timeline that is a timeline');
       return px;
     };
     const out = { sections: {}, depth: {} };
+    /* Measured at DEEP, so `share` means what the check below says it means.
+       The detail level is a view filter, so at a lower level BOTH terms shrink
+       — and the denominator shrinks faster, because a section that is mostly
+       level-2 rows all but disappears while the one holding the level-1 basics
+       does not. The claim being defended is about the panel's full content
+       ("7.1 screens of scroll on VIDEO, 13.4 on AUDIO"), which only exists at
+       Deep; measured at the default it would report a worse ratio for a panel
+       that is strictly shorter in pixels. */
+    const level0 = S.getLevel();
+    S.applyLevel(3);
     for (const v of ['video', 'image', 'audio']) {
       document.querySelector(`.tab[data-view="${v}"]`).click();
       await new Promise((r) => setTimeout(r, 80));
@@ -3330,6 +3340,7 @@ section('a timeline that is a timeline');
       S.showSection(`view-${v}`, out.sections[v][0]);
       out.depth[v] = { worstPx: worst, wholePx: whole, share: +(worst / Math.max(1, whole)).toFixed(2) };
     }
+    S.applyLevel(level0);
 
     // One section at a time, and the strip says which.
     document.querySelector('.tab[data-view="video"]').click();

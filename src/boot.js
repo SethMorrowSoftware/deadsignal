@@ -29,6 +29,9 @@ import { getContrast, initContrast, setContrast } from './ui/contrast.js';
 import { MACROS, applyMacro, initMacros } from './ui/macros.js';
 import { currentRate, feedLuminance, paintFlash, resetFlashMeter } from './ui/flashmeter.js';
 import { initEditor } from './ui/nle.js';
+import { anyModalOpen } from './ui/modaltrap.js';
+import { initStageFit } from './ui/stagefit.js';
+import { foldActions } from './ui/actionbar.js';
 import { activateTab, enhanceFieldsets, foldInactiveAudioLayers, initTablistKeys, randomize, resetView, setResetRefresh, snapshotDefaults, tidyAudioLayers, updateAudioLayerFlags, wireLive } from './ui/shell.js';
 import { clearAllKeyframes, initKeyframes, refreshKeyframes } from './ui/keyframes.js';
 import { addFilter, addToChain, clearChain, clearFilters, initChain, initFilters, initImageFilters, renderChain, renderFilters, renderImageFilters } from './ui/filters.js';
@@ -221,6 +224,20 @@ export function boot(){
   /* The editor shell goes last: it re-layouts what everything above just
      wired, and docks the sequence lane, which has to exist first. */
   initEditor();
+  /* …and the monitors are measured once the editor grid exists, so the first
+     frame drawn is already the size the window can afford rather than the
+     canvas's own buffer size. */
+  initStageFit();
+  /* The stage bars keep the verbs you reach for while the preview is running
+     and fold the rest behind one ⋯ MORE — the alternate encodings, the
+     imports, and on TIMELINE the add-clip buttons the always-visible Sequence
+     band already carries. Nothing is removed: see ui/actionbar.js. */
+  foldActions({ bar:'v-record',  ids:['v-gif','v-apng','v-awebp','v-strip','v-loadimg','v-loadvid'],
+                title:'Other ways to export this clip, and importing your own footage: animated .gif, .apng, .webp, a frame strip, ⇪ IMG, ⇪ VID' });
+  foldActions({ bar:'i-render',  ids:['i-jpg','i-loadimg','i-decode'],
+                title:'More for this screen: a degraded .jpg, importing an image to retro-ify, and decoding a hidden token' });
+  foldActions({ bar:'tl-record', ids:['tl-still','tl-title','tl-shape','tl-stilldur','tl-clear'],
+                title:'The rest of the sequence verbs — all of them also sit in the Sequence band along the bottom, which is visible from every workspace' });
   if($("palette-open")) $("palette-open").addEventListener("click", ()=>palette.open());
   // header
   $("seed-roll").addEventListener("click", ()=>{ setVal("seed",Math.floor(Math.random()*1e6)); startVideoPreview(); renderImage();
@@ -318,8 +335,17 @@ export function boot(){
     // otherwise `r` hijacks Ctrl+R and starts a recording as the page reloads.
     if(e.ctrlKey||e.metaKey||e.altKey) return;
     if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return;
+    /* …nor while a modal is up. The keys belong to whatever is on top: on a
+       first run, with the welcome card still on screen, `r` used to render and
+       export a file behind it and `g` used to randomise the document, with
+       nothing on screen changing to say so. The editor's own key handler has
+       always had this guard (ui/nle.js); this handler never did. */
+    if(anyModalOpen()) return;
+    /* A handler that already acted owns the key — the same rule the editor
+       handler follows, so a binding cannot quietly acquire two meanings. */
+    if(e.defaultPrevented) return;
     if(e.key>="1"&&e.key<="8"){ activateTab(["video","audio","image","timeline","library","bundle","cloud","help"][+e.key-1]); }
-    else if(e.key==="r"||e.key==="R"){ const v=document.querySelector(".tab.active").dataset.view; if(v==="video")recordVideo(); else if(v==="audio")doRenderAudio(); else if(v==="image")renderImage(); else if(v==="timeline")recordTimeline(); }
+    else if(e.key==="r"||e.key==="R"){ const v=document.querySelector(".tab.active")?.dataset.view; if(v==="video")recordVideo(); else if(v==="audio")doRenderAudio(); else if(v==="image")renderImage(); else if(v==="timeline")recordTimeline(); }
     else if(e.key==="g"||e.key==="G"){ randomize(); } });
   // ux: collapsible sections + per-section reset + audio layer flags
   // Last, so loading the sample re-renders panels that are already wired.

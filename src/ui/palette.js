@@ -13,7 +13,7 @@ import { modalTrap } from './modaltrap.js';
 import { userPresets } from '../core/recipes.js';
 import { revealSectionFor } from './sections.js';
 import { PARAMS } from './params.js';
-import { LEVEL_NAMES, applyLevel, getLevel } from './complexity.js';
+import { LEVEL_NAMES, applyLevel, getLevel, levelRowOf } from './complexity.js';
 import { activateTab } from './shell.js';
 
 let el = null, input = null, list = null, items = [], sel = 0, lastFocus = null;
@@ -105,10 +105,11 @@ export function revealControl(id, tab) {
   if (tab) activateTab(tab);
   const c = $(id);
   if (!c) return false;
-  // The same "row" applyLevel() stamps .level-hidden on. Checking the class
-  // rather than the registry means a row a lower-level sibling already keeps
-  // visible never bumps the user's detail level for nothing.
-  const levelRow = c.closest('.row') || c.parentElement;
+  // The same "row" applyLevel() stamps .level-hidden on — through the same
+  // function, so the two cannot answer differently. Checking the class rather
+  // than the registry means a row a lower-level sibling already keeps visible
+  // never bumps the user's detail level for nothing.
+  const levelRow = levelRowOf(c);
   if (levelRow && levelRow.classList.contains('level-hidden')) {
     const lvl = applyLevel(Math.max(getLevel(), PARAMS[id]?.level ?? 1));
     log(`Detail level raised to ${LEVEL_NAMES[lvl]} to show "${PARAMS[id]?.label || id}"`, 'info');

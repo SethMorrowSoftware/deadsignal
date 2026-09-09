@@ -9,7 +9,7 @@ import { currentSeed, resetSeed, rnd } from '../core/rng.js';
 import { renderImage } from '../image/render.js';
 import { renderCoverage } from '../library/bundle.js';
 import { renderLibTable } from '../library/library.js';
-import { isExportBusy, startVideoPreview, stopVideoPreview } from '../video/capture.js';
+import { isExportBusy, onExportRelease, startVideoPreview, stopVideoPreview } from '../video/capture.js';
 import { readVideoCfg } from '../video/render.js';
 import { hasFootageFor } from '../media/import.js';
 import { renderTimelineTable, startTimelinePreview, stopTimelinePreview } from '../video/timeline.js';
@@ -57,7 +57,7 @@ export function cancelLive(){ clearTimeout(_liveT); }
  * Written through setVal() inside one transaction: the values reach the
  * document by the same path a human edit takes, and the whole shove is a single
  * undo entry rather than thirty. */
-export function randomize(){ const view=document.querySelector(".tab.active").dataset.view; const map={video:"view-video",audio:"view-audio",image:"view-image"}[view]; if(!map)return; resetSeed();
+export function randomize(){ const view=document.querySelector(".tab.active")?.dataset.view; const map={video:"view-video",audio:"view-audio",image:"view-image"}[view]; if(!map)return; resetSeed();
   const next=[];
   document.querySelectorAll("#"+map+' input[type=range]').forEach(r=>{
     if(!r.id) return;
@@ -72,6 +72,13 @@ export function randomize(){ const view=document.querySelector(".tab.active").da
   const write=()=>next.forEach(([id,v])=>setVal(id,v));
   const st=getStore(); if(st) st.transaction(write,"randomize"); else write();
   if(view==="video")startVideoPreview(); else if(view==="image")renderImage(); else markAudioStale(); toast("Randomized (seed "+currentSeed()+")"); }
+/* A workspace switch asked for while an export held the lock. See activateTab. */
+let _pendingView=null;
+onExportRelease(()=>{ const v=_pendingView; if(!v)return; _pendingView=null;
+  /* Only if it is still the odd one out: the export's own finally block may
+     already have put the page where it wanted it. */
+  if(document.querySelector(".tab.active")?.dataset.view!==v) activateTab(v); });
+
 export function activateTab(name){
   // An export holds the shared render surfaces (the scratch canvases and the
   // imported <video>). Switching tabs restarts a preview loop that resizes and
@@ -80,7 +87,14 @@ export function activateTab(name){
   // export releases. The exporters restart the correct preview themselves in
   // their finally blocks (calling startVideoPreview directly, not through here),
   // so this guard does not strand the preview.
-  if(isExportBusy()){ toast("Busy exporting — that view is paused until it finishes","warn"); return; }
+  /* Deferred, not dropped. The switch still cannot happen now — every exporter
+     renders through the same scratch canvases, and restarting a preview loop
+     mid-export corrupts the frames being written — but "cannot happen now" is
+     not the same as "does not happen", and the toast says which. It is
+     remembered and applied the moment the lock comes off. */
+  if(isExportBusy()){ _pendingView=name;
+    toast("Busy exporting — opening "+name.toUpperCase()+" as soon as it finishes","warn"); return; }
+  _pendingView=null;
   // Roving tabindex: only the selected tab is in the tab order, and arrow keys
   // move between them — the expected keyboard model for a tablist.
   document.querySelectorAll(".tab").forEach(t=>{
