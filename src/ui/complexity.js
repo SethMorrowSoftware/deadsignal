@@ -27,6 +27,25 @@ const STORAGE_KEY = 'deadsignal.complexity';
    jumps to a control the level hides, and says in the log that it did. */
 let current = 1;
 
+/**
+ * Workspaces this filter does not touch.
+ *
+ * "Detail" thins a SETTINGS PANEL: two hundred sliders describing one picture,
+ * where the whole problem is telling Scene (changes everything) from Hum bar (a
+ * subtle post effect) and where every one of them has a working default. None
+ * of that describes a form.
+ *
+ * These three are forms. LIBRARY's batch panel is source + length + container;
+ * BUNDLE's is which campaign, its name, its id and its beats; CLOUD's is a
+ * username and a password. Every field is required to do the one thing the
+ * workspace exists for, and none of them has a default that means anything —
+ * so a level that hid them did not simplify the workspace, it disabled it.
+ * At Simple, CLOUD lost both sign-in fields: the module's own promise that this
+ * is "never a capability lock" was false for the workspace where it mattered
+ * most, and it stayed false because Simple was never the default.
+ */
+const EXEMPT = new Set(['view-library', 'view-bundle', 'view-cloud']);
+
 /** Controls with no registry entry (file pickers, scrubbers) always show. */
 function levelOf(id) { return PARAMS[id]?.level ?? 1; }
 
@@ -68,6 +87,7 @@ export function applyLevel(level) {
   try { localStorage.setItem(STORAGE_KEY, String(current)); } catch { /* private mode */ }
 
   for (const view of document.querySelectorAll('.view')) {
+    if (EXEMPT.has(view.id)) continue;
     for (const el of view.querySelectorAll('input, select, textarea')) {
       if (!el.id) continue;
       const row = levelRowOf(el);
