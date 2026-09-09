@@ -56,7 +56,7 @@ server/           the backend itself — classes, schema, config, storage
   migrate.php     `php server/migrate.php` — schema from the command line
   account.php     `php server/account.php add <name>` — asks for the password
 styles/           tokens · layout · controls · panels
-src/              the engine, 94 ES modules
+src/              the engine, 127 ES modules
   core/           dom blobs rng text palettes packs recipes formats
   doc/            the project document: schema store session undo migrations
                   timeline automation regions annotations

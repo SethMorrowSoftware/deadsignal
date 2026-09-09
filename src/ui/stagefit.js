@@ -51,9 +51,6 @@
  */
 import { $ } from '../core/dom.js';
 
-/** Frames whose picture is a graph rather than a photograph — see fit(). */
-const STRETCH = new Set(['a-wavewrap']);
-
 const DEFAULT_AR = 4 / 3;
 
 /**
@@ -68,12 +65,6 @@ export function fit(canvas) {
   if (!canvas) return false;
   const frame = canvas.closest('.screen');
   if (!frame) return false;
-  /* The waveform is a plot of amplitude against time, not a picture of
-     anything: it has no true shape, and letterboxing it to a 4:1 box would
-     throw away width that the eye actually uses. It fills its frame, and
-     ui/regions.js maps the pointer through r.width alone, so the stretch
-     costs nothing. */
-  if (STRETCH.has(frame.id)) { frame.classList.add('stage-stretch'); return true; }
   const w = Number(canvas.width) || 0;
   const h = Number(canvas.height) || 0;
   const ar = w > 0 && h > 0 ? w / h : DEFAULT_AR;

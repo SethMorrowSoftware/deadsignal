@@ -5,6 +5,7 @@ import { download, makeUrl, revokeUrl } from '../core/blobs.js';
 import { $, chk, log, setEnabled, setVal, toast, val } from '../core/dom.js';
 import { saveUserPreset } from '../core/recipes.js';
 import { fxScanlines } from '../fx/crt.js';
+import { setFont } from '../core/text.js';
 import { paintWave, peaksOf } from './peaks.js';
 import { addToLibrary, refreshItemBlob, replaceItem, slug } from '../library/library.js';
 import { loadPreset } from '../presets/index.js';
@@ -22,6 +23,22 @@ import { hasImportedAudio, importedAudio, importedAudioName, loadAudioFile } fro
    implementation of a waveform is a second thing to keep in step. This function
    keeps its shape — the stacking, the per-channel colour, the divider and the
    scanlines are what make it THIS tool's waveform rather than a generic one. */
+/* Nothing rendered yet: say so IN the frame.
+ *
+ * The wave is the AUDIO workspace's monitor, and empty it was a black rectangle
+ * with the explanation printed underneath it — the one stage in the tool that
+ * did not use its own picture to say what state it was in. The sequence monitor
+ * has always drawn "The sequence is empty" into the canvas; this is the same
+ * sentence in the same place. */
+export function drawEmptyWave(){ const c=$("acanvas"); if(!c)return; const ctx=c.getContext("2d");
+  const W=c.width,H=c.height; ctx.fillStyle="#020806"; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="#0e2a24"; ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
+  setFont(ctx,Math.max(11,H*0.11)); ctx.fillStyle="#5f7d78";
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText("Press ◆ RENDER to hear it",W/2,H/2-H*0.14);
+  ctx.textAlign="left"; ctx.textBaseline="top";
+  fxScanlines(ctx,W,H,0.3); }
+
 export function drawWaveform(data){ const c=$("acanvas"),ctx=c.getContext("2d"),W=c.width,H=c.height; ctx.fillStyle="#020806"; ctx.fillRect(0,0,W,H);
   const chans=Array.isArray(data)?data:[data]; const lane=H/chans.length;
   chans.forEach((d,ci)=>{ const top=ci*lane;
@@ -125,6 +142,10 @@ export function normalizeAudio(){ if(!lastAudio)return; const pr=bufferPeakRms(l
   $("a-peak").style.width="97%"; $("a-peakv").textContent="-0.3dB"; clearBanner("a-banners"); toast("Normalized to -0.3dBFS"); log("Audio normalized (library updated).","ok"); }
 export function initAudioTab(){
   // audio
+  /* The monitor says what state it is in before anything has been rendered —
+     see drawEmptyWave. Drawn here rather than from boot so it cannot be missed
+     if the tab's wiring moves. */
+  drawEmptyWave();
   initRegions(()=>markAudioStale());
   /* After buildAudioLayerControls() — which boot ran long before this — because
      sixteen of the twenty-six enable checkboxes the buttons attach to are

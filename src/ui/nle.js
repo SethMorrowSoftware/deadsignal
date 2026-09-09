@@ -35,13 +35,15 @@
  * the TIMELINE workspace.
  */
 import { $, isEnabled, toast } from '../core/dom.js';
-import { anyModalOpen } from './modaltrap.js';
+import { anyModalOpen, modalTrap } from './modaltrap.js';
 import { download } from '../core/blobs.js';
 import { syncChromeToSkin } from '../core/palettes.js';
 import { BIN_DRAG_TYPE, chooseFiles, useAsset } from './importui.js';
 import { getStore } from '../doc/session.js';
 import { MAX_START, MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
 import { library, onLibraryChange } from '../library/library.js';
+import { PREVIOUS_PROJECT_KEY, applyProject, lsGet as projGet } from '../core/recipes.js';
+import { loadSample, openWelcome } from './welcome.js';
 import { activateTab } from './shell.js';
 import { onClipSelect, selectedClip, selectedRef, focusClipAfterRender, renderTrack, setTrackZoom, trackScale, zoomToFit } from './track.js';
 import { buildInspectorPane, initInspector, render as renderInspector } from './inspector.js';
@@ -463,7 +465,8 @@ const ACTIONS = {
   openProj: { label: 'Open project…', key: '', run: () => $('proj-load')?.click() },
   importMedia: { label: 'Import media…', key: '', run: () => chooseFiles() },
   record: { label: 'Export sequence…', key: '', run: () => { activateTab('timeline'); $('tl-record')?.click(); }, can: () => timeline.length > 0 },
-  exportNow: { label: 'Export what I am looking at', key: 'Ctrl+E', run: () => exportCurrent(), can: () => !!exportTarget() },
+  exportNow: { label: () => { const t = exportTarget(); return t ? `${t.label}…` : 'Export…'; },
+               key: 'Ctrl+E', run: () => exportCurrent(), can: () => !!exportTarget() },
   media: { label: 'Open media list…', key: '', run: () => activateTab('library') },
   exportVideo: { label: 'Export video clip…', key: '', run: () => { activateTab('video'); $('v-record')?.click(); } },
   palette: { label: 'Search everything…', key: 'Ctrl+K', run: () => $('palette-open')?.click() },
@@ -474,14 +477,43 @@ const ACTIONS = {
   skin: { label: 'Toggle CRT skin', key: '', run: () => toggleSkin() },
   help: { label: 'Help', key: '', run: () => activateTab('help') },
   shortcuts: { label: 'Keyboard shortcuts', key: '', run: () => openShortcuts() },
+  /* The sample project is the studio's only guided starting point, and once
+     the welcome card had been dismissed — which the first Escape or the first
+     START EMPTY does — it could be reached only by someone who already knew to
+     press Ctrl+K. The three panes a new author is actually looking at (bin,
+     CLIP, sequence) offered no route to it at all. */
+  sample: { label: 'Load the sample project…', key: '', run: () => loadSample() },
+  welcome: { label: 'Show the welcome card', key: '', run: () => openWelcome() },
+  /* Loading a project, or the sample, keeps a copy of the outgoing one — and
+     the only way to get it back was to paste an expression into the browser
+     console, which the message saying so was itself displayed inside. A safety
+     net you cannot reach without devtools is not one. */
+  restorePrevious: {
+    label: 'Restore previous project', key: '',
+    run: () => {
+      const prev = projGet(PREVIOUS_PROJECT_KEY, null);
+      if (!prev) { toast('No previous project kept', 'info'); return; }
+      if (typeof confirm === 'function'
+          && !confirm('Restore the previous project? It replaces the current document.')) return;
+      applyProject(prev);
+    },
+    can: () => !!projGet(PREVIOUS_PROJECT_KEY, null),
+  },
 };
 
+/* Ten File items became six, and nothing became unreachable.
+   Three of the ten were the same export stated three ways — "Export what I am
+   looking at", "Export video clip…", "Export sequence…" — beside a ⤓ EXPORT
+   button in the menubar that is already workspace-aware and says which of the
+   three it will do; and "Open media list…" was a menu item whose whole job was
+   to press a tab two rows below it. What replaces them is the one thing File
+   was missing: a way back to the project a load replaced. */
 const MENUS = [
-  ['File', ['openProj', 'saveProj', '-', 'importMedia', '-', 'exportNow', '-', 'exportVideo', 'record', 'media']],
+  ['File', ['openProj', 'saveProj', '-', 'importMedia', '-', 'exportNow', '-', 'restorePrevious']],
   ['Edit', ['undo', 'redo', '-', 'copy', 'paste', '-', 'split', 'dup', 'ripple', '-', 'clearSeq']],
   ['Clip', ['addScene', 'addStill', '-', 'addTitle', 'addShape', 'addOverlay', 'addSound']],
   ['View', ['palette', 'explain', '-', 'zoomIn', 'zoomOut', 'zoomFit', '-', 'skin']],
-  ['Help', ['help', 'shortcuts']],
+  ['Help', ['sample', 'welcome', '-', 'help', 'shortcuts']],
 ];
 
 function closeMenus() {
@@ -540,7 +572,18 @@ function buildMenu(name, items) {
       b.appendChild(span);
       if (a.key) { const k = document.createElement('kbd'); k.textContent = a.key; b.appendChild(k); }
       if (a.can && !a.can()) b.disabled = true;
-      b.addEventListener('click', () => { closeMenus(); try { a.run(); } catch (err) { console.error(err); } refreshStatus(); });
+      /* Focus goes back to the menu's own trigger before the action runs.
+         Closing the popup destroys the item that had focus, so focus collapsed
+         to <body> — pick Edit ▸ Split from the keyboard and the next Tab landed
+         on the skip link rather than back on Edit. Restored BEFORE the action,
+         so an action that moves focus itself (the palette, an import dialog)
+         still wins. Escape two lines below already did this. */
+      b.addEventListener('click', () => {
+        closeMenus();
+        try { btn.focus({ preventScroll: true }); } catch { /* detached */ }
+        try { a.run(); } catch (err) { console.error(err); }
+        refreshStatus();
+      });
       pop.appendChild(b);
     }
     wrap.setAttribute('open', '');
@@ -604,7 +647,32 @@ const SHORTCUTS = [
   ]],
 ];
 
+/* The shortcut sheet's focus trap and the control that opened it.
+ *
+ * It declares aria-modal="true" and had neither: Tab walked straight out of a
+ * dialog that had just told assistive tech the page behind it was inert, into
+ * the menu bar and every control under it, with no way back — the exact defect
+ * welcome.js's header records as having been fixed once already for the welcome
+ * card. Closing it left focus on a now-hidden button, which collapses to <body>,
+ * so a keyboard user was returned to the top of the document rather than to the
+ * menu item they opened it from. */
+const _keysTrap = modalTrap(() => $('nle-keys'));
+let _keysOpener = null;
+
+function closeShortcuts() {
+  const overlay = $('nle-keys');
+  if (!overlay || overlay.hidden) return;
+  overlay.hidden = true;
+  _keysTrap.release();
+  if (_keysOpener && document.contains(_keysOpener)) {
+    try { _keysOpener.focus({ preventScroll: true }); } catch { _keysOpener.focus(); }
+  }
+  _keysOpener = null;
+}
+
 function openShortcuts() {
+  const opener = document.activeElement;
+  _keysOpener = opener && opener !== document.body ? opener : null;
   let overlay = $('nle-keys');
   if (!overlay) {
     overlay = el('div', 'nle-keys');
@@ -618,7 +686,7 @@ function openShortcuts() {
     const close = el('button', 'btn small', '✕ CLOSE');
     close.type = 'button';
     close.id = 'nle-keys-close';
-    close.addEventListener('click', () => { overlay.hidden = true; });
+    close.addEventListener('click', closeShortcuts);
     head.appendChild(close);
     card.appendChild(head);
     for (const [group, rows] of SHORTCUTS) {
@@ -638,11 +706,12 @@ function openShortcuts() {
       card.appendChild(dl);
     }
     overlay.appendChild(card);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.hidden = true; });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) overlay.hidden = true; });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeShortcuts(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) closeShortcuts(); });
     document.body.appendChild(overlay);
   }
   overlay.hidden = false;
+  _keysTrap.engage();
   $('nle-keys-close')?.focus();
 }
 
@@ -1194,6 +1263,67 @@ export function setSkin(skin) {
  * workspace, and this), each behind a toggle. The editor IS the studio now:
  * the moves below are permanent, so none of them keeps a way back.
  */
+const CONSOLE_KEY = 'deadsignal.editor.console';
+
+/**
+ * Fold the activity log into a header you can open.
+ *
+ * The log is where this tool explains what it just did — which container it
+ * fell back to, which clip was muxed, why an export refused — so hiding it is
+ * wrong. But open, it held ~190px of the 260px media column on all eight
+ * workspaces, mostly showing one boot line, in the column whose actual job
+ * (the bin) starts empty. Its value is "tell me when something happened",
+ * which a header with a count serves as well as a black box does.
+ *
+ * Closed by default, remembered per browser, and it OPENS ITSELF on the first
+ * warning or error — a folded log over the sentence explaining a refused export
+ * would be worse than the space it saves.
+ */
+function foldConsole(panel) {
+  if (panel.dataset.folded) return;
+  panel.dataset.folded = '1';
+  const h2 = panel.querySelector('h2');
+  const body = panel.querySelector('.console');
+  if (!h2 || !body) return;
+  if (!body.id) body.id = 'console';
+
+  const btn = el('button', 'nle-fold');
+  btn.type = 'button';
+  btn.id = 'nle-console-fold';
+  btn.setAttribute('aria-controls', body.id);
+  const caret = el('span', 'nle-fold-caret', '▸');
+  caret.setAttribute('aria-hidden', 'true');
+  const count = el('span', 'nle-fold-count');
+  count.id = 'nle-console-count';
+  btn.append(caret, el('span', null, h2.textContent.trim() || 'Console'), count);
+  h2.replaceChildren(btn);
+
+  let unread = 0;
+  const apply = (open) => {
+    panel.classList.toggle('folded', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    caret.textContent = open ? '▾' : '▸';
+    if (open) { unread = 0; body.scrollTop = body.scrollHeight; }
+    count.textContent = open || !unread ? '' : String(unread);
+    count.classList.toggle('warn', !open && unread > 0);
+    btn.setAttribute('aria-label', `Activity log${open ? '' : unread ? `, ${unread} new` : ''}`);
+  };
+  apply(lsGet(CONSOLE_KEY, '0') === '1');
+  btn.addEventListener('click', () => {
+    const open = btn.getAttribute('aria-expanded') !== 'true';
+    lsSet(CONSOLE_KEY, open ? '1' : '0');
+    apply(open);
+  });
+  document.addEventListener('studio:log', (e) => {
+    if (btn.getAttribute('aria-expanded') === 'true') { body.scrollTop = body.scrollHeight; return; }
+    unread++;
+    /* A warning or an error is the case this fold must not lose. Anything else
+       is a count on the header, which is what a quiet log should cost. */
+    if (e.detail?.cls === 'err' || e.detail?.cls === 'warn') { lsSet(CONSOLE_KEY, '1'); apply(true); return; }
+    apply(false);
+  });
+}
+
 function enterEditor() {
   if (!built) build();
   document.body.classList.add('nle');
@@ -1225,6 +1355,7 @@ function enterEditor() {
   const log = $('console')?.closest('.panel');
   const logDock = $('nle-bin');
   if (log && logDock && log.parentElement !== logDock) logDock.appendChild(log);
+  if (log) foldConsole(log);
   /* The stage panels' h2 headers are hidden in the editor — a monitor shows
      the picture, not a title — but the live readouts inside them are not
      decoration: the export-size estimates, the WCAG 2.3.1 flash meter, the

@@ -100,6 +100,9 @@ export function initExplain() {
   });
 
   document.addEventListener('keydown', (e) => {
+    /* An Escape a nearer handler has already answered is not ours: an overlay
+       closing must not also disarm Explain behind it. */
+    if (e.defaultPrevented) return;
     if (e.key === 'Escape' && armed) { setArmed(false); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return;

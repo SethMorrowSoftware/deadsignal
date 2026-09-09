@@ -55,8 +55,24 @@ function paintSelection() {
   if (!box) return;
   if (!_sel || !_seconds) { box.style.display = 'none'; return; }
   box.style.display = 'block';
-  box.style.left = `${(_sel.from / _seconds) * 100}%`;
-  box.style.width = `${Math.max(0.4, ((_sel.to - _sel.from) / _seconds) * 100)}%`;
+  /* Positioned against the CANVAS, in pixels, not against the frame in percent.
+     The wave fits its frame at its own ratio now, so on a narrow window the
+     picture is not the full width of the box it sits in — and a selection laid
+     out as a percentage of the FRAME would then sit next to the range it
+     describes rather than over it. Measuring the canvas is exact whether or not
+     the two happen to coincide. */
+  const cv = $('acanvas');
+  const wrap = $('a-wavewrap');
+  if (cv && wrap) {
+    const cr = cv.getBoundingClientRect(); const wr = wrap.getBoundingClientRect();
+    if (cr.width > 0) {
+      box.style.left = `${(cr.left - wr.left) + (_sel.from / _seconds) * cr.width}px`;
+      box.style.width = `${Math.max(2, ((_sel.to - _sel.from) / _seconds) * cr.width)}px`;
+      box.style.top = `${cr.top - wr.top}px`;
+      box.style.height = `${cr.height}px`;
+      box.style.bottom = 'auto';
+    }
+  }
   const out = $('a-selinfo');
   if (out) out.textContent = `${_sel.from.toFixed(2)}s – ${_sel.to.toFixed(2)}s  (${(_sel.to - _sel.from).toFixed(2)}s)`;
 }
@@ -115,7 +131,7 @@ export function renderRegions() {
   const ready = !!_sel;
   setEnabled($('a-region-add'), !!ready);
   const hint = $('a-selinfo');
-  if (hint && !_sel) hint.textContent = _seconds ? 'Drag on the wave to select a range.' : 'Render something first.';
+  if (hint && !_sel) hint.textContent = _seconds ? 'Drag on the wave to select a range.' : '';
   const amt = $('a-region-amount');
   if (amt && sel) {
     const op = REGION_OPS.find((o) => o.id === sel.value);

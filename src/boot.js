@@ -236,8 +236,11 @@ export function boot(){
                 title:'Other ways to export this clip, and importing your own footage: animated .gif, .apng, .webp, a frame strip, ⇪ IMG, ⇪ VID' });
   foldActions({ bar:'i-render',  ids:['i-jpg','i-loadimg','i-decode'],
                 title:'More for this screen: a degraded .jpg, importing an image to retro-ify, and decoding a hidden token' });
-  foldActions({ bar:'tl-record', ids:['tl-still','tl-title','tl-shape','tl-stilldur','tl-clear'],
-                title:'The rest of the sequence verbs — all of them also sit in the Sequence band along the bottom, which is visible from every workspace' });
+  /* ✕ clear all stays out on the bar: it is the one verb here that is not also
+     in the Sequence band, and a destructive action behind a disclosure is a
+     destructive action people press by accident looking for something else. */
+  foldActions({ bar:'tl-record', ids:['tl-still','tl-title','tl-shape','tl-stilldur'],
+                title:'The rest of the add-clip verbs — all of them also sit in the Sequence band along the bottom, which is visible from every workspace' });
   if($("palette-open")) $("palette-open").addEventListener("click", ()=>palette.open());
   // header
   $("seed-roll").addEventListener("click", ()=>{ setVal("seed",Math.floor(Math.random()*1e6)); startVideoPreview(); renderImage();

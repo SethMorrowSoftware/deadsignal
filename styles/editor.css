@@ -544,23 +544,17 @@ body.nle .view.active .panel.stagewrap canvas.stage{
   max-width:100%; max-height:100%;
   background:#000; image-rendering:pixelated;
 }
-/* A waveform is a plot, not a picture: it has no true shape, and letterboxing
-   it would throw away width the eye actually uses. stagefit.js marks its frame
-   `stretch`; nothing else in the tool is marked. Capped so the wave cannot take
-   the whole monitor on a tall window — past that it is just a taller smear of
-   the same information. */
-body.nle .view.active .panel.stagewrap .screen.stage-stretch canvas.stage{
-  width:100%; height:100cqh;
-}
-/* …and the frame around a plot takes the height a plot needs rather than the
-   whole monitor row. Stretched to `1fr` like a picture, an unrendered wave was
-   a 285px black rectangle with one sentence under it — the tallest empty box
-   in the tool. The row goes to `auto` and the panel packs to the top, so the
-   space the wave does not need is simply not claimed. */
-body.nle .view.active .panel.stagewrap:has(.screen.stage-stretch){
+/* The waveform takes the height a 4:1 plot needs, not the whole monitor row.
+   Stretched to `1fr` like a picture it was a 285px black rectangle with one
+   sentence under it — the tallest empty box in the tool — and the AUDIO
+   workspace has nothing else that wants the height. The frame is a definite box
+   (which `container-type:size` needs) and the picture fits it by the same rule
+   as every other stage, so the wave is never anamorphic; the panel packs to the
+   top, so the space the wave does not need is simply not claimed. */
+body.nle .view.active .panel.stagewrap:has(#acanvas){
   grid-template-rows:auto; align-content:start;
 }
-body.nle .view.active .panel.stagewrap .screen.stage-stretch{
+body.nle .view.active .panel.stagewrap #a-wavewrap{
   height:min(34vh, 240px);
 }
 
@@ -798,3 +792,24 @@ body.nle .nle-status{ display:flex; }
   border:1px solid var(--edge2); border-bottom-width:2px; border-radius:4px;
   padding:1px 5px; background:var(--panel2); white-space:nowrap;
 }
+
+/* ------------------------------------------------- activity log fold -- */
+
+/* The log's header IS its toggle (see foldConsole). Styled as a header rather
+   than as a button: it is the panel's title, and a title that happens to be
+   pressable should not read as a form control. */
+.nle-console h2{ margin:0; border:0; padding:0; }
+.nle-console .nle-fold{
+  display:flex; align-items:center; gap:7px; width:100%;
+  background:none; border:0; padding:2px 0; cursor:pointer;
+  color:inherit; font:inherit; letter-spacing:inherit; text-align:left;
+}
+.nle-console .nle-fold:hover{ color:var(--text); }
+.nle-console .nle-fold-caret{ font-size:12px; width:1em; }
+.nle-console .nle-fold-count{ margin-left:auto; font-family:var(--mono); font-size:12px; }
+.nle-console .nle-fold-count.warn{ color:var(--amber); font-weight:600; }
+.nle-console.folded .console{ display:none; }
+/* Folded, the panel is its own header — no dashed rule under a title with
+   nothing beneath it. */
+.nle-console.folded{ padding-bottom:8px; }
+.nle-console.folded h2{ border-bottom:0; padding-bottom:0; }

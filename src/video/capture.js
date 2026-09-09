@@ -395,6 +395,17 @@ export async function recordVideo(){
   // recorder starts, so a second click in that gap ran a second recorder over
   // the same canvas — the same race, one layer down.
   vRecording=true;
+  /* The BUTTON goes down with the flag, not with the recorder.
+   *
+   * ● RECORD stayed live and ■ STOP stayed grey across everything this function
+   * awaits before a recorder exists — priming footage, deciding on the offline
+   * encoder, decoding the audio bed. On a real clip that is a second or more in
+   * which the tool has accepted the job, holds the export lock, refuses every
+   * workspace switch, and still shows a button that says "press me to start".
+   * Anything asking "is it recording?" — a person, or a test — is told no while
+   * the answer is yes. The `finally` below puts both back on every path that
+   * ends before the recorder takes over. */
+  $("v-record").disabled=true; setEnabled($("v-stop"),true);
   let armed=false;   // once the recorder is live, finish() owns the flag + token
   try{
   let cfg=readVideoCfg();
@@ -428,13 +439,18 @@ export async function recordVideo(){
   let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
                                                    toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  stopVideoPreview(); vRecording=true; $("v-record").disabled=true; setEnabled($("v-stop"),true); $("v-progress-wrap").style.display="block";
+  stopVideoPreview(); vRecording=true; $("v-progress-wrap").style.display="block";   // button + STOP already set above
   /* Why the recording ended decides what finish() does with the chunks. The
      fast path's contract holds here too: STOP means stop, and a recorder error
      is an error — saving either as a normal clip put a silently truncated file
      in the library announced as a finished export. */
   let endReason="done";
-  let done=false; const finish=()=>{ if(done)return; done=true; try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
+  /* Three times the clip plus eight seconds, never under fifteen — see the
+     watchdog note below. */
+  const budget=Math.max(15000, cfg.duration*3000+8000);
+  let guard=null, reachedEnd=false;
+  let done=false; const finish=()=>{ if(done)return; done=true; clearTimeout(guard);
+    try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
     try{ bedCtx&&bedCtx.close(); }catch(e){}
     $("v-progress-wrap").style.display="none";
     vRecording=false; releaseExport(); $("v-record").disabled=false; setEnabled($("v-stop"),false);
@@ -455,6 +471,32 @@ export async function recordVideo(){
     const nm=cfg.hud||cfg.text.split("\n")[0]||cfg.scene; addToLibrary(blob,ext,"videos",slug(nm),cfg.duration);
     startVideoPreview(); };
   rec.onstop=finish; rec.onerror=(e)=>{ endReason=(e&&e.error&&e.error.message)||"MediaRecorder error"; finish(); }; rec.start();
+  /* A RECORDING ALWAYS ENDS.
+   *
+   * The only route out of a real-time capture is `step` reaching the clip's
+   * duration and calling rec.stop(), and the only route out of THAT is the
+   * recorder delivering onstop. Both are things that can simply not happen: a
+   * frame loop can die (an exception in a render, an rAF that stops being
+   * serviced) and a MediaRecorder can stall without ever firing onstop or
+   * onerror. Either way finish() never runs, so the export lock is never
+   * released — and the lock is not a private detail. Held, ● RECORD stays grey,
+   * ■ STOP stays live over nothing, and EVERY WORKSPACE SWITCH IS REFUSED for
+   * the rest of the session with only a toast to explain it. The tool is simply
+   * stuck, and nothing on screen says which part of it is stuck.
+   *
+   * So the end is guaranteed rather than hoped for. The budget is generous —
+   * real-time capture is wall-clock and load-sensitive, and finishing late is
+   * normal on a loaded machine — but it is finite. Chunks recorded up to the
+   * point the frames ran out are kept if the loop actually got there; a capture
+   * that stalled part way is discarded, which is the same contract STOP and a
+   * recorder error already have.
+   */
+  guard=setTimeout(()=>{ if(done)return;
+    if(!reachedEnd) endReason="the recorder stopped responding";
+    log("Recording did not end on its own after "+Math.round(budget/1000)+"s — closing it out"+
+        (reachedEnd?" and keeping what was captured.":" and discarding the partial clip."),"warn");
+    try{ rec.stop(); }catch(e){ /* already gone */ }
+    setTimeout(()=>{ if(!done) finish(); },500); }, budget);
   armed=true;
   // The clip's own footage, not just the active slot — otherwise a library-keyed
   // clip records whatever frame its pooled decoder happened to be paused on.
@@ -466,9 +508,11 @@ export async function recordVideo(){
   // the already-scheduled step would overwrite its status with "Recording...".
   const step=()=>{ if(done)return; const t=(performance.now()-start)/1000; renderScaled(ctx,cfg.W,cfg.H,cfg,Math.min(t,cfg.duration));
     const p=clamp(t/cfg.duration,0,1); $("v-progress").style.width=(p*100)+"%"; $("v-status").textContent="Recording... "+t.toFixed(1)+"/"+cfg.duration+"s";
-    if(t>=cfg.duration || !vRecording){ if(t<cfg.duration && !vRecording) endReason="stopped"; try{rec.stop();}catch(e){finish();} return; } requestAnimationFrame(step); };
+    if(t>=cfg.duration || !vRecording){ if(t<cfg.duration && !vRecording) endReason="stopped"; else reachedEnd=true;
+      try{rec.stop();}catch(e){finish();} return; } requestAnimationFrame(step); };
   requestAnimationFrame(step);
-  } finally { if(!armed){ vRecording=false; releaseExport(); } }
+  } finally { if(!armed){ vRecording=false; releaseExport();
+                          $("v-record").disabled=false; setEnabled($("v-stop"),false); } }
 }
 /* collect `count` frames deterministically into offscreen canvases (for strip/GIF).
    Async so a `videoin` clip can be seeked frame-accurately (drawImage of a <video>

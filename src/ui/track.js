@@ -299,8 +299,13 @@ export function renderTrack() {
   if (_lane === 'A' && _selected >= audio.length) setSelected(-1);
 
   if (!clips.length) {
-    box.innerHTML = '<p class="hint">Nothing in the sequence yet. Build a look on VIDEO and press '
-      + '<b>＋ SCENE</b>, or a screen on SCREEN and press <b>＋ STILL</b>.</p>';
+    /* Names the buttons directly above this line, in their own casing. It used
+       to say "Build a look on VIDEO and press ＋ SCENE" — a two-workspace errand
+       for something the button six pixels up already does with the look that is
+       loaded, and spelled ＋ SCENE where the button reads ＋ Scene, so the
+       reference did not even match what the eye could find. */
+    box.innerHTML = '<p class="hint">Nothing in the sequence yet. Press <b>＋ Scene</b> just above to drop in '
+      + 'the VIDEO look you have now, or <b>＋ Still</b> for the SCREEN render.</p>';
     // No lane means no scroll to remember; leaving a stale offset would restore
     // it against the next sequence, which is a different length entirely.
     _scrollPx = 0;
@@ -312,7 +317,12 @@ export function renderTrack() {
     const left = Math.round(timeToPx(starts[i], _pps));
     const width = Math.max(MIN_BLOCK_PX, Math.round(timeToPx(len, _pps)));
     const over = isOverlay(c);
-    const cls = ['tl-clip', c.kind === 'still' ? 'still' : 'video', over ? 'overlay' : '', i === _selected ? 'sel' : '']
+    /* `_lane === 'V' &&`, which the sound lane's own test has and this one did
+       not: `_selected` is an index within the SELECTED LANE, so selecting sound
+       2 also drew video clip 2 as selected — two highlighted blocks for one
+       selection, and only one of them was the thing S or Del would act on. */
+    const isSel = _lane === 'V' && i === _selected;
+    const cls = ['tl-clip', c.kind === 'still' ? 'still' : 'video', over ? 'overlay' : '', isSel ? 'sel' : '']
       .filter(Boolean).join(' ');
     /* A label is author text — a scene name plus the first line of the clip's
        copy — and it arrives from project files other people wrote, so it is
@@ -334,7 +344,13 @@ export function renderTrack() {
        they describe actually are. */
     const marks = keyMarks(c, len, width);
     const trans = transHandle(clips, i, width);
-    return `<button type="button" class="${cls}" data-i="${i}" style="left:${left}px;width:${width}px"
+    /* aria-current says WHICH clip is selected. The lane signalled it with an
+       outline colour and nothing else, so a screen-reader user could not tell
+       what S (split), Del (ripple delete) or the CLIP panel were about to act
+       on — the status bar's "Clip 3: …" is in a different region of the page
+       and answers a different question. */
+    const sel = isSel ? ' aria-current="true"' : '';
+    return `<button type="button" class="${cls}" data-i="${i}"${sel} style="left:${left}px;width:${width}px"
       aria-label="Clip ${i + 1}, ${label}, ${len.toFixed(2)} seconds${where}">
       <span class="tl-grip l" data-i="${i}" data-edge="in" aria-hidden="true"></span>
       <span class="tl-name">${label}</span>

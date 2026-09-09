@@ -143,17 +143,33 @@ export function drawSelection(ctx, box) {
  * Topmost first because later annotations draw over earlier ones, and clicking
  * what you can see is the only rule anyone expects.
  */
-export function hitAnnotation(boxes, px, py) {
+/* `zoom` is buffer pixels per DISPLAY pixel, and every tolerance here is
+   multiplied by it.
+ *
+ * These points are in buffer space, so a bare `3` means three buffer pixels —
+ * which is a different-sized target on screen for every output size, and only
+ * ever felt right by accident because the preview used to be drawn at 1:1. The
+ * monitor's own hit test has always done this (ui/monitor.js: `HANDLE_PX *
+ * zoom`); now that the preview scales to fill its frame, this one has to as
+ * well, or a 1920-wide screen shown at 700px gives a sub-pixel grab and a small
+ * one gives a grip that swallows clicks meant for the box. */
+export function hitAnnotation(boxes, px, py, zoom = 1) {
+  const pad = 3 * (zoom > 0 ? zoom : 1);
   for (let i = boxes.length - 1; i >= 0; i--) {
     const b = boxes[i];
-    if (px >= b.x - 3 && px <= b.x + b.w + 3 && py >= b.y - 3 && py <= b.y + b.h + 3) return i;
+    if (px >= b.x - pad && px <= b.x + b.w + pad && py >= b.y - pad && py <= b.y + b.h + pad) return i;
   }
   return -1;
 }
 
 /** Is this point on the selected annotation's resize grip? */
-export function onGrip(box, px, py) {
+export function onGrip(box, px, py, zoom = 1) {
   if (!box) return false;
+  const z = zoom > 0 ? zoom : 1;
+  /* The grip is DRAWN at a fixed buffer size, so its box stays in buffer units;
+     only the slack around it — the part that exists to make a small target
+     catchable — scales with how small it is on screen. */
   const gx = box.x + box.w - 3, gy = box.y + box.h - 3;
-  return px >= gx - 4 && px <= gx + GRIP + 4 && py >= gy - 4 && py <= gy + GRIP + 4;
+  const pad = 4 * z;
+  return px >= gx - pad && px <= gx + GRIP + pad && py >= gy - pad && py <= gy + GRIP + pad;
 }

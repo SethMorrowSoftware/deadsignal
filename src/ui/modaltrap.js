@@ -45,8 +45,16 @@ export function anyModalOpen() {
 
 /** Hide the rest of the page from assistive tech while a modal is up. */
 export function setBackgroundInert(on) {
+  /* The editor's own chrome is on this list, and it is the half that was
+     missing. This was written against the pre-editor markup — a header that
+     body.nle now sets `display:none` on, so inerting it does nothing at all —
+     while the menu bar (File/Edit/Clip/View/Help), the eleven toolbar settings
+     rehoused beside it, the ⤓ EXPORT button and the status bar stayed fully
+     reachable by a virtual cursor behind a dialog that had just declared
+     `aria-modal="true"`. A Tab trap hides that from keyboard testing: the leak
+     is a reading-mode leak, and the claim was false for every modal here. */
   const head = document.querySelector('header.top');
-  for (const n of [head, $('main-content'), $('tabs'), $('toasts')]) {
+  for (const n of [head, $('nle-chrome'), $('main-content'), $('tabs'), $('nle-status'), $('toasts')]) {
     if (!n) continue;
     if (on) n.setAttribute('aria-hidden', 'true'); else n.removeAttribute('aria-hidden');
   }

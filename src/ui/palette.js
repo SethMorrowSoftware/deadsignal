@@ -218,7 +218,14 @@ export function initPalette(d) {
   input.addEventListener('input', () => { sel = 0; render(input.value); });
   input.addEventListener('keydown', (e) => {
     const n = (list._results || []).length;
-    if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+    /* stopPropagation as well as preventDefault: this Escape belongs to the
+       palette and to nothing else. Without it the same keypress also reached
+       Explain mode's document handler, so arming Explain, pressing Ctrl+K to
+       look something up and pressing Escape to dismiss the palette silently
+       switched Explain off too — one Escape dismissing two things, with only
+       the toolbar button's aria-pressed to say so. welcome.js already does
+       this for the same reason. */
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); sel = n ? (sel + 1) % n : 0; render(input.value); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = n ? (sel - 1 + n) % n : 0; render(input.value); }
     else if (e.key === 'Home') { e.preventDefault(); sel = 0; render(input.value); }

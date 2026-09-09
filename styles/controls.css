@@ -117,6 +117,9 @@ table.srv th{ color:var(--muted); font-weight:normal }
    height it is not using goes to the monitor above it. */
 .btns{ position:relative }
 .btns-more-btn[aria-expanded="true"]{ border-color:var(--phos); color:var(--phos) }
+/* `display:flex` on an author rule beats the UA sheet's `[hidden]{display:none}`,
+   so the popover shipped open. Say it here rather than relying on the default. */
+.btns-more[hidden]{ display:none }
 .btns-more{
   position:absolute; z-index:40; top:100%; left:0; margin-top:6px;
   display:flex; flex-wrap:wrap; gap:6px; max-width:min(420px,90vw); padding:8px;

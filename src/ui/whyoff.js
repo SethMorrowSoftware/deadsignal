@@ -42,6 +42,9 @@ const REASONS = {
   /* Batch */
   'bx-stop':       ['Stop the batch that is running',
                     'No batch is running — this stops one once it has started.'],
+  /* Library */
+  'lib-clear':     ['Remove every generated asset from this session',
+                    'The library is empty — every ● RECORD, ◆ RENDER and screen export fills it.'],
 };
 
 let observer = null;
