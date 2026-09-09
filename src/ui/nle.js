@@ -34,13 +34,16 @@
  * the timeline pane so it is visible from every workspace rather than only on
  * the TIMELINE workspace.
  */
-import { $, toast } from '../core/dom.js';
+import { $, isEnabled, toast } from '../core/dom.js';
+import { anyModalOpen, modalTrap } from './modaltrap.js';
 import { download } from '../core/blobs.js';
 import { syncChromeToSkin } from '../core/palettes.js';
 import { BIN_DRAG_TYPE, chooseFiles, useAsset } from './importui.js';
 import { getStore } from '../doc/session.js';
 import { MAX_START, MIN_CLIP, clipLength, isOverlay, sourceTimeOf } from '../doc/timeline.js';
 import { library, onLibraryChange } from '../library/library.js';
+import { PREVIOUS_PROJECT_KEY, applyProject, lsGet as projGet } from '../core/recipes.js';
+import { loadSample, openWelcome } from './welcome.js';
 import { activateTab } from './shell.js';
 import { onClipSelect, selectedClip, selectedRef, focusClipAfterRender, renderTrack, setTrackZoom, trackScale, zoomToFit } from './track.js';
 import { buildInspectorPane, initInspector, render as renderInspector } from './inspector.js';
@@ -328,9 +331,18 @@ export const hasCopiedClip = () => !!_clip;
  */
 function transportTargets() {
   const view = document.querySelector('.tab.active')?.dataset.view;
-  if (view === 'timeline') return { view, play: $('tl-playpause'), scrub: $('tl-scrub'), fps: () => Number($('tl-fps')?.value) || 12, dur: () => buildSchedule().duration };
-  if (view === 'audio') return { view, play: $('a-play'), scrub: null, fps: () => 12, dur: () => Number($('a-dur')?.value) || 0 };
-  if (view === 'video') return { view, play: $('v-playpause'), scrub: $('v-scrub'), fps: () => Number($('v-fps')?.value) || 12, dur: () => Number($('v-dur')?.value) || 0 };
+  /* `playing` reads the proxied control's own state rather than being derived
+     from a glyph. Video and timeline write ▮▮/❚❚ while running, so pattern
+     matching worked there by accident; AUDIO's ▶ PLAY becomes ■ STOP, which
+     matches nothing — so the transport showed ▶ for the whole time the sound
+     was playing, and an author who pressed the button expecting to start it
+     stopped it instead. */
+  if (view === 'timeline') return { view, play: $('tl-playpause'), scrub: $('tl-scrub'), fps: () => Number($('tl-fps')?.value) || 12, dur: () => buildSchedule().duration,
+    playing: () => /[▮❚]/.test($('tl-playpause')?.textContent || '') };
+  if (view === 'audio') return { view, play: $('a-play'), scrub: null, fps: () => 12, dur: () => Number($('a-dur')?.value) || 0,
+    playing: () => /STOP|■/.test($('a-play')?.textContent || '') };
+  if (view === 'video') return { view, play: $('v-playpause'), scrub: $('v-scrub'), fps: () => Number($('v-fps')?.value) || 12, dur: () => Number($('v-dur')?.value) || 0,
+    playing: () => /[▮❚]/.test($('v-playpause')?.textContent || '') };
   return null;
 }
 
@@ -342,7 +354,13 @@ function transport(action) {
   const max = Number(t.scrub.max) || 1000;
   const cur = Number(t.scrub.value) || 0;
   const frame = t.dur() > 0 ? max / (t.dur() * t.fps()) : max / 100;
-  const step = { start: -cur, end: max - cur, back: -frame, fwd: frame,
+  /* `end` lands on the LAST FRAME, not one past it. `max` is the end of the
+     range, which is the out-point of the last clip — past every clip's cover
+     test, so the picture went black and every playhead command reported nothing
+     there: S said "put the playhead over a clip to split it", and the three
+     add-at-playhead commands placed beyond the sequence. One frame back is
+     where End goes in every editor, and it is the last frame that exists. */
+  const step = { start: -cur, end: Math.max(-cur, max - cur - frame), back: -frame, fwd: frame,
                  backs: -frame * 10, fwds: frame * 10 }[action] ?? 0;
   t.scrub.value = String(Math.max(0, Math.min(max, cur + step)));
   t.scrub.dispatchEvent(new Event('input', { bubbles: true }));
@@ -365,7 +383,62 @@ function syncTransport() {
   if (play) {
     play.disabled = !t;
     // ▮/❚ in the proxied button's label means "playing — click pauses".
-    play.textContent = !t ? '▶ ❚❚' : /[▮❚]/.test(t.play?.textContent || '') ? '❚❚' : '▶';
+    play.textContent = !t ? '▶ ❚❚' : t.playing() ? '❚❚' : '▶';
+    /* A proxy for a button that is standing right beside it is not a proxy, it
+       is a second play button. VIDEO and TIMELINE carry their own scrub row and
+       that row is docked into this bar (see dockScrub), so on those two the
+       real control is already here and this one steps aside. AUDIO's play lives
+       in its render bar and SCREEN has no transport at all, so there the proxy
+       is the only play button in the transport and stays. */
+    play.hidden = !!(t?.play && $('nle-scrub-dock')?.contains(t.play));
+  }
+}
+
+/* ---------------------------------------------------------- scrub dock -- */
+
+/** Where each scrub row came from, so it can always be put back. */
+const _scrubHome = new WeakMap();
+
+/**
+ * Dock the open workspace's scrub row into the transport bar.
+ *
+ * VIDEO and TIMELINE each ship a `.scrub` row — play, position, elapsed —
+ * directly under the picture, nine pixels above a transport bar offering play,
+ * position and elapsed. Two play buttons and two clocks for one clip is the
+ * kind of duplication that makes a tool feel bigger than it is, and it cost the
+ * monitor a row of its height to say the same thing twice.
+ *
+ * The row is MOVED rather than rebuilt, which is the pattern enterEditor
+ * already uses for the header settings, the activity log and the stage meters:
+ * same nodes, same ids, same listeners, same document bindings, so nothing that
+ * addresses `#v-scrub` or `#tl-playpause` — the palette, the tests, the
+ * keyboard model — can tell the difference.
+ *
+ * Exactly one row is docked at a time, and the one leaving goes back to the
+ * slot it came from (before its recorded next sibling, so it lands where it
+ * was rather than at the end of the panel).
+ */
+function dockScrub() {
+  const dock = $('nle-scrub-dock');
+  if (!dock) return;
+  /* Stamped once, while every row is still inside the view that owns it: a
+     docked row is out of its view's subtree, so "which workspace does this
+     belong to" cannot be asked structurally after the first move. */
+  for (const row of document.querySelectorAll('.view .scrub:not([data-scrub-view])')) {
+    const owner = row.closest('.view');
+    if (owner) row.dataset.scrubView = owner.id;
+  }
+  const active = document.querySelector('.view.active')?.id || '';
+  const wanted = active ? document.querySelector(`.scrub[data-scrub-view="${CSS.escape(active)}"]`) : null;
+  for (const row of [...dock.children]) {
+    if (row === wanted) continue;
+    const home = _scrubHome.get(row);
+    if (home?.parent) home.parent.insertBefore(row, home.next && home.next.parentElement === home.parent ? home.next : null);
+    else row.remove();
+  }
+  if (wanted && wanted.parentElement !== dock) {
+    if (!_scrubHome.has(wanted)) _scrubHome.set(wanted, { parent: wanted.parentElement, next: wanted.nextElementSibling });
+    dock.appendChild(wanted);
   }
 }
 
@@ -401,7 +474,8 @@ const ACTIONS = {
   openProj: { label: 'Open project…', key: '', run: () => $('proj-load')?.click() },
   importMedia: { label: 'Import media…', key: '', run: () => chooseFiles() },
   record: { label: 'Export sequence…', key: '', run: () => { activateTab('timeline'); $('tl-record')?.click(); }, can: () => timeline.length > 0 },
-  exportNow: { label: 'Export what I am looking at', key: 'Ctrl+E', run: () => exportCurrent(), can: () => !!exportTarget() },
+  exportNow: { label: () => { const t = exportTarget(); return t ? `${t.label}…` : 'Export…'; },
+               key: 'Ctrl+E', run: () => exportCurrent(), can: () => !!exportTarget() },
   media: { label: 'Open media list…', key: '', run: () => activateTab('library') },
   exportVideo: { label: 'Export video clip…', key: '', run: () => { activateTab('video'); $('v-record')?.click(); } },
   palette: { label: 'Search everything…', key: 'Ctrl+K', run: () => $('palette-open')?.click() },
@@ -412,14 +486,43 @@ const ACTIONS = {
   skin: { label: 'Toggle CRT skin', key: '', run: () => toggleSkin() },
   help: { label: 'Help', key: '', run: () => activateTab('help') },
   shortcuts: { label: 'Keyboard shortcuts', key: '', run: () => openShortcuts() },
+  /* The sample project is the studio's only guided starting point, and once
+     the welcome card had been dismissed — which the first Escape or the first
+     START EMPTY does — it could be reached only by someone who already knew to
+     press Ctrl+K. The three panes a new author is actually looking at (bin,
+     CLIP, sequence) offered no route to it at all. */
+  sample: { label: 'Load the sample project…', key: '', run: () => loadSample() },
+  welcome: { label: 'Show the welcome card', key: '', run: () => openWelcome() },
+  /* Loading a project, or the sample, keeps a copy of the outgoing one — and
+     the only way to get it back was to paste an expression into the browser
+     console, which the message saying so was itself displayed inside. A safety
+     net you cannot reach without devtools is not one. */
+  restorePrevious: {
+    label: 'Restore previous project', key: '',
+    run: () => {
+      const prev = projGet(PREVIOUS_PROJECT_KEY, null);
+      if (!prev) { toast('No previous project kept', 'info'); return; }
+      if (typeof confirm === 'function'
+          && !confirm('Restore the previous project? It replaces the current document.')) return;
+      applyProject(prev);
+    },
+    can: () => !!projGet(PREVIOUS_PROJECT_KEY, null),
+  },
 };
 
+/* Ten File items became six, and nothing became unreachable.
+   Three of the ten were the same export stated three ways — "Export what I am
+   looking at", "Export video clip…", "Export sequence…" — beside a ⤓ EXPORT
+   button in the menubar that is already workspace-aware and says which of the
+   three it will do; and "Open media list…" was a menu item whose whole job was
+   to press a tab two rows below it. What replaces them is the one thing File
+   was missing: a way back to the project a load replaced. */
 const MENUS = [
-  ['File', ['openProj', 'saveProj', '-', 'importMedia', '-', 'exportNow', '-', 'exportVideo', 'record', 'media']],
+  ['File', ['openProj', 'saveProj', '-', 'importMedia', '-', 'exportNow', '-', 'restorePrevious']],
   ['Edit', ['undo', 'redo', '-', 'copy', 'paste', '-', 'split', 'dup', 'ripple', '-', 'clearSeq']],
   ['Clip', ['addScene', 'addStill', '-', 'addTitle', 'addShape', 'addOverlay', 'addSound']],
   ['View', ['palette', 'explain', '-', 'zoomIn', 'zoomOut', 'zoomFit', '-', 'skin']],
-  ['Help', ['help', 'shortcuts']],
+  ['Help', ['sample', 'welcome', '-', 'help', 'shortcuts']],
 ];
 
 function closeMenus() {
@@ -478,7 +581,18 @@ function buildMenu(name, items) {
       b.appendChild(span);
       if (a.key) { const k = document.createElement('kbd'); k.textContent = a.key; b.appendChild(k); }
       if (a.can && !a.can()) b.disabled = true;
-      b.addEventListener('click', () => { closeMenus(); try { a.run(); } catch (err) { console.error(err); } refreshStatus(); });
+      /* Focus goes back to the menu's own trigger before the action runs.
+         Closing the popup destroys the item that had focus, so focus collapsed
+         to <body> — pick Edit ▸ Split from the keyboard and the next Tab landed
+         on the skip link rather than back on Edit. Restored BEFORE the action,
+         so an action that moves focus itself (the palette, an import dialog)
+         still wins. Escape two lines below already did this. */
+      b.addEventListener('click', () => {
+        closeMenus();
+        try { btn.focus({ preventScroll: true }); } catch { /* detached */ }
+        try { a.run(); } catch (err) { console.error(err); }
+        refreshStatus();
+      });
       pop.appendChild(b);
     }
     wrap.setAttribute('open', '');
@@ -542,7 +656,32 @@ const SHORTCUTS = [
   ]],
 ];
 
+/* The shortcut sheet's focus trap and the control that opened it.
+ *
+ * It declares aria-modal="true" and had neither: Tab walked straight out of a
+ * dialog that had just told assistive tech the page behind it was inert, into
+ * the menu bar and every control under it, with no way back — the exact defect
+ * welcome.js's header records as having been fixed once already for the welcome
+ * card. Closing it left focus on a now-hidden button, which collapses to <body>,
+ * so a keyboard user was returned to the top of the document rather than to the
+ * menu item they opened it from. */
+const _keysTrap = modalTrap(() => $('nle-keys'));
+let _keysOpener = null;
+
+function closeShortcuts() {
+  const overlay = $('nle-keys');
+  if (!overlay || overlay.hidden) return;
+  overlay.hidden = true;
+  _keysTrap.release();
+  if (_keysOpener && document.contains(_keysOpener)) {
+    try { _keysOpener.focus({ preventScroll: true }); } catch { _keysOpener.focus(); }
+  }
+  _keysOpener = null;
+}
+
 function openShortcuts() {
+  const opener = document.activeElement;
+  _keysOpener = opener && opener !== document.body ? opener : null;
   let overlay = $('nle-keys');
   if (!overlay) {
     overlay = el('div', 'nle-keys');
@@ -556,7 +695,7 @@ function openShortcuts() {
     const close = el('button', 'btn small', '✕ CLOSE');
     close.type = 'button';
     close.id = 'nle-keys-close';
-    close.addEventListener('click', () => { overlay.hidden = true; });
+    close.addEventListener('click', closeShortcuts);
     head.appendChild(close);
     card.appendChild(head);
     for (const [group, rows] of SHORTCUTS) {
@@ -576,11 +715,12 @@ function openShortcuts() {
       card.appendChild(dl);
     }
     overlay.appendChild(card);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.hidden = true; });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) overlay.hidden = true; });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeShortcuts(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) closeShortcuts(); });
     document.body.appendChild(overlay);
   }
   overlay.hidden = false;
+  _keysTrap.engage();
   $('nle-keys-close')?.focus();
 }
 
@@ -725,7 +865,14 @@ export function exportCurrent() {
   if (!t) { toast('This workspace has nothing to export — open VIDEO, AUDIO, SCREEN or TIMELINE'); return false; }
   const btn = $(t.id);
   if (!btn) return false;
-  if (btn.disabled) { toast('Nothing to export yet — render it first'); return false; }
+  /* isEnabled, not `.disabled`. This studio turns a control off with
+     `aria-disabled` where the reason matters — so the WHY-OFF explainer can say
+     what would turn it back on — and ⤓ .wav, the one export that is off most of
+     the time, is exactly such a control. Testing `.disabled` alone made this
+     branch unreachable for it: Ctrl+E on AUDIO before a render fell through to
+     `btn.click()`, which guardDisabled swallowed, so the message written for
+     this case was never the message anyone got. */
+  if (!isEnabled(btn)) { toast('Nothing to export yet — render it first'); return false; }
   btn.click();
   return true;
 }
@@ -735,8 +882,11 @@ function syncExportButton() {
   const btn = $('nle-export');
   if (!btn) return;
   const t = exportTarget();
-  btn.textContent = t ? `⤓ ${t.label.toUpperCase()}` : '⤓ EXPORT';
-  btn.disabled = !t;
+  setText(btn, t ? `⤓ ${t.label.toUpperCase()}` : '⤓ EXPORT');
+  /* Greys out with its target, by the same predicate exportCurrent uses: a
+     primary button that looks live and then refuses is worse than one that
+     shows it is waiting for something. */
+  btn.disabled = !t || !isEnabled($(t.id));
   btn.title = t
     ? `${t.label} — the same as pressing ${t.id === 'v-record' ? '● RECORD' : 'its export button'} in that workspace. It lands in the media bin, with a download beside it.`
     : 'Open VIDEO, AUDIO, SCREEN or TIMELINE to export something';
@@ -747,6 +897,16 @@ function syncExportButton() {
 /* Which status-bar readout belongs to which workspace: a stale estimate from
    a workspace you are not in is a number that lies. */
 const METER_HOME = { 'v-est': 'video', 'v-flash': 'video', 'a-stale': 'audio', 'i-est': 'image', 'tl-info': 'timeline' };
+
+/**
+ * Write text only when it has changed.
+ *
+ * `.textContent = x` replaces the text node even when x is identical, which
+ * costs a repaint on every one of refreshStatus's four ticks a second and makes
+ * any live-region setting on this bar catastrophic. The bar changes when the
+ * document does; the tick is a backstop, not a reason to rewrite it.
+ */
+const setText = (n, v) => { if (n && n.textContent !== v) n.textContent = v; };
 
 export function refreshStatus() {
   const seq = $('nle-st-seq');
@@ -759,22 +919,22 @@ export function refreshStatus() {
   try { sched = buildSchedule(); } catch { /* before the timeline tab is wired */ }
 
   if (seq && sched) {
-    seq.textContent = `${sched.clips.length} clip${sched.clips.length === 1 ? '' : 's'} · ${sched.duration.toFixed(2)}s · ${sched.tl.W}×${sched.tl.H}`;
+    setText(seq, `${sched.clips.length} clip${sched.clips.length === 1 ? '' : 's'} · ${sched.duration.toFixed(2)}s · ${sched.tl.W}×${sched.tl.H}`);
   }
   if (sel) {
     const ref = selectedRef();
     if (ref.lane === 'A' && ref.i >= 0 && audioTimeline[ref.i]) {
       // A sound is a first-class selection; "No selection" over a selected
       // sound was the status bar not knowing about the second lane.
-      sel.textContent = `Sound ${ref.i + 1}: ${audioTimeline[ref.i].label || 'sound'}`;
+      setText(sel, `Sound ${ref.i + 1}: ${audioTimeline[ref.i].label || 'sound'}`);
     } else {
       const i = selectedClip();
-      sel.textContent = i >= 0 && timeline[i] ? `Clip ${i + 1}: ${timeline[i].label}` : 'No selection';
+      setText(sel, i >= 0 && timeline[i] ? `Clip ${i + 1}: ${timeline[i].label}` : 'No selection');
     }
   }
   if (undo) {
     const s = getStore();
-    undo.textContent = s ? `${s.undoDepth} undo` : '';
+    setText(undo, s ? `${s.undoDepth} undo` : '');
   }
 
   /* The timecode reads the same clock the transport buttons drive. It used to
@@ -786,12 +946,12 @@ export function refreshStatus() {
     const scrub = t.scrub;
     const dur = t.dur();
     const cur = scrub ? (Number(scrub.value) / (Number(scrub.max) || 1000)) * dur : 0;
-    if (tc) tc.textContent = timecode(cur, fps);
-    if (tcEnd) tcEnd.textContent = timecode(dur, fps);
+    setText(tc, timecode(cur, fps));
+    setText(tcEnd, timecode(dur, fps));
   } else {
     const fps = Number($('tl-fps')?.value) || 12;
-    if (tc) tc.textContent = timecode(tlScrubT, fps);
-    if (tcEnd && sched) tcEnd.textContent = timecode(sched.duration, fps);
+    setText(tc, timecode(tlScrubT, fps));
+    if (sched) setText(tcEnd, timecode(sched.duration, fps));
   }
 
   // The rehoused readouts (see enterEditor) show only for their own workspace.
@@ -803,12 +963,44 @@ export function refreshStatus() {
 
   syncExportButton();
   syncTransport();
+  syncPanes();
 
   /* The clip inspector rides this tick as a backstop. It has its own change
      notifications — selection, the store, the library — and re-renders only
      when its signature moves, so this call costs a string compare and covers
      the case where no document is bound to notify at all. */
   renderInspector();
+}
+
+/**
+ * An empty pane costs the picture its height, so an empty pane collapses.
+ *
+ * Two classes, both on <main> where the grid that reads them lives, both
+ * following the pattern `no-stage` already set (see syncWorkspace):
+ *
+ *   seq-empty   nothing in either lane. The sequence band was a fixed
+ *               `minmax(120px, 26vh)` — 234px at a 900px window, a quarter of
+ *               the screen, full-bleed, holding one sentence — whether or not
+ *               there was a sequence to show. Collapsed it is its own toolbar
+ *               plus that sentence, and the ~170px goes to the monitor.
+ *
+ *   no-clip     nothing is selected, so the CLIP pane can only say so. It sat
+ *               in an `auto` row above the settings pane and took ~140px of
+ *               the right-hand column to do it — which is why the AUDIO tab's
+ *               settings were clipped mid-control on a 720px window. The
+ *               sentence is not lost: the status bar's own selection readout
+ *               says "No selection" in one line, which is what a one-line
+ *               status is for.
+ *
+ * Toggled from refreshStatus, so this tracks every route that can change
+ * either — a commit, an undo, a selection, a project load, the 250ms backstop.
+ * Both are pure view state: no document is read for anything but its length.
+ */
+function syncPanes() {
+  const main = document.querySelector('main');
+  if (!main) return;
+  main.classList.toggle('seq-empty', timeline.length + audioTimeline.length === 0);
+  main.classList.toggle('no-clip', selectedRef().i < 0);
 }
 
 /* -------------------------------------------------------------- build -- */
@@ -931,9 +1123,20 @@ function buildTransport() {
     b.type = 'button';
     b.id = `nle-t-${action}`;
     b.title = title;
+    /* aria-label as well as title, and it is not belt-and-braces. In the
+       accessible-name algorithm, name-from-content BEATS title — title is the
+       last resort used only when nothing else names the element — so a button
+       whose content is "◀◀" is named "◀◀" and the careful sentence in its
+       title is never read. The whole transport announced as punctuation. */
+    b.setAttribute('aria-label', title);
     b.addEventListener('click', () => { transport(action); refreshStatus(); });
     t.appendChild(b);
   }
+  /* The open workspace's own scrub row lands here — see dockScrub. Empty on a
+     workspace that has none, and it collapses to nothing when it is. */
+  const dock = el('div', 'nle-scrub-dock');
+  dock.id = 'nle-scrub-dock';
+  t.appendChild(dock);
   const end = el('span', 'tc dim', '00:00:00:00');
   end.id = 'nle-tc-end';
   end.title = 'Sequence duration';
@@ -959,6 +1162,8 @@ function buildTimelinePane() {
   ]) {
     const b = el('button', 'nle-tbtn', label);
     b.type = 'button'; b.id = `nle-tl-${id}`; b.title = title;
+    // Named by its own sentence rather than by "＋ Scene" — see buildTransport.
+    b.setAttribute('aria-label', title);
     b.addEventListener('click', () => { run(); refreshStatus(); });
     head.appendChild(b);
   }
@@ -999,7 +1204,19 @@ function buildTimelinePane() {
 function buildStatus() {
   const s = el('div', 'nle-status');
   s.id = 'nle-status';
-  s.setAttribute('role', 'status');
+  /* NOT role="status", and that is a correction rather than an omission.
+     A status bar is a readout you glance at, not an announcement — and this one
+     is rewritten four times a second by refreshStatus's backstop tick, forever,
+     with no user action. Declared live, a screen reader recited the clip count,
+     the duration, the frame size, the selection, the undo depth and both
+     timecodes every 250ms, indefinitely.
+     Worse, enterEditor moves the stage meters in here, and one of them is the
+     WCAG flash rate — whose own module carries the note "THE READOUT IS NOT A
+     LIVE REGION, and must not become one" (ui/flashmeter.js), describing this
+     exact failure after aria-live was deliberately stripped from #v-flash in
+     the markup. Re-parenting it into a live region put it straight back.
+     What genuinely is an event is announced once, through the toast rail. */
+  s.setAttribute('aria-live', 'off');
   for (const [id, text] of [['nle-st-seq', '—'], ['nle-st-sel', 'No selection'], ['nle-st-undo', '']]) {
     const n = el('span', null, text);
     n.id = id;
@@ -1024,6 +1241,7 @@ function syncWorkspace() {
      which is invalid. */
   const main = document.querySelector('main');
   if (main) main.classList.toggle('no-stage', !document.querySelector('.view.active .panel.stagewrap'));
+  dockScrub();
   refreshStatus();
   syncExportButton();
 }
@@ -1054,6 +1272,67 @@ export function setSkin(skin) {
  * workspace, and this), each behind a toggle. The editor IS the studio now:
  * the moves below are permanent, so none of them keeps a way back.
  */
+const CONSOLE_KEY = 'deadsignal.editor.console';
+
+/**
+ * Fold the activity log into a header you can open.
+ *
+ * The log is where this tool explains what it just did — which container it
+ * fell back to, which clip was muxed, why an export refused — so hiding it is
+ * wrong. But open, it held ~190px of the 260px media column on all eight
+ * workspaces, mostly showing one boot line, in the column whose actual job
+ * (the bin) starts empty. Its value is "tell me when something happened",
+ * which a header with a count serves as well as a black box does.
+ *
+ * Closed by default, remembered per browser, and it OPENS ITSELF on the first
+ * warning or error — a folded log over the sentence explaining a refused export
+ * would be worse than the space it saves.
+ */
+function foldConsole(panel) {
+  if (panel.dataset.folded) return;
+  panel.dataset.folded = '1';
+  const h2 = panel.querySelector('h2');
+  const body = panel.querySelector('.console');
+  if (!h2 || !body) return;
+  if (!body.id) body.id = 'console';
+
+  const btn = el('button', 'nle-fold');
+  btn.type = 'button';
+  btn.id = 'nle-console-fold';
+  btn.setAttribute('aria-controls', body.id);
+  const caret = el('span', 'nle-fold-caret', '▸');
+  caret.setAttribute('aria-hidden', 'true');
+  const count = el('span', 'nle-fold-count');
+  count.id = 'nle-console-count';
+  btn.append(caret, el('span', null, h2.textContent.trim() || 'Console'), count);
+  h2.replaceChildren(btn);
+
+  let unread = 0;
+  const apply = (open) => {
+    panel.classList.toggle('folded', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    caret.textContent = open ? '▾' : '▸';
+    if (open) { unread = 0; body.scrollTop = body.scrollHeight; }
+    count.textContent = open || !unread ? '' : String(unread);
+    count.classList.toggle('warn', !open && unread > 0);
+    btn.setAttribute('aria-label', `Activity log${open ? '' : unread ? `, ${unread} new` : ''}`);
+  };
+  apply(lsGet(CONSOLE_KEY, '0') === '1');
+  btn.addEventListener('click', () => {
+    const open = btn.getAttribute('aria-expanded') !== 'true';
+    lsSet(CONSOLE_KEY, open ? '1' : '0');
+    apply(open);
+  });
+  document.addEventListener('studio:log', (e) => {
+    if (btn.getAttribute('aria-expanded') === 'true') { body.scrollTop = body.scrollHeight; return; }
+    unread++;
+    /* A warning or an error is the case this fold must not lose. Anything else
+       is a count on the header, which is what a quiet log should cost. */
+    if (e.detail?.cls === 'err' || e.detail?.cls === 'warn') { lsSet(CONSOLE_KEY, '1'); apply(true); return; }
+    apply(false);
+  });
+}
+
 function enterEditor() {
   if (!built) build();
   document.body.classList.add('nle');
@@ -1085,6 +1364,7 @@ function enterEditor() {
   const log = $('console')?.closest('.panel');
   const logDock = $('nle-bin');
   if (log && logDock && log.parentElement !== logDock) logDock.appendChild(log);
+  if (log) foldConsole(log);
   /* The stage panels' h2 headers are hidden in the editor — a monitor shows
      the picture, not a title — but the live readouts inside them are not
      decoration: the export-size estimates, the WCAG 2.3.1 flash meter, the
@@ -1155,6 +1435,15 @@ function build() {
        indefensible. */
     const t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
+    /* …and not while text is selected anywhere on the page. The activity log
+       exists to be read and quoted, and HELP is prose; taking Ctrl+C from a
+       live selection meant copying a line out of either put nothing on the
+       clipboard and toasted about clips instead. A selection is an unambiguous
+       statement that the copy is about text. */
+    if (k === 'c') {
+      const textSel = window.getSelection?.();
+      if (textSel && !textSel.isCollapsed && String(textSel).trim()) return;
+    }
     if (k === 'c') { e.preventDefault(); copyClip(); }
     else if (k === 'v') { e.preventDefault(); pasteClip(); }
     else if (k === 'd') { e.preventDefault(); duplicateClip(); }
@@ -1170,12 +1459,11 @@ function build() {
     if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     /* A modal on screen means the keys belong to it, not the editor: Space
-       with the welcome card up should not start the preview behind it. */
-    const welcome = document.getElementById('welcome');
-    if (welcome && welcome.getClientRects().length) return;
-    const pal = document.getElementById('palette');
-    if (pal && !pal.hidden) return;
-    if (isShortcutsOpen()) return;
+       with the welcome card up should not start the preview behind it. One
+       predicate, shared with the studio's other bare-key handler in boot.js —
+       three hand-written checks here and none there is how the same rule ended
+       up enforced in one place and not the other. */
+    if (anyModalOpen()) return;
     /* Space on a focused button is the button's activation — taking it away
        to toggle playback made Enter and Space behave differently on the same
        control. K stays as the play/pause key that always works. */

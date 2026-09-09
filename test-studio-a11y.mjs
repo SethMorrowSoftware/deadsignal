@@ -302,6 +302,13 @@ section('settings sections');
 {
   const swept = await page.evaluate(async () => {
     const S = window.DeadSignalStudio;
+    /* Swept at DEEP, not at whatever the detail level happens to default to.
+       The level is a view filter, so a sweep run at the default measures only
+       the controls that level shows — and the default is Simple now, which is
+       most of the panel unswept. Deep is every registered control, which is
+       what "every section of every settings panel" has to mean. */
+    const level0 = S.getLevel();
+    S.applyLevel(3);
     const views = ['view-video', 'view-image', 'view-audio'];
     const nameless = [];
     const lowContrast = [];
@@ -339,6 +346,7 @@ section('settings sections');
        tab with a mark selected, and inherited state is how a suite starts
        failing for reasons that have nothing to do with what it tests. */
     document.querySelector('.tab[data-view="image"]')?.click();
+    S.applyLevel(level0);
     S.selectAnnotation(0);
     await new Promise((r) => setTimeout(r, 60));
     return { controls, sections, nameless, lowContrast, tiny };

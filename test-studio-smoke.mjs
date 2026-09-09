@@ -1412,10 +1412,15 @@ console.log('\n[first run]');
     broken.on('pageerror', (e) => raised.push(String(e.message).slice(0, 60)));
     await broken.route('**/src/ui/sections.js', (route) => route.fulfill({
       status: 200, contentType: 'text/javascript',
+      /* The stub has to export everything the real module does, or the failure
+         under test is a link error before boot rather than a throw part way
+         through it — which is a different thing entirely, and would satisfy
+         neither gate. */
       body: `export function initSections(){ throw new Error('deliberate boot failure'); }
              export function activeSection(){ return null; }
              export function sectionsOf(){ return []; }
              export function showSection(){}
+             export function syncSectionStrip(){}
              export function revealSectionFor(){}`,
     }));
     await broken.goto(PAGE);

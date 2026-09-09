@@ -757,6 +757,200 @@ survive to completion.
 
 ---
 
+## Round five: the picture, the first screen, and the gestures that did nothing
+
+Driven by two sentences of user feedback — *"the preview is very small"* and
+*"the UI is too complex"* — which turned out to name the symptom of eleven
+separate defects between them. Every measurement below is from Chromium at the
+stated window size.
+
+### The preview could only ever shrink
+
+`canvas.stage` was `width:auto; height:auto` with a `max-*` bound. A canvas is a
+replaced element, so `auto` is its intrinsic size — the `width`/`height`
+attributes, which are the **export** resolution — and `max-width`/`max-height`
+are upper bounds. Nothing anywhere was a lower bound or a fill instruction, so a
+320×240 clip drew 320×240 inside a 794px frame however large the window was.
+
+**Measured at 1440×900: 320×240 in a 794×532 frame. At 1280×720: 142×107 —
+1.6% of the screen, in a tool whose entire job is showing you what the file will
+look like.**
+
+The three one-line answers are each wrong here, which is why the fix is a module
+with a long comment rather than a declaration:
+
+| | why not |
+|---|---|
+| `object-fit:contain` | letterboxes **inside** a full-size element box, so `getBoundingClientRect()` stops describing the picture. Three pointer readers map `clientX/clientY` through that rect into buffer pixels — the monitor's transform/mask/eyedropper, the screen annotations, the waveform selection — and all three would silently start mapping the black bars into the picture |
+| `width:100%; height:auto; max-height:100%` | fits a tall frame, **distorts a wide one**: a 4:3 canvas in a 600×200 box measured 600×200 |
+| `height:100%; width:auto; max-width:100%` | the same failure the other way round: the same canvas in a 600×500 box measured 600×500 |
+
+(The last two are what CSS 2.1 §10.4's min/max table says should re-solve the
+other axis. Chromium does not do that for a canvas, so it is not a behaviour to
+build on.) Fitting needs **both axes of the frame in one expression** —
+`width: min(100cqw, calc(100cqh * var(--stage-ar)))` — and CSS cannot read a
+canvas's content attributes, so `src/ui/stagefit.js` supplies the ratio and keeps
+it true with a MutationObserver on `width`/`height`. The element's border box
+stays exactly the picture, so all three readers keep working untouched.
+
+### …and the frame it fits into was starved by four empty things
+
+Scaling the canvas alone bought +27% area, because the monitor row is the only
+flexible track and every fixed band was paid first.
+
+| band | cost at 1440×900 | when it was empty |
+|---|---|---|
+| sequence | 234px (26vh, full-bleed) | held one sentence, and stayed on the four workspaces with no stage at all |
+| CLIP pane | ~140px of the right column | said "Nothing to select yet" — which is why AUDIO's settings were clipped mid-field at 720p |
+| toolbar | 83px, **growing to ~131px as the window narrowed** | `flex-wrap:wrap` on each group broke every label away from its own control |
+| stage buttons | ~66px | eleven buttons wrapping to two content-sized rows, paid before the picture's `1fr` |
+| second transport | ~37px | a play button and a clock nine pixels above another play button and another clock |
+
+All five now yield. **Result: 677×508 at 1440×900 (4.5× the area) and 437×328 at
+1280×720 (9.4×), with the buffer untouched at 320×240.**
+
+### Simple mode was a capability lock
+
+The detail filter's own header promises it is *"never a capability lock"*.
+Choosing **Simple** deleted ● RECORD, ■ STOP and every export button from VIDEO,
+SCREEN and TIMELINE. Two `<input type="file">` pickers sit inside the stage's
+`.btns` bar with no `.row` of their own, and the level row fell back to
+`el.parentElement` — so one hidden control's level governed the entire export
+bar. That is why the default was **Studio**, which showed 169 of 192 controls and
+simplified nothing.
+
+Making Simple the default then exposed the rest of it: the filter iterated
+*every* workspace, and three of them are forms rather than settings panels. At
+Simple the BUNDLE campaign form was an explanatory paragraph with no controls
+under it, and **CLOUD lost both sign-in fields.**
+
+Both fixed; Simple is now the default for a browser with no stored preference
+(49 controls, everything else one pick of `detail` away, and Ctrl+K still raising
+the level by itself to reach anything hidden).
+
+### The studio could get permanently stuck "exporting"
+
+A real-time recording ends only when its frame loop reaches the clip's duration
+and calls `rec.stop()`, and that ends only when the recorder delivers `onstop`.
+Neither is guaranteed. When it did not happen `finish()` never ran, so the export
+lock was never released — and the lock freezes **every workspace switch** for the
+rest of the session, with a toast as the only explanation. `tlRecording: true`
+and `#tl-record` disabled, minutes after the recording "finished".
+
+This is also the root of the smoke suite's long-standing single failure
+(*"the imported image actually renders"*), which had been red on `main` and
+attributed to nothing: the suite clicked VIDEO while a recording it believed had
+ended was still running, the click was **dropped rather than deferred**, and the
+picture it then measured was a stale Digital Rain frame from three tests earlier.
+
+Three changes make the end guaranteed: a watchdog that closes a capture out after
+three times its own duration plus eight seconds (keeping the chunks if the frames
+ran out, discarding them if they did not — the contract STOP already has);
+● RECORD and ■ STOP changing state with the export **lock** rather than with the
+recorder, so the button stops lying for the second or more spent priming footage
+and decoding a bed before a recorder exists; and a generation token on both
+preview loops, so a loop whose handle a newer one overwrote can still be
+cancelled. **Smoke: 178/1 → 179/0.**
+
+### Trimming a clip did not trim it
+
+Four defects on the gesture the lane's own help text names first.
+
+- **The out point could not be dragged at all.** A transition makes two blocks
+  overlap by its own length, the later block paints over the earlier one, and so
+  the incoming clip's transition handle lies exactly across the outgoing clip's
+  right-hand trim grip. Crossfade is the default every added clip takes, so in an
+  ordinary sequence the out point of every clip but the last was unreachable.
+  **Measured: an 80px drag on clip 0's out grip moved its out point by 0.00s and
+  took clip 1's crossfade from 0.6s to 0.**
+- **Clicking a clip never focused it.** `preventDefault` on pointerdown
+  suppresses the click's default focus, so `activeElement` stayed on `<body>` and
+  every keyboard gesture the lane and the shortcut sheet promise — *"Arrow keys
+  trim the selected clip, Shift for 1s, Alt to reorder"* — did nothing at all for
+  mouse users. Tab-then-arrow worked; click-then-arrow did not.
+- **Trim drags added LANE seconds to a SOURCE time.** `clipLength` is
+  `(out - in) / speed`, so the edge followed at a third of the pointer's speed on
+  a 3× clip and ran away at twice on a 0.5× one, and the snap missed its target
+  by the same factor. **After: the edge tracks the pointer to within 1% at 0.5×,
+  1× and 3×.**
+- **The two grips were swapped on a reversed clip.** Reversed, the picture runs
+  from `out` down to `in`, so the block's head is the source's out point.
+  Dragging the head trimmed the tail: the block shrank from the end the pointer
+  was not on.
+
+### Everything else fixed this round
+
+- **Bare keys fired through every modal.** On a first run, with the welcome card
+  up, `r` rendered and exported a real file behind it and `g` randomised the
+  document, with nothing on screen changing to say so. The guard existed in the
+  editor's handler and not in boot's; both now ask one predicate that tests for a
+  *rendered* `aria-modal` rather than a list of ids.
+- **The status bar was `role="status"` rewritten four times a second, forever** —
+  and `enterEditor` moves the WCAG flash meter into it, whose own module carries
+  the note *"THE READOUT IS NOT A LIVE REGION, and must not become one"*
+  describing this exact failure after `aria-live` was deliberately stripped from
+  `#v-flash` in the markup.
+- **`exportCurrent` tested `.disabled`** on controls this studio turns off with
+  `aria-disabled`, so its "nothing to export yet" message was unreachable for
+  ⤓ .wav — the one export that is off most of the time.
+- **"Go to end" parked the playhead one frame PAST the last frame**, where every
+  playhead command reports nothing there.
+- **Ctrl+C took the browser's copy even with text selected**, so copying a line
+  out of the activity log put nothing on the clipboard.
+- **Selecting a sound also drew the video clip at the same index as selected** —
+  `_selected` is an index within the selected lane, and the video lane was missing
+  the lane test its own sound lane has.
+- **Modal background-inerting was written against the pre-editor markup**: it
+  inerted a header that `body.nle` sets `display:none` on, while the menu bar, the
+  whole toolbar and the status bar stayed reachable behind a dialog claiming
+  `aria-modal`. The Tab trap hid that from keyboard testing.
+- **The keyboard-shortcut sheet claimed `aria-modal` with no trap and no focus
+  restore**; menu items dropped focus to `<body>` on activation; one Escape
+  dismissed two things (closing the palette also disarmed Explain mode).
+- **The welcome card ignored a backdrop click** — the only overlay here that did —
+  and emitted its "you can reopen this" hint on one of three dismissal paths, so
+  closing it with Escape silently retired the only onboarding surface. Its
+  "welcomed" flag also discarded a failed `localStorage` write, so in a private
+  window the card could not be dismissed at all.
+- **The waveform was anamorphic**: a 600×150 buffer painted into a 770×150 box
+  via an inline style, and the one stage canvas that filled its frame did it by
+  stretching.
+- **Toasts covered the status bar's live readouts**; the transport's icon-only
+  buttons announced as punctuation (name-from-content beats `title`); section
+  toggles announced their own caret and state dot; the timeline said which clip
+  was selected by outline colour alone.
+- **The "previous project" safety net could only be recovered by pasting an
+  expression into the browser console** — in a message displayed inside a panel
+  that cannot execute it. It is a File-menu item now.
+
+### Investigated and found NOT to be defects
+
+- **"The status bar's readouts collide at 1440px."** They do not: `flex-wrap`
+  plus `margin-left:auto` on the meters and an eliding hint are doing their job.
+  The apparent collision in a screenshot was a **toast** painted over them — a
+  real defect, but a different one, and fixed as that.
+- **"The last clip's out grip is off the end of the scroller."** Measured
+  reachable at 1428px against a 1430px scroller.
+- **`--bin-w`, `--insp-w` and `--tl-h` are read and never written.** True, and
+  left that way: they read as a resizable-pane affordance that does not exist.
+  Recorded here rather than fixed, because a splitter is a feature and this round
+  was about the layout being wrong before anyone resized anything.
+
+### Two suites were measuring the old default
+
+Both changed to pin the level they measure at, which **widens** what they cover:
+the a11y sweep now runs at Deep so it checks all 192 controls for accessible
+names, contrast and type size rather than whichever the default happens to show;
+and the section-depth ratio is taken at Deep because the full-panel claim it was
+written to defend ("7.1 screens of scroll on VIDEO, 13.4 on AUDIO") only exists
+there. Measured at a lower level, both terms shrink and the denominator shrinks
+faster, so a strictly shorter panel reports a worse ratio.
+
+**Gate after this round: 10 suites, 0 failures — including the smoke failure that
+had been red before it.**
+
+---
+
 ## How to re-run any of this
 
 ```bash

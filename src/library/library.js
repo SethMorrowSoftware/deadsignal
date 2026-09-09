@@ -1,6 +1,6 @@
 /* Dead Signal Studio — library/library.js */
 import { download, makeUrl, revokeUrl } from '../core/blobs.js';
-import { $, esc, escHtml, log, toast } from '../core/dom.js';
+import { $, esc, escHtml, log, setEnabled, toast } from '../core/dom.js';
 import { currentSeed } from '../core/rng.js';
 import { getStore } from '../doc/session.js';
 import { set } from '../doc/store.js';
@@ -158,7 +158,15 @@ export function replaceItem(id,blob,expectName,seconds){
 }
 export function clearLibrary(){ library.forEach(it=>revokeUrl(it.url)); library.length=0; commitLibrary("clear library"); renderLibTable(); renderCoverage(); toast("Library cleared"); }
 
-export function renderLibTable(){ const b=$("lib-body"); if(!b)return; b.replaceChildren(); if(!library.length){ b.innerHTML='<tr><td colspan="7" class="hint">Nothing generated yet.</td></tr>'; return; }
+export function renderLibTable(){ const b=$("lib-body"); if(!b)return; b.replaceChildren(); if(!library.length){
+    /* Every other empty state in this tool names the next action; this one was
+       a full stop beside a CLEAR ALL button, which is the wrong thing to be the
+       only live control on an empty page. */
+    b.innerHTML='<tr><td colspan="7" class="hint">Nothing generated yet. Every <b>● RECORD</b>, <b>◆ RENDER</b> '
+      +'and screen export lands here — or press <b>＋</b> in the media bin to bring in your own.</td></tr>';
+    setEnabled($("lib-clear"), false);
+    return; }
+  setEnabled($("lib-clear"), true);
   library.forEach(it=>{ const tr=document.createElement("tr");
     // A row restored from a project whose bytes were not in this browser's
     // asset store keeps its name, kind and beat — that is the work worth

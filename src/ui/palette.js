@@ -13,7 +13,7 @@ import { modalTrap } from './modaltrap.js';
 import { userPresets } from '../core/recipes.js';
 import { revealSectionFor } from './sections.js';
 import { PARAMS } from './params.js';
-import { LEVEL_NAMES, applyLevel, getLevel } from './complexity.js';
+import { LEVEL_NAMES, applyLevel, getLevel, levelRowOf } from './complexity.js';
 import { activateTab } from './shell.js';
 
 let el = null, input = null, list = null, items = [], sel = 0, lastFocus = null;
@@ -105,10 +105,11 @@ export function revealControl(id, tab) {
   if (tab) activateTab(tab);
   const c = $(id);
   if (!c) return false;
-  // The same "row" applyLevel() stamps .level-hidden on. Checking the class
-  // rather than the registry means a row a lower-level sibling already keeps
-  // visible never bumps the user's detail level for nothing.
-  const levelRow = c.closest('.row') || c.parentElement;
+  // The same "row" applyLevel() stamps .level-hidden on — through the same
+  // function, so the two cannot answer differently. Checking the class rather
+  // than the registry means a row a lower-level sibling already keeps visible
+  // never bumps the user's detail level for nothing.
+  const levelRow = levelRowOf(c);
   if (levelRow && levelRow.classList.contains('level-hidden')) {
     const lvl = applyLevel(Math.max(getLevel(), PARAMS[id]?.level ?? 1));
     log(`Detail level raised to ${LEVEL_NAMES[lvl]} to show "${PARAMS[id]?.label || id}"`, 'info');
@@ -217,7 +218,14 @@ export function initPalette(d) {
   input.addEventListener('input', () => { sel = 0; render(input.value); });
   input.addEventListener('keydown', (e) => {
     const n = (list._results || []).length;
-    if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+    /* stopPropagation as well as preventDefault: this Escape belongs to the
+       palette and to nothing else. Without it the same keypress also reached
+       Explain mode's document handler, so arming Explain, pressing Ctrl+K to
+       look something up and pressing Escape to dismiss the palette silently
+       switched Explain off too — one Escape dismissing two things, with only
+       the toolbar button's aria-pressed to say so. welcome.js already does
+       this for the same reason. */
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); sel = n ? (sel + 1) % n : 0; render(input.value); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = n ? (sel - 1 + n) % n : 0; render(input.value); }
     else if (e.key === 'Home') { e.preventDefault(); sel = 0; render(input.value); }

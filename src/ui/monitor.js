@@ -98,7 +98,14 @@ export function monitorTarget(sched) {
   const s = sched || buildSchedule();
   const start = Number(s.starts?.[i]) || 0;
   const len = clipLength(c);
-  if (!(tlScrubT >= start - 1e-6 && tlScrubT < start + len + 1e-6)) return null;
+  /* `< start + len`, not `< start + len + 1e-6`: a playhead sitting exactly on a
+     cut belongs to the INCOMING clip, which is the rule clipAt() in ui/nle.js
+     already follows and the rule every snap lands on. With the epsilon the wrong
+     way round, parking on a clip's out-point — which ▶| does for the last clip,
+     and a snap-to-cut does for any other — painted the previous clip's transform
+     box over the next clip's picture, and dragging a corner moved a clip that
+     was not on screen. */
+  if (!(tlScrubT >= start - 1e-6 && tlScrubT < start + len - 1e-6)) return null;
   return { i, clip: c, W: s.tl.W, H: s.tl.H };
 }
 

@@ -16,7 +16,7 @@
  */
 import { $, escHtml } from '../core/dom.js';
 import { getStore } from '../doc/session.js';
-import { MAX_CLIP, MAX_START, MAX_TRANSITION, clipLength, isFirstOnTrack, isOverlay, overlaps } from '../doc/timeline.js';
+import { MAX_CLIP, MAX_START, MAX_TRANSITION, clipLength, clipSpeed, isFirstOnTrack, isOverlay, overlaps } from '../doc/timeline.js';
 import { clampScroll, clampZoom, pxPerSecond, pxToTime, snapCandidates, snapMove, snapTime,
          tickLabel, tickStep, tickTimes, timeToPx } from './timescale.js';
 import { thumbKeyOf } from './wavethumb.js';
@@ -299,8 +299,13 @@ export function renderTrack() {
   if (_lane === 'A' && _selected >= audio.length) setSelected(-1);
 
   if (!clips.length) {
-    box.innerHTML = '<p class="hint">Nothing in the sequence yet. Build a look on VIDEO and press '
-      + '<b>＋ SCENE</b>, or a screen on SCREEN and press <b>＋ STILL</b>.</p>';
+    /* Names the buttons directly above this line, in their own casing. It used
+       to say "Build a look on VIDEO and press ＋ SCENE" — a two-workspace errand
+       for something the button six pixels up already does with the look that is
+       loaded, and spelled ＋ SCENE where the button reads ＋ Scene, so the
+       reference did not even match what the eye could find. */
+    box.innerHTML = '<p class="hint">Nothing in the sequence yet. Press <b>＋ Scene</b> just above to drop in '
+      + 'the VIDEO look you have now, or <b>＋ Still</b> for the SCREEN render.</p>';
     // No lane means no scroll to remember; leaving a stale offset would restore
     // it against the next sequence, which is a different length entirely.
     _scrollPx = 0;
@@ -312,7 +317,12 @@ export function renderTrack() {
     const left = Math.round(timeToPx(starts[i], _pps));
     const width = Math.max(MIN_BLOCK_PX, Math.round(timeToPx(len, _pps)));
     const over = isOverlay(c);
-    const cls = ['tl-clip', c.kind === 'still' ? 'still' : 'video', over ? 'overlay' : '', i === _selected ? 'sel' : '']
+    /* `_lane === 'V' &&`, which the sound lane's own test has and this one did
+       not: `_selected` is an index within the SELECTED LANE, so selecting sound
+       2 also drew video clip 2 as selected — two highlighted blocks for one
+       selection, and only one of them was the thing S or Del would act on. */
+    const isSel = _lane === 'V' && i === _selected;
+    const cls = ['tl-clip', c.kind === 'still' ? 'still' : 'video', over ? 'overlay' : '', isSel ? 'sel' : '']
       .filter(Boolean).join(' ');
     /* A label is author text — a scene name plus the first line of the clip's
        copy — and it arrives from project files other people wrote, so it is
@@ -334,7 +344,13 @@ export function renderTrack() {
        they describe actually are. */
     const marks = keyMarks(c, len, width);
     const trans = transHandle(clips, i, width);
-    return `<button type="button" class="${cls}" data-i="${i}" style="left:${left}px;width:${width}px"
+    /* aria-current says WHICH clip is selected. The lane signalled it with an
+       outline colour and nothing else, so a screen-reader user could not tell
+       what S (split), Del (ripple delete) or the CLIP panel were about to act
+       on — the status bar's "Clip 3: …" is in a different region of the page
+       and answers a different question. */
+    const sel = isSel ? ' aria-current="true"' : '';
+    return `<button type="button" class="${cls}" data-i="${i}"${sel} style="left:${left}px;width:${width}px"
       aria-label="Clip ${i + 1}, ${label}, ${len.toFixed(2)} seconds${where}">
       <span class="tl-grip l" data-i="${i}" data-edge="in" aria-hidden="true"></span>
       <span class="tl-name">${label}</span>
@@ -511,7 +527,30 @@ function wire(box) {
        left one: a transition is measured from the clip's start, so its handle
        begins exactly where the in-point handle is. */
     const xg = e.target.closest('.tl-xgrip');
-    if (xg) {
+    /* …but NOT before the PREVIOUS clip's out grip.
+     *
+     * A transition makes two blocks overlap by its own length — that is what a
+     * crossfade is — and the later block paints over the earlier one, so the
+     * incoming clip's transition handle lies across the outgoing clip's
+     * right-hand trim grip. `e.target` is therefore the xgrip even when the
+     * pointer is exactly on the grip, and the 8px band at the end of a clip
+     * dragged the NEXT clip's transition length instead of trimming.
+     *
+     * Crossfade is the default every added clip takes, so in an ordinary
+     * sequence the out point of every clip but the last could not be dragged at
+     * all, while the lane's own help text says "drag an edge to trim". The
+     * overlap is only ever the previous clip's OUT grip — its in grip is at the
+     * far end — so asking what else is under the pointer resolves it exactly:
+     * the trim grip wins where the two coincide, and the transition handle
+     * keeps the rest of its width, including over its own clip's in grip. */
+    let grip = e.target.closest('.tl-grip');
+    if (!grip && xg && typeof document.elementsFromPoint === 'function') {
+      grip = document.elementsFromPoint(e.clientX, e.clientY).find((n) => (
+        n instanceof Element && n.classList.contains('tl-grip')
+        && n.classList.contains('r') && n.dataset.i !== xg.dataset.i
+      )) || null;
+    }
+    if (xg && !grip) {
       const k = Number(xg.dataset.i);
       const c = _deps.clips()[k];
       if (!c) return;
@@ -523,10 +562,12 @@ function wire(box) {
       e.preventDefault();
       return;
     }
-    const grip = e.target.closest('.tl-grip');
     const sound = e.target.closest('.tl-aclip');
     if (sound) { startAudioDrag(e, sound, grip); return; }
-    const block = e.target.closest('.tl-clip');
+    /* From the grip when one was found under the pointer rather than under the
+       event target — otherwise a grip recovered from the overlap above would
+       trim whichever clip happened to be painted on top of it. */
+    const block = grip ? grip.closest('.tl-clip') : e.target.closest('.tl-clip');
     if (!block) return;
     const i = Number(block.dataset.i);
     const clips = _deps.clips();
@@ -554,6 +595,18 @@ function wire(box) {
     // Suspends the playhead's scroll-follow: an auto-scroll competing with a
     // drag makes the clip run away from the pointer.
     _dragging = true;
+    /* FOCUS THE BLOCK, and do it before preventDefault takes that away.
+     *
+     * preventDefault on pointerdown suppresses the click's default focus, so a
+     * clip clicked with a mouse was selected but never focused — activeElement
+     * stayed on <body>. Everything the lane's own help text and the shortcut
+     * sheet promise for the keyboard ("Arrow keys trim the selected clip, Shift
+     * for 1s, Alt to reorder") is bound to the block, so for every mouse user
+     * those keys did nothing at all: the press fell through to the document
+     * transport handler, which is itself inert on a lane that has focus of its
+     * own. Tab-then-arrow worked; click-then-arrow, which is what anybody
+     * actually does, did not. */
+    try { block.focus({ preventScroll: true }); } catch { /* detached mid-render */ }
     e.preventDefault();
   });
 
@@ -634,28 +687,52 @@ function wire(box) {
       const clips = _deps.clips();
       const c = clips[drag.i];
       if (!c) return;
-      const d = dx * secsPerPx();
+      /* LANE seconds times the clip's speed, because `in` and `out` are SOURCE
+         seconds and the two are the same number only at 1×.
+         clipLength is `(out - in) / speed`, so a pointer that has travelled one
+         second of LANE has travelled `speed` seconds of SOURCE. Adding the lane
+         figure straight to `out` made the edge follow at a third of the
+         pointer's speed on a 3× clip and run away from it at twice the speed on
+         a 0.5× one — and it put the snapped edge somewhere other than the thing
+         it snapped to by the same factor. At 1× — every clip until someone
+         changes the speed — the factor is 1 and nothing about this moves. */
+      const speed = clipSpeed(c);
+      const d = dx * secsPerPx() * speed;
       const live = { coalesceKey: drag.key, preview: false };
+      /* WHICH SOURCE END EACH VISIBLE EDGE IS.
+         Reversed, the picture runs from `out` down to `in` (see sourceTimeOf),
+         so the block's head is the source's out point and its tail is the in
+         point — the two grips mean the opposite ends of the source from the way
+         round they usually do. Mapped here rather than at every use below, so
+         the bounds and the snap keep reading as head/tail. Dragging the head of
+         a reversed clip used to trim its tail: the block shrank from the end
+         the pointer was not on. */
+      const edgeKey = c.reverse ? (drag.edge === 'in' ? 'out' : 'in') : drag.edge;
+      /* …and reversed, moving the head LATER in the picture means moving the
+         source point EARLIER, so the drag distance changes sign with it. */
+      const dSrc = c.reverse ? -d : d;
       // Each edge is bounded by the source AND by leaving a clip that still
       // exists: dragging past the other edge would produce a zero-length clip.
-      if (drag.edge === 'in') {
+      if (edgeKey === 'in') {
         /* Same reasoning as the sound lane: on the spine a clip's left edge is
            where the clips before it put it, so dragging the in-point changes
            what plays rather than where the clip sits. Nothing to snap to. */
-        const v = Math.min(Math.max(0, drag.in0 + d), c.out - 0.1);
+        const v = Math.min(Math.max(0, drag.in0 + dSrc), c.out - 0.1);
         _deps.edit(drag.i, { in: Math.round(v * 100) / 100 }, 'trim in', live);
       } else {
-        let v = Math.max(Math.min(c.src, drag.out0 + d), c.in + 0.1);
+        let v = Math.max(Math.min(c.src, drag.out0 + dSrc), c.in + 0.1);
         if (wantSnap(e)) {
           /* The useful targets here are the ones on the OTHER lanes — ending a
              shot exactly where a sound starts, or on the playhead. Its own
              neighbours on the spine are always flush against it by
-             construction, so they contribute nothing and cost nothing. */
+             construction, so they contribute nothing and cost nothing.
+             Both conversions go through `speed` for the reason above: `edge` is
+             a LANE time and `v` is a SOURCE time. */
           const { starts } = _deps.schedule();
           const s0 = Number(starts[drag.i]) || 0;
-          const edge = snapTime(s0 + (v - c.in),
+          const edge = snapTime(s0 + (v - c.in) / speed,
             snapSet(starts, { lane: 'V', i: drag.i, andAfter: true }), _pps);
-          v = Math.min(c.src, Math.max(c.in + 0.1, c.in + (edge - s0)));
+          v = Math.min(c.src, Math.max(c.in + 0.1, c.in + (edge - s0) * speed));
         }
         _deps.edit(drag.i, { out: Math.round(v * 100) / 100 }, 'trim out', live);
       }

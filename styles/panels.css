@@ -128,6 +128,13 @@ body.explain-armed input, body.explain-armed select, body.explain-armed textarea
 /* Toasts are notifications, not targets. Without this they sit over the
    settings column and eat clicks meant for the controls underneath. */
 #toasts{ pointer-events:none }
+/* Clear of the status bar. Toasts are bottom-right and so are the live
+   readouts — the export estimate and the WCAG flash rate — so every message
+   covered the two numbers for the 2.6s it was on screen, including the
+   first-run "you can reopen this from HELP" that lands while a new user is
+   looking at exactly that corner. The bar declares its own height as a token
+   so the two cannot drift apart. */
+body.nle #toasts{ bottom:calc(var(--status-h,26px) + 14px) }
 
 /* ---- text variables ---------------------------------------------------- */
 /* A variable is a name and a value, and the name has to read as the thing you

@@ -116,7 +116,12 @@ export const escHtml = (s)=>esc(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").re
    reset that also froze everything downstream of it.                        */
 export function log(msg,cls){ const c=$("console"); if(!c)return; const t=new Date().toISOString().slice(11,19);
   const line=document.createElement("div"); if(cls)line.className=cls; line.textContent=`[${t}] ${msg}`;
-  c.appendChild(line); c.scrollTop=c.scrollHeight; }
+  c.appendChild(line); c.scrollTop=c.scrollHeight;
+  /* Announce it, so the panel that HOLDS the log can decide whether it needs to
+     be on screen. A folded log is fine until something goes wrong, and the one
+     thing it must not do is stay folded over the sentence explaining why an
+     export refused. See enterEditor's console dock. */
+  document.dispatchEvent(new CustomEvent("studio:log",{detail:{cls:cls||""}})); }
 /* At most this many on screen at once. Adding three clips and a layer used to
    put five stacked toasts over the settings column, and because the container
    was click-through-able they also swallowed clicks on whatever was under

@@ -21,6 +21,26 @@ export let vPreviewRAF=null, vPlaying=true, vScrubT=0, vRecording=false;
 /* Held separately from vPreviewRAF because the throttle schedules with
    setTimeout, and cancelAnimationFrame will not clear a timeout id. */
 let vPreviewTimer=null;
+/* WHICH loop is the live one.
+ *
+ * A cancelled handle is not a cancelled loop. There is one `vPreviewRAF` slot
+ * for every loop that has ever started, so any interleaving in which a loop
+ * schedules itself AFTER a newer loop has stored its own handle leaves the
+ * newer handle overwritten and the older loop running with nothing pointing at
+ * it: stopVideoPreview() then cancels a loop that is already dead and the
+ * zombie draws forever, holding the cfg it captured when it started.
+ *
+ * The symptom is a preview that shows a scene the settings no longer describe.
+ * Caught as an intermittent failure in the import test — the picture on screen
+ * was Digital Rain while readVideoCfg().scene said kenburns and the imported
+ * image was loaded and correct — and it is the same shape of fault whenever a
+ * settings change appears not to take.
+ *
+ * A generation token makes it impossible rather than unlikely: stopping bumps
+ * the counter, and a loop whose token is stale returns on its next tick without
+ * drawing and without rescheduling. Every loop is then cancellable whether or
+ * not its handle survived. */
+let vPreviewGen=0;
 /* Tab wiring lives beside the state it mutates. vPlaying / vScrubT /
    vRecording (and the tl* equivalents) are module-local, and an ES module
    cannot assign to an imported binding — so these handlers must be defined in
@@ -50,7 +70,7 @@ export function initVideoTab(){
   if($("v-loadvid")){ $("v-loadvid").addEventListener("click", ()=>$("v-vidfile").click()); $("v-vidfile").addEventListener("change", e=>loadVideoFile(e.target.files[0],()=>{ setVal("v-scene","videoin"); startVideoPreview(); })); }
   wireLive("view-video",()=>{ syncFormat({ format:"v-format", w:"v-w", h:"v-h" }); startVideoPreview(); validateVideo(); });
 }
-export function stopVideoPreview(){ if(vPreviewRAF){ cancelAnimationFrame(vPreviewRAF); vPreviewRAF=null; }
+export function stopVideoPreview(){ vPreviewGen++; if(vPreviewRAF){ cancelAnimationFrame(vPreviewRAF); vPreviewRAF=null; }
   if(vPreviewTimer){ clearTimeout(vPreviewTimer); vPreviewTimer=null; } }
 /* Only the visible tab previews. This is not just about wasted frames: the
    video and timeline loops share scratch canvases (_persistCanvas, _ss), and
@@ -99,7 +119,8 @@ export function startVideoPreview(){ stopVideoPreview(); if(!videoVisible())retu
    * that with frames of the author's clip. */
   const FPS=cfg.fps||12, TOTAL=Math.max(1,Math.round(cfg.duration*FPS));   // exactly the frame set recordVideo encodes
   let lastFrame=-1, cooldown=0, throttled=false, playFrame=0, lastAdvance=start;
-  (function loop(){ let frame;
+  const gen=vPreviewGen;                                   // see vPreviewGen
+  (function loop(){ if(gen!==vPreviewGen) return; let frame;
     if(vPlaying){ const now=performance.now();
       if(lastFrame<0){ frame=0; lastAdvance=now; }
       else if(now-lastAdvance>=1000/FPS){ frame=(playFrame+1)%TOTAL; lastAdvance=now; }
@@ -144,7 +165,8 @@ export function startVideoPreview(){ stopVideoPreview(); if(!videoVisible())retu
       // and again whenever the throttle flips.
       if(!!cooldown !== throttled || first){ throttled=!!cooldown; updateVideoEst(cfg, throttled); }
     }
-    if(cooldown>0) vPreviewTimer=setTimeout(()=>{ vPreviewTimer=null; vPreviewRAF=requestAnimationFrame(loop); }, cooldown);
+    if(gen!==vPreviewGen) return;                           // stopped while this frame was being drawn
+    if(cooldown>0) vPreviewTimer=setTimeout(()=>{ if(gen!==vPreviewGen) return; vPreviewTimer=null; vPreviewRAF=requestAnimationFrame(loop); }, cooldown);
     else vPreviewRAF=requestAnimationFrame(loop); })(); }
 /* Roughly a frame at 60Hz. Under this there is nothing to fix; over it, the
    interface starts losing frames of its own. */
@@ -228,8 +250,27 @@ export function claimExport(label){
   STILL_BTNS.forEach(id=>{ const b=$(id); if(b)b.disabled=true; });
   return true;
 }
+/* Who to tell when the lock comes off.
+ *
+ * The chrome freezes tab switching during an export, and a switch asked for
+ * while it is frozen used to be DROPPED — the toast said "paused until it
+ * finishes", the export finished, and nothing ever went to the workspace that
+ * had been asked for. Clicking VIDEO during a sequence export left you on
+ * TIMELINE, editing the tab you thought you had left, with the VIDEO preview
+ * stopped and its canvas holding whatever it last drew. (That is exactly what
+ * the import test caught: it clicked VIDEO, the click was swallowed, and the
+ * picture it then measured was a stale frame from three tests earlier.)
+ *
+ * A listener rather than a direct call, because capture.js must not import the
+ * shell — the shell already imports this module. */
+let _onRelease=[];
+export function onExportRelease(fn){ if(typeof fn==="function") _onRelease.push(fn); }
 export function releaseExport(){ _exportBusy=null;
-  STILL_BTNS.forEach(id=>{ const b=$(id); if(b)b.disabled=false; }); }
+  STILL_BTNS.forEach(id=>{ const b=$(id); if(b)b.disabled=false; });
+  /* Copied before running: a handler may claim the lock again (batch export
+     runs back-to-back files), and it must not be walking the live array. */
+  const fns=_onRelease.slice();
+  for(const fn of fns){ try{ fn(); }catch(e){ console.error(e); } } }
 /* The still exporters have no MediaRecorder to stop, so ■ STOP raises this
    flag and their frame loops check it between frames. */
 let _stillCancel=false;
@@ -354,6 +395,17 @@ export async function recordVideo(){
   // recorder starts, so a second click in that gap ran a second recorder over
   // the same canvas — the same race, one layer down.
   vRecording=true;
+  /* The BUTTON goes down with the flag, not with the recorder.
+   *
+   * ● RECORD stayed live and ■ STOP stayed grey across everything this function
+   * awaits before a recorder exists — priming footage, deciding on the offline
+   * encoder, decoding the audio bed. On a real clip that is a second or more in
+   * which the tool has accepted the job, holds the export lock, refuses every
+   * workspace switch, and still shows a button that says "press me to start".
+   * Anything asking "is it recording?" — a person, or a test — is told no while
+   * the answer is yes. The `finally` below puts both back on every path that
+   * ends before the recorder takes over. */
+  $("v-record").disabled=true; setEnabled($("v-stop"),true);
   let armed=false;   // once the recorder is live, finish() owns the flag + token
   try{
   let cfg=readVideoCfg();
@@ -387,13 +439,18 @@ export async function recordVideo(){
   let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
                                                    toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  stopVideoPreview(); vRecording=true; $("v-record").disabled=true; setEnabled($("v-stop"),true); $("v-progress-wrap").style.display="block";
+  stopVideoPreview(); vRecording=true; $("v-progress-wrap").style.display="block";   // button + STOP already set above
   /* Why the recording ended decides what finish() does with the chunks. The
      fast path's contract holds here too: STOP means stop, and a recorder error
      is an error — saving either as a normal clip put a silently truncated file
      in the library announced as a finished export. */
   let endReason="done";
-  let done=false; const finish=()=>{ if(done)return; done=true; try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
+  /* Three times the clip plus eight seconds, never under fifteen — see the
+     watchdog note below. */
+  const budget=Math.max(15000, cfg.duration*3000+8000);
+  let guard=null, reachedEnd=false;
+  let done=false; const finish=()=>{ if(done)return; done=true; clearTimeout(guard);
+    try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
     try{ bedCtx&&bedCtx.close(); }catch(e){}
     $("v-progress-wrap").style.display="none";
     vRecording=false; releaseExport(); $("v-record").disabled=false; setEnabled($("v-stop"),false);
@@ -414,6 +471,32 @@ export async function recordVideo(){
     const nm=cfg.hud||cfg.text.split("\n")[0]||cfg.scene; addToLibrary(blob,ext,"videos",slug(nm),cfg.duration);
     startVideoPreview(); };
   rec.onstop=finish; rec.onerror=(e)=>{ endReason=(e&&e.error&&e.error.message)||"MediaRecorder error"; finish(); }; rec.start();
+  /* A RECORDING ALWAYS ENDS.
+   *
+   * The only route out of a real-time capture is `step` reaching the clip's
+   * duration and calling rec.stop(), and the only route out of THAT is the
+   * recorder delivering onstop. Both are things that can simply not happen: a
+   * frame loop can die (an exception in a render, an rAF that stops being
+   * serviced) and a MediaRecorder can stall without ever firing onstop or
+   * onerror. Either way finish() never runs, so the export lock is never
+   * released — and the lock is not a private detail. Held, ● RECORD stays grey,
+   * ■ STOP stays live over nothing, and EVERY WORKSPACE SWITCH IS REFUSED for
+   * the rest of the session with only a toast to explain it. The tool is simply
+   * stuck, and nothing on screen says which part of it is stuck.
+   *
+   * So the end is guaranteed rather than hoped for. The budget is generous —
+   * real-time capture is wall-clock and load-sensitive, and finishing late is
+   * normal on a loaded machine — but it is finite. Chunks recorded up to the
+   * point the frames ran out are kept if the loop actually got there; a capture
+   * that stalled part way is discarded, which is the same contract STOP and a
+   * recorder error already have.
+   */
+  guard=setTimeout(()=>{ if(done)return;
+    if(!reachedEnd) endReason="the recorder stopped responding";
+    log("Recording did not end on its own after "+Math.round(budget/1000)+"s — closing it out"+
+        (reachedEnd?" and keeping what was captured.":" and discarding the partial clip."),"warn");
+    try{ rec.stop(); }catch(e){ /* already gone */ }
+    setTimeout(()=>{ if(!done) finish(); },500); }, budget);
   armed=true;
   // The clip's own footage, not just the active slot — otherwise a library-keyed
   // clip records whatever frame its pooled decoder happened to be paused on.
@@ -425,9 +508,11 @@ export async function recordVideo(){
   // the already-scheduled step would overwrite its status with "Recording...".
   const step=()=>{ if(done)return; const t=(performance.now()-start)/1000; renderScaled(ctx,cfg.W,cfg.H,cfg,Math.min(t,cfg.duration));
     const p=clamp(t/cfg.duration,0,1); $("v-progress").style.width=(p*100)+"%"; $("v-status").textContent="Recording... "+t.toFixed(1)+"/"+cfg.duration+"s";
-    if(t>=cfg.duration || !vRecording){ if(t<cfg.duration && !vRecording) endReason="stopped"; try{rec.stop();}catch(e){finish();} return; } requestAnimationFrame(step); };
+    if(t>=cfg.duration || !vRecording){ if(t<cfg.duration && !vRecording) endReason="stopped"; else reachedEnd=true;
+      try{rec.stop();}catch(e){finish();} return; } requestAnimationFrame(step); };
   requestAnimationFrame(step);
-  } finally { if(!armed){ vRecording=false; releaseExport(); } }
+  } finally { if(!armed){ vRecording=false; releaseExport();
+                          $("v-record").disabled=false; setEnabled($("v-stop"),false); } }
 }
 /* collect `count` frames deterministically into offscreen canvases (for strip/GIF).
    Async so a `videoin` clip can be seeked frame-accurately (drawImage of a <video>

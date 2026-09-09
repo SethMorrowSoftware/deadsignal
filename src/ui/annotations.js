@@ -127,9 +127,12 @@ function wireCanvas() {
   // the two only agree at 100%.
   const at = (e) => {
     const r = cv.getBoundingClientRect();
-    if (!r.width || !r.height) return { x: 0, y: 0, fx: 0, fy: 0 };
+    if (!r.width || !r.height) return { x: 0, y: 0, fx: 0, fy: 0, z: 1 };
     const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
-    return { x: fx * cv.width, y: fy * cv.height, fx, fy };
+    /* Buffer pixels per display pixel. The preview is scaled to fill the
+       monitor, so a tolerance measured in buffer pixels is a different-sized
+       target on screen at every output size — see hitAnnotation. */
+    return { x: fx * cv.width, y: fy * cv.height, fx, fy, z: cv.width / r.width };
   };
 
   cv.addEventListener('pointerdown', (e) => {
@@ -138,9 +141,9 @@ function wireCanvas() {
     const p = at(e);
     // The grip first: it sits on the corner of the box, so a hit test that
     // asked "inside?" first would never let you resize.
-    if (_sel != null && onGrip(_boxes[_sel], p.x, p.y)) { mode = 'resize'; index = _sel; }
+    if (_sel != null && onGrip(_boxes[_sel], p.x, p.y, p.z)) { mode = 'resize'; index = _sel; }
     else {
-      const hit = hitAnnotation(_boxes, p.x, p.y);
+      const hit = hitAnnotation(_boxes, p.x, p.y, p.z);
       if (hit < 0) { if (_sel != null) selectAnnotation(null); return; }
       mode = 'move'; index = hit;
       if (_sel !== hit) selectAnnotation(hit);
@@ -176,8 +179,8 @@ function wireCanvas() {
 function updateCursor(e, cv, at) {
   if (!annotations().length) { cv.style.cursor = ''; return; }
   const p = at(e);
-  if (_sel != null && onGrip(_boxes[_sel], p.x, p.y)) cv.style.cursor = 'nwse-resize';
-  else cv.style.cursor = hitAnnotation(_boxes, p.x, p.y) >= 0 ? 'move' : '';
+  if (_sel != null && onGrip(_boxes[_sel], p.x, p.y, p.z)) cv.style.cursor = 'nwse-resize';
+  else cv.style.cursor = hitAnnotation(_boxes, p.x, p.y, p.z) >= 0 ? 'move' : '';
 }
 
 /* ---------------------------------------------------------------- list --- */

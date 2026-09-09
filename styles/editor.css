@@ -169,6 +169,16 @@ body.nle main{
   background:var(--edge);
   height:100%; min-height:0;
 }
+/* An empty sequence is a sentence, not a band. `minmax(120px, 26vh)` was
+   charged whether or not there was a sequence in it — 234px of a 900px window,
+   full-bleed, to hold one line of prose — and the monitor above it is the thing
+   that was paying. `auto` sizes it to the toolbar plus that line; every clip
+   added puts the band straight back. See syncPanes in ui/nle.js. */
+body.nle main.seq-empty{
+  grid-template-rows:auto minmax(0,1fr) auto auto;
+}
+body.nle main.seq-empty .nle-tl-body{ padding:6px 10px; }
+body.nle main.seq-empty .nle-tl-body .hint{ margin:0; }
 
 /* The sign-off is page furniture and has no place in an editor. The activity
    log is the opposite — it is where the tool explains what it just did — so it
@@ -207,9 +217,17 @@ body.nle .view.active .panel.stagewrap{
    row whose height is the canvas — circular, and the browser quietly treats it
    as `none`. One explicit row that fills the definite frame is what turns that
    percentage into a real number. */
+/* `container-type:size` is the third load-bearing part, and it is what lets the
+   picture GROW. The canvas needs both axes of this frame in one expression to
+   pick the smaller of the two fits (see ui/stagefit.js for why every one-axis
+   answer distorts), and container query units are the only way to name them
+   both. Size containment is safe here precisely because of the two rules above:
+   this frame's height comes from its grid row and its width from the column, so
+   it never depended on its contents in the first place. */
 body.nle .view.active .panel.stagewrap .screen{
   min-height:0; height:100%; display:grid; grid-template-rows:minmax(0,1fr);
   place-items:center; width:100%;
+  container-type:size;
 }
 body.nle .view.active .grid > .panel:not(.stagewrap){
   grid-area:inspector; margin:0; border-radius:0; border:0;
@@ -239,7 +257,11 @@ body.nle .view.active .grid > .panel:not(.stagewrap){
    stage-less tab is laid out correctly the day it is added. */
 body.nle .view.active:not(:has(.panel.stagewrap)){
   display:block;
-  grid-row:monitor-start / transport-end;
+  /* Through the timeline row as well: the band is hidden on these views (see
+     main.no-stage below), and a hidden grid item does not release its track —
+     the row would stay in the template and show as a full-width gap under the
+     content. */
+  grid-row:monitor-start / timeline-end;
   /* Through the inspector column too: on these views nothing can be
      selected, so the clip pane is hidden below and its 360px belongs to the
      content — the bundle columns were cramped beside a pane that could only
@@ -275,6 +297,24 @@ body.nle .view.active:not(:has(.panel.stagewrap)):not(:has(.panel ~ .panel)) > .
    cannot appear inside :has(), so the selector this replaced was silently
    invalid and the rule never applied. */
 body.nle main.no-stage .nle-inspector{
+  display:none;
+}
+/* …and so does the sequence band, for the same reason and by the same test.
+   The two rules above were written for the panes that flank the monitor; the
+   band under it was simply never added to them, so LIBRARY, BUNDLE, CLOUD and
+   HELP each gave a full-width 234px strip to the words "Nothing in the
+   sequence yet" while the panel above them scrolled inside 460px. The view's
+   grid-row is extended to match (see the placement rule above), so the height
+   goes to the content rather than to a gap. */
+body.nle main.no-stage .nle-timeline{
+  display:none;
+}
+/* Nothing selected, so the CLIP pane has nothing to be. It is an `auto` row,
+   so hiding it hands its height to the settings pane underneath with no other
+   rule changing — which is what stops the AUDIO tab's controls being clipped
+   mid-field on a short window. syncPanes (ui/nle.js) sets the class; the status
+   bar keeps saying "No selection", so the fact is not lost with the pane. */
+body.nle main.no-clip .nle-inspector{
   display:none;
 }
 
@@ -329,13 +369,22 @@ body.nle .nle-chrome{ display:block; background:var(--panel); border-bottom:1px 
    not a settings page — but present, because hiding a control is not the same
    as replacing it. */
 .nle-settings{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-/* Each label stays on one line (white-space:nowrap), but a group of controls may
-   break across lines rather than push the page wider — an unbreakable row of
-   view buttons was the last thing forcing a sideways scroll at a 320px
-   viewport. */
+/* A GROUP stays on one line; the BAR wraps between groups.
+   `flex-wrap:wrap` on the group itself broke each label away from its own
+   control — "aesthetic" on one line, the select under it, ◆ PACK under that —
+   so eight settings became a three-line, 83px-tall toolbar that read as a
+   layout fault and, worse, grew as the window shrank: chrome taking height
+   from the picture at exactly the size where the picture is smallest. The bar
+   still wraps (`.nle-toolbar` and `.nle-settings` both keep flex-wrap), which
+   is what kept the 320px viewport free of a sideways scroll — that guarantee
+   was never this rule's to make. Only below 520px, where a single group can no
+   longer fit a line on its own, does the group wrap again. */
 .nle-settings .ctl{
-  display:flex; align-items:center; gap:5px; flex-wrap:wrap; min-width:0;
+  display:flex; align-items:center; gap:5px; flex-wrap:nowrap; min-width:0;
   font-size:12px; color:var(--muted); white-space:nowrap;
+}
+@media (max-width:520px){
+  .nle-settings .ctl{ flex-wrap:wrap; }
 }
 .nle-settings .ctl select,
 .nle-settings .ctl input[type="number"]{ padding:3px 6px; font-size:12px; }
@@ -469,28 +518,44 @@ body.nle .view.active .panel.stagewrap .screen{ box-shadow:none; }
 /* A program monitor shows the picture as large as the window allows. The canvas
    keeps its own pixel buffer — this is display scaling only — and nearest
    neighbour is the right filter for material that is meant to look like a
-   240-line signal. */
-/* Bounded in viewport units, not percentages.
-   `max-height:100%` looks like the obvious way to fit the picture to its frame
-   and silently does nothing: the frame's own height comes from a grid row, and
-   a percentage max-height against a containing block the browser does not treat
-   as definite resolves to `none`. A 1080×1920 clip then took its natural
-   aspect at full width — 1084px tall inside a 206px frame — and pushed RECORD
-   off the panel. The bound below is the monitor row's real budget: the window,
-   less the timeline, less the chrome above and the transport below.
-   Width follows from the canvas's own aspect ratio, so the element keeps the
-   picture's shape and nothing is distorted. */
-/* Two bounds, and both are needed. The viewport calc is the monitor row's
-   BUDGET — what the window can afford once the timeline and the chrome have
-   been paid for — and it is what stops a 1080×1920 clip taking its natural
-   aspect at full width. `max-height:100%` is the row's ACTUAL height, which the
-   calc can only estimate: it resolves now that .screen has a definite height
-   (see above), and it is what guarantees the picture never reaches the
-   transport whatever the window turns out to be. */
+   240-line signal.
+
+   THE PICTURE FITS ITS FRAME, both ways round. `width` asks for the smaller of
+   the two fits — as wide as the frame, or as wide as the frame's height allows
+   at the picture's ratio — and `height:auto` then follows from the canvas's own
+   intrinsic ratio, so nothing is ever distorted. `--stage-ar` is that ratio,
+   written onto the frame by ui/stagefit.js, which also explains at length why
+   the obvious one-liners (`object-fit:contain`, `width:100%`, `height:100%`)
+   are each wrong here.
+
+   The element's border box is therefore EXACTLY the picture — no letterbox
+   inside it — which is the invariant ui/monitor.js, ui/annotations.js and
+   ui/regions.js all map pointer coordinates through. Do not add `object-fit`
+   or padding to this rule without fixing those three first.
+
+   The bound this replaced was `max-height:min(100%, calc(96vh - var(--tl-h,26vh) - 210px))`,
+   where 210px was a hand-estimate of the chrome above and below. Nothing ever
+   set --tl-h, and the frame has had a definite height since the rule above was
+   written, so the estimate was both inert and unmaintainable. The frame's real
+   size is what 100cqw/100cqh mean. */
 body.nle .view.active .panel.stagewrap canvas.stage{
-  width:auto; height:auto;
-  max-width:100%; max-height:min(100%, calc(96vh - var(--tl-h,26vh) - 210px));
+  width:min(100cqw, calc(100cqh * var(--stage-ar, 4/3)));
+  height:auto;
+  max-width:100%; max-height:100%;
   background:#000; image-rendering:pixelated;
+}
+/* The waveform takes the height a 4:1 plot needs, not the whole monitor row.
+   Stretched to `1fr` like a picture it was a 285px black rectangle with one
+   sentence under it — the tallest empty box in the tool — and the AUDIO
+   workspace has nothing else that wants the height. The frame is a definite box
+   (which `container-type:size` needs) and the picture fits it by the same rule
+   as every other stage, so the wave is never anamorphic; the panel packs to the
+   top, so the space the wave does not need is simply not claimed. */
+body.nle .view.active .panel.stagewrap:has(#acanvas){
+  grid-template-rows:auto; align-content:start;
+}
+body.nle .view.active .panel.stagewrap #a-wavewrap{
+  height:min(34vh, 240px);
 }
 
 /* The transport lives under the monitor and is the same in every workspace. */
@@ -504,6 +569,28 @@ body.nle .view.active .panel.stagewrap canvas.stage{
   font-size:13px; padding:3px 8px; background:#000; border:1px solid var(--edge2);
   border-radius:4px; color:var(--phos); min-width:9ch; text-align:center;
 }
+/* The docked scrub row (see dockScrub). Both the dock and the row itself are
+   `display:contents`, so the row's play button, slider and clock become flex
+   items of the BAR rather than a box sitting at the end of it — which is what
+   lets `order` put each one where a transport puts it: the workspace's own play
+   button in the middle of the shuttle cluster, exactly where the proxy it
+   replaces used to be, and the slider taking the slack after it.
+
+   Ordering the whole bar explicitly rather than only the docked parts: with
+   items arriving from two different parents, source order is not something a
+   reader of either file can predict. */
+.nle-scrub-dock{ display:contents; }
+.nle-transport .scrub{ display:contents; }
+.nle-transport > *, .nle-transport .scrub > *{ order:5; }
+#nle-tc{ order:0; }
+#nle-t-start{ order:1; } #nle-t-backs{ order:2; } #nle-t-back{ order:3; }
+#nle-t-playpause,
+.nle-transport .scrub > button:first-child{ order:4; }
+#nle-t-fwd{ order:6; } #nle-t-fwds{ order:7; } #nle-t-end{ order:8; }
+.nle-transport .scrub > input[type="range"]{ order:9; flex:1 1 90px; min-width:80px; }
+.nle-transport .scrub > .tag{ order:10; min-width:5ch; text-align:right; }
+#tl-sound{ order:11; } #tl-peak{ order:12; }
+#nle-tc-end{ order:13; }
 .nle-transport .tc.dim{ color:var(--muted); }
 .nle-tbtn{
   min-width:32px; height:28px; padding:0 8px;
@@ -543,9 +630,10 @@ body.nle .nle-transport,body.nle .nle-timeline{ display:flex; }
 
 /* ------------------------------------------------------------- status -- */
 
+:root{ --status-h:26px }   /* the bar's own height, read by #toasts */
 .nle-status{
   display:none;
-  min-height:26px; align-items:center; gap:2px 14px; padding:1px 12px;
+  min-height:var(--status-h); align-items:center; gap:2px 14px; padding:1px 12px;
   background:var(--panel2); border-top:1px solid var(--edge);
   font-size:12px; color:var(--muted);
   /* Wraps rather than overflows: on a narrow window the readouts drop to a
@@ -575,9 +663,14 @@ body.nle .nle-status{ display:flex; }
      46vh of a scrolling page would clip the fields for no reason. */
   body.nle .nle-inspector{ border-left:0; border-top:1px solid var(--edge); max-height:none; }
   body.nle .view.active .grid > .panel:not(.stagewrap){ border-left:0; }
-  /* Height:100% resolves against an auto-height page here, which is no bound at
-     all — a 1920-tall frame then ran off the bottom of the window. */
-  body.nle .view.active .panel.stagewrap canvas.stage{ height:auto; max-height:52vh; }
+  /* Stacked, the page scrolls, so the monitor row has no height of its own to
+     fit into — `container-type:size` over an indefinite height would contain to
+     zero and the picture would vanish. The frame is given a real height here
+     instead, and the same fit then runs inside it: a definite box either way,
+     so the picture still grows to meet it rather than sitting at its buffer
+     size (which is what `height:auto` here used to mean, and why the fix above
+     appeared to do nothing below 1180px). */
+  body.nle .view.active .panel.stagewrap .screen{ height:min(52vh, 75vw); }
   .nle-transport{ position:static; }
 }
 
@@ -699,3 +792,24 @@ body.nle .nle-status{ display:flex; }
   border:1px solid var(--edge2); border-bottom-width:2px; border-radius:4px;
   padding:1px 5px; background:var(--panel2); white-space:nowrap;
 }
+
+/* ------------------------------------------------- activity log fold -- */
+
+/* The log's header IS its toggle (see foldConsole). Styled as a header rather
+   than as a button: it is the panel's title, and a title that happens to be
+   pressable should not read as a form control. */
+.nle-console h2{ margin:0; border:0; padding:0; }
+.nle-console .nle-fold{
+  display:flex; align-items:center; gap:7px; width:100%;
+  background:none; border:0; padding:2px 0; cursor:pointer;
+  color:inherit; font:inherit; letter-spacing:inherit; text-align:left;
+}
+.nle-console .nle-fold:hover{ color:var(--text); }
+.nle-console .nle-fold-caret{ font-size:12px; width:1em; }
+.nle-console .nle-fold-count{ margin-left:auto; font-family:var(--mono); font-size:12px; }
+.nle-console .nle-fold-count.warn{ color:var(--amber); font-weight:600; }
+.nle-console.folded .console{ display:none; }
+/* Folded, the panel is its own header — no dashed rule under a title with
+   nothing beneath it. */
+.nle-console.folded{ padding-bottom:8px; }
+.nle-console.folded h2{ border-bottom:0; padding-bottom:0; }

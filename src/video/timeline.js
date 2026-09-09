@@ -736,6 +736,11 @@ export let tlPreviewRAF=null, tlPlaying=true, tlScrubT=0, tlRecording=false;
 /* Separate handle: the throttle schedules with setTimeout, which
    cancelAnimationFrame cannot clear. */
 let tlPreviewTimer=null;
+/* Which loop is the live one — the same generation token the video preview
+   carries, for the same reason and against the same fault. See vPreviewGen in
+   video/capture.js: one handle slot per loop cannot cancel a loop whose handle
+   a newer one overwrote, and the survivor keeps drawing from a stale schedule. */
+let tlPreviewGen=0;
 /* Roughly a frame at 60Hz — see the note in video/capture.js. */
 const TL_FRAME_BUDGET_MS = 24;
 export function initTimelineTab(){
@@ -805,7 +810,7 @@ export function initTimelineTab(){
    Every path that must go quiet already comes through here — leaving the tab
    (ui/shell.js), starting either export, and the restart at the top of
    startTimelinePreview — so there is no fourth place to forget. */
-export function stopTimelinePreview(){ if(tlPreviewRAF){ cancelAnimationFrame(tlPreviewRAF); tlPreviewRAF=null; }
+export function stopTimelinePreview(){ tlPreviewGen++; if(tlPreviewRAF){ cancelAnimationFrame(tlPreviewRAF); tlPreviewRAF=null; }
   if(tlPreviewTimer){ clearTimeout(tlPreviewTimer); tlPreviewTimer=null; }
   haltPreviewSound(); }
 function timelineVisible(){ const v=$("view-timeline"); return !v || v.classList.contains("active"); }
@@ -824,7 +829,8 @@ export function startTimelinePreview(){ stopTimelinePreview(); if(!timelineVisib
      time is the fallback, not the default: two clocks that both claim to say
      where the sequence is drift apart, and the one the speakers are using is
      the one the author can hear. */
-  (function loop(){ let T; if(tlPlaying){ const aT=sequenceAudioTime(); T=aT!=null?aT:((performance.now()-start)/1000)%sched.total; tlScrubT=T; if($("tl-scrub"))$("tl-scrub").value=Math.round(T/sched.total*1000);   /* dom-only: playhead readout, written every frame */ } else T=tlScrubT;
+  const gen=tlPreviewGen;                                  // see tlPreviewGen
+  (function loop(){ if(gen!==tlPreviewGen) return; let T; if(tlPlaying){ const aT=sequenceAudioTime(); T=aT!=null?aT:((performance.now()-start)/1000)%sched.total; tlScrubT=T; if($("tl-scrub"))$("tl-scrub").value=Math.round(T/sched.total*1000);   /* dom-only: playhead readout, written every frame */ } else T=tlScrubT;
     const fps=tl.fps||12, frame=Math.round(T*fps);
     if(frame!==lastFrame){
       lastFrame=frame;
@@ -844,7 +850,8 @@ export function startTimelinePreview(){ stopTimelinePreview(); if(!timelineVisib
       const cost=performance.now()-t0;
       cooldown = cost > TL_FRAME_BUDGET_MS ? Math.min(500, Math.round(cost * 1.2)) : 0;
     }
-    if(cooldown>0) tlPreviewTimer=setTimeout(()=>{ tlPreviewTimer=null; tlPreviewRAF=requestAnimationFrame(loop); }, cooldown);
+    if(gen!==tlPreviewGen) return;                          // stopped while this frame was being drawn
+    if(cooldown>0) tlPreviewTimer=setTimeout(()=>{ if(gen!==tlPreviewGen) return; tlPreviewTimer=null; tlPreviewRAF=requestAnimationFrame(loop); }, cooldown);
     else tlPreviewRAF=requestAnimationFrame(loop); })(); }
 export function updateTimelineInfo(sched){ if($("tl-info"))$("tl-info").textContent=sched.clips.length+" clip(s) · "+(sched.duration??sched.total).toFixed(1)+"s · "+sched.tl.W+"×"+sched.tl.H;
   renderTrack();
@@ -1091,6 +1098,17 @@ export async function recordTimeline(){ if(tlRecording)return; if(!timeline.leng
   // the WHOLE function: the fallback awaits the sequence bed before its
   // recorder starts, and a click in that gap would start a second recorder.
   tlRecording=true;
+  /* The BUTTON goes down with the flag, not with the recorder.
+   *
+   * ● RECORD stayed live and ■ STOP stayed grey across everything this function
+   * awaits before a recorder exists — priming footage, deciding on the offline
+   * encoder, decoding the audio bed. On a real clip that is a second or more in
+   * which the tool has accepted the job, holds the export lock, refuses every
+   * workspace switch, and still shows a button that says "press me to start".
+   * Anything asking "is it recording?" — a person, or a test — is told no while
+   * the answer is yes. The `finally` below puts both back on every path that
+   * ends before the recorder takes over. */
+  $("tl-record").disabled=true; setEnabled($("tl-stop"),true);
   let armed=false;   // once the recorder is live, finish() owns the flag + token
   try{
   if(await recordTimelineFast(buildSchedule())) return;
@@ -1117,11 +1135,16 @@ export async function recordTimeline(){ if(tlRecording)return; if(!timeline.leng
   let rec; try{ rec=new MediaRecorder(stream,opts); }catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ log("MediaRecorder init failed: "+e2.message+" — this browser will not record this format.","err");
                                                    toast("Could not start recording","err"); return; } }
   const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size)chunks.push(e.data); };
-  stopTimelinePreview(); tlRecording=true; $("tl-record").disabled=true; setEnabled($("tl-stop"),true); $("tl-progress-wrap").style.display="block";
+  stopTimelinePreview(); tlRecording=true; $("tl-progress-wrap").style.display="block";   // button + STOP already set above
   /* STOP discards and an error is an error — same contract as the offline
      exporter; see recordVideo()'s finish(). */
   let endReason="done";
-  let done=false; const finish=()=>{ if(done)return; done=true; try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
+  /* Three times the sequence plus eight seconds, and never under fifteen: long
+     enough that a slow box finishing late is not cut off, short enough that a
+     stuck one does not stay stuck. */
+  const budget=Math.max(15000, sched.total*3000+8000);
+  let done=false; const finish=()=>{ if(done)return; done=true; clearTimeout(guard);
+    try{ stream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
     try{ bedCtx&&bedCtx.close(); }catch(e){}
     $("tl-progress-wrap").style.display="none";
     tlRecording=false; releaseExport(); $("tl-record").disabled=false; setEnabled($("tl-stop"),false);
@@ -1140,15 +1163,45 @@ export async function recordTimeline(){ if(tlRecording)return; if(!timeline.leng
     startTimelinePreview(); };
   rec.onstop=finish; rec.onerror=(e)=>{ endReason=(e&&e.error&&e.error.message)||"MediaRecorder error"; finish(); }; rec.start();
   armed=true;
+  /* A RECORDING ALWAYS ENDS.
+   *
+   * The only route out of a real-time capture is `step` reaching the clip's
+   * duration and calling rec.stop(), and the only route out of THAT is the
+   * recorder delivering onstop. Both are things that can simply not happen: a
+   * frame loop can die (an exception in a render, an rAF that stops being
+   * serviced) and a MediaRecorder can stall without ever firing onstop or
+   * onerror. Either way finish() never runs, so the export lock is never
+   * released — and the lock is not a private detail. Held, ● RECORD stays grey,
+   * ■ STOP stays live over nothing, and EVERY WORKSPACE SWITCH IS REFUSED for
+   * the rest of the session with only a toast to explain it. The tool is simply
+   * stuck, and nothing on screen says which part of it is stuck.
+   *
+   * So the end is guaranteed rather than hoped for. The budget is generous —
+   * real-time capture is wall-clock and load-sensitive, and finishing late is
+   * normal on a loaded machine — but it is finite. Chunks recorded up to the
+   * point the frames ran out are kept if the loop actually got there; a capture
+   * that stalled part way is discarded, which is the same contract STOP and a
+   * recorder error already have.
+   */
+  let reachedEnd=false;
+  const guard=setTimeout(()=>{ if(done)return;
+    if(!reachedEnd) endReason="the recorder stopped responding";
+    log("Sequence recording did not end on its own after "+Math.round(budget/1000)+"s — closing it out"+
+        (reachedEnd?" and keeping what was captured.":" and discarding the partial clip."),"warn");
+    try{ rec.stop(); }catch(e){ /* already gone */ }
+    /* One tick for a stop that is merely slow; then finish regardless. */
+    setTimeout(()=>{ if(!done) finish(); },500); }, budget);
   ensureTimelineVideo(sched,true);
   log("Recording "+sched.total.toFixed(1)+"s sequence @ "+tl.fps+"fps "+tl.W+"×"+tl.H+(hasAudio?" + audio bed":"")+"...","info"); const start=performance.now();
   // `done` bail: see recordVideo() — a finish() driven by onerror must not be
   // overwritten by the already-scheduled frame.
   const step=()=>{ if(done)return; const T=(performance.now()-start)/1000; renderTimelineFrame(ctx,Math.min(T,sched.total),sched);
     const p=clamp(T/sched.total,0,1); $("tl-progress").style.width=(p*100)+"%"; $("tl-status").textContent="Recording... "+T.toFixed(1)+"/"+sched.total.toFixed(1)+"s";
-    if(T>=sched.total || !tlRecording){ if(T<sched.total && !tlRecording) endReason="stopped"; try{rec.stop();}catch(e){finish();} return; } requestAnimationFrame(step); };
+    if(T>=sched.total || !tlRecording){ if(T<sched.total && !tlRecording) endReason="stopped"; else reachedEnd=true;
+      try{rec.stop();}catch(e){finish();} return; } requestAnimationFrame(step); };
   requestAnimationFrame(step);
-  } finally { if(!armed){ tlRecording=false; releaseExport(); } } }
+  } finally { if(!armed){ tlRecording=false; releaseExport();
+                          $("tl-record").disabled=false; setEnabled($("tl-stop"),false); } } }
 /* ============================================================================
    AUDIO — layers + master FX bus + metering + WAV
    ========================================================================== */
